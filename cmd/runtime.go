@@ -8,6 +8,7 @@ import (
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
 	"github.com/redcarbon-dev/argus/pkg/codehost/github"
+	"github.com/redcarbon-dev/argus/pkg/config"
 	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
@@ -47,9 +48,15 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		return nil, err
 	}
 
+	// Auto-load ~/.argus/.env so users don't have to `export GEMINI_API_KEY`
+	// in every shell. Shell-exported values still win (handled by ApplyToProcess).
+	if err := loadHomeEnv(home); err != nil {
+		return nil, err
+	}
+
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is required (export it or place it in %s/.env)", home)
+		return nil, fmt.Errorf("GEMINI_API_KEY is required. Run `argus init` to configure it, or set it in %s/.env", home)
 	}
 
 	sess := session.New()
@@ -123,6 +130,17 @@ func (r *runtime) Close() error {
 		}
 	}
 	return first
+}
+
+// loadHomeEnv loads <home>/.env into the process environment. Missing file
+// is not an error.
+func loadHomeEnv(home string) error {
+	e, err := config.LoadEnv(filepath.Join(home, ".env"))
+	if err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	}
+	e.ApplyToProcess()
+	return nil
 }
 
 // resolveHome returns the directory Argus reads and writes state from.

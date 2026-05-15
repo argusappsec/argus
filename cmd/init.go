@@ -1,50 +1,53 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/redcarbon-dev/argus/pkg/agent"
 	"github.com/redcarbon-dev/argus/pkg/channel/tui"
+	"github.com/redcarbon-dev/argus/pkg/config"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
 	"github.com/redcarbon-dev/argus/pkg/soul"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
-// initCmd opens a chat with a dedicated "interviewer" agent that walks the
-// user through creating their SOUL.md. The interviewer asks one question at a
-// time and, when satisfied, calls the write_soul tool with the collected
-// answers in structured form.
+// initCmd is the bootstrap flow. It runs in two phases:
 //
-// This command reuses the same TUI/agent machinery as `argus chat`, only with:
-//   - a different system prompt (the interviewer persona, defined inline here)
-//   - a tiny tool registry: write_soul + finalize_report (no file-scoped tools)
-//   - no SOUL.md loaded (we're CREATING it, not consuming one)
+//	Phase A: pre-LLM config. Plain stdin prompts ask for provider / model /
+//	         API key and write them to ~/.argus/.env. We do this in Go (no
+//	         agent involved) because the agent needs the API key to talk —
+//	         chicken-and-egg.
 //
-// Bails out if SOUL.md already exists — re-init is a destructive operation
-// and should be explicit.
+//	Phase B: SOUL interview. Standard chat TUI with a curated "interviewer"
+//	         agent that asks about company, persona, etc., then calls
+//	         write_soul + finalize_report. Already implemented in v0.2.1.
+//
+// Either phase can be skipped if the relevant artifact already exists and
+// --force was not passed.
 func initCmd() *cobra.Command {
 	var (
-		model   string
 		homeDir string
 		force   bool
 	)
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Interactive bootstrap interview to create your SOUL.md.",
-		Long: "Start a guided interview with the Argus agent to populate SOUL.md.\n" +
-			"The interviewer agent asks about your company, industry, compliance frameworks, " +
-			"risk tolerance, escalation contact, monitored repos, and preferred persona. " +
-			"When you're satisfied, the agent calls write_soul and exits.\n\n" +
-			"If SOUL.md already exists, this command refuses to overwrite (use --force).",
+		Short: "Interactive bootstrap: configure your provider/API key and create SOUL.md.",
+		Long: "Run a two-phase bootstrap:\n" +
+			"  1) plain prompts for LLM provider, model id, and API key (saved to ~/.argus/.env)\n" +
+			"  2) a chat-based interview with the Argus agent to populate SOUL.md\n\n" +
+			"Existing values are kept unless --force is passed; missing values are prompted.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -52,22 +55,38 @@ func initCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			soulPath := filepath.Join(home, "SOUL.md")
 
+			// --- Phase A: config (~/.argus/.env) -------------------------------
+			env, err := config.LoadEnv(filepath.Join(home, ".env"))
+			if err != nil {
+				return err
+			}
+
+			cfg, err := promptConfig(cmd.InOrStdin(), cmd.OutOrStdout(), env)
+			if err != nil {
+				return err
+			}
+
+			env.Set("GEMINI_API_KEY", cfg.APIKey)
+			env.Set("ARGUS_DEFAULT_MODEL", cfg.Model)
+			if err := env.Save(); err != nil {
+				return fmt.Errorf("save .env: %w", err)
+			}
+			env.ApplyToProcess()
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ config saved to %s\n\n", filepath.Join(home, ".env"))
+
+			// --- Phase B: SOUL interview ---------------------------------------
+			soulPath := filepath.Join(home, "SOUL.md")
 			if !force {
 				if _, err := os.Stat(soulPath); err == nil {
-					return fmt.Errorf("SOUL.md already exists at %s — delete it first or pass --force", soulPath)
+					fmt.Fprintf(cmd.OutOrStdout(), "SOUL.md already exists at %s — skipping interview (use --force to redo)\n", soulPath)
+					return nil
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					return fmt.Errorf("stat SOUL.md: %w", err)
 				}
 			}
 
-			apiKey := os.Getenv("GEMINI_API_KEY")
-			if apiKey == "" {
-				return fmt.Errorf("GEMINI_API_KEY is required (export it or place it in %s/.env)", home)
-			}
-
-			prov, err := gemini.New(ctx, apiKey, model)
+			prov, err := gemini.New(ctx, cfg.APIKey, cfg.Model)
 			if err != nil {
 				return err
 			}
@@ -78,17 +97,16 @@ func initCmd() *cobra.Command {
 			interviewer := &soul.Soul{Persona: interviewerPersona()}
 
 			var program *tea.Program
-
 			dispatch := func(userInput string) tea.Cmd {
-				go runInterview(ctx, prov, reg, interviewer, userInput, program)
+				go runInterview(ctx, prov, reg, interviewer, userInput, cfg.Model, program)
 				return nil
 			}
 
 			welcome := "Welcome! I'm the Argus onboarding interviewer.\n" +
 				"I'll ask a few questions about your company and how you want the agent to behave, " +
-				"then write your SOUL.md. Type anything to begin (e.g. 'hi' or a short intro about your team)."
+				"then write your SOUL.md. Type anything to begin (e.g. \"hi\" or a short intro about your team)."
 
-			tuiModel := tui.New(tui.Config{Dispatch: dispatch}).
+			tuiModel := tui.New(tui.Config{Dispatch: dispatch, Title: "argus init"}).
 				WithInitialMessages([]tui.Message{{Role: "system", Content: welcome}})
 
 			program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithContext(ctx))
@@ -104,15 +122,99 @@ func initCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&model, "model", "gemini-2.5-flash", "Gemini model id")
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")
-	c.Flags().BoolVar(&force, "force", false, "Overwrite SOUL.md if it already exists")
+	c.Flags().BoolVar(&force, "force", false, "Re-run the SOUL interview even if SOUL.md exists")
 	return c
+}
+
+// initConfig holds the values collected in Phase A.
+type initConfig struct {
+	Provider string // currently always "gemini" — kept for forward-compat
+	Model    string
+	APIKey   string
+}
+
+// promptConfig asks the user for provider / model / API key, defaulting to
+// any values already present in env. The provider question is hidden today
+// (we only support gemini) but the structure is ready for multi-provider.
+func promptConfig(in io.Reader, out io.Writer, env *config.Env) (initConfig, error) {
+	r := bufio.NewReader(in)
+
+	fmt.Fprintln(out, "=== Argus init — provider configuration ===")
+	fmt.Fprintln(out)
+
+	cfg := initConfig{Provider: "gemini"}
+
+	// Model.
+	defaultModel := env.Get("ARGUS_DEFAULT_MODEL")
+	if defaultModel == "" {
+		defaultModel = "gemini-2.5-flash"
+	}
+	model, err := promptLine(r, out, "Model id", defaultModel)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Model = model
+
+	// API key. Show only the last 4 chars of any existing key as a hint.
+	existingKey := env.Get("GEMINI_API_KEY")
+	hint := ""
+	if existingKey != "" {
+		if len(existingKey) > 8 {
+			hint = "current: …" + existingKey[len(existingKey)-4:]
+		} else {
+			hint = "current set"
+		}
+	}
+	prompt := "Gemini API key"
+	if hint != "" {
+		prompt = fmt.Sprintf("Gemini API key (%s — press Enter to keep)", hint)
+	}
+	key, err := promptLine(r, out, prompt, existingKey)
+	if err != nil {
+		return cfg, err
+	}
+	if strings.TrimSpace(key) == "" {
+		return cfg, errors.New("a Gemini API key is required (get one at https://aistudio.google.com/apikey)")
+	}
+	cfg.APIKey = strings.TrimSpace(key)
+
+	return cfg, nil
+}
+
+// promptLine writes a prompt and reads one line from r. Pressing Enter with
+// no input returns def. An EOF is returned as io.EOF so callers can decide
+// (init treats it as an abort).
+func promptLine(r *bufio.Reader, out io.Writer, label, def string) (string, error) {
+	if def != "" {
+		fmt.Fprintf(out, "%s [%s]: ", label, redactSecret(def))
+	} else {
+		fmt.Fprintf(out, "%s: ", label)
+	}
+	line, err := r.ReadString('\n')
+	if err != nil && (err != io.EOF || line == "") {
+		return "", err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if strings.TrimSpace(line) == "" {
+		return def, nil
+	}
+	return line, nil
+}
+
+// redactSecret returns a display-safe rendering of v. Long strings (assumed
+// to be keys/tokens) are shown as the last 4 chars only.
+func redactSecret(v string) string {
+	if len(v) <= 8 {
+		return v
+	}
+	return "…" + v[len(v)-4:]
 }
 
 // runInterview is the interviewer-side dispatcher: it kicks off one agent.Run
 // per user message, streaming responses back into the TUI program.
-func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registry, interviewer *soul.Soul, userInput string, program *tea.Program) {
+func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registry, interviewer *soul.Soul, userInput, model string, program *tea.Program) {
+	_ = model // reserved for future per-turn model override
 	ag := agent.New(agent.Options{
 		Provider: prov,
 		Tools:    reg,
@@ -131,8 +233,6 @@ func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registr
 				OutputTokens: u.OutputTokens,
 			})
 		},
-		// Reports omitted: the interviewer ends via finalize_report without
-		// writing a security report (Reports nil-safe).
 	})
 
 	if _, err := ag.Run(ctx, agent.Target{}); err != nil {
@@ -143,7 +243,6 @@ func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registr
 }
 
 // interviewerPersona is the hardcoded system prompt for the bootstrap agent.
-// Lives here (not in pkg/soul) because it's CLI-flow-specific.
 func interviewerPersona() string {
 	return `You are the **Argus onboarding interviewer**.
 
