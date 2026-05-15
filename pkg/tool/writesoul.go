@@ -22,8 +22,9 @@ func (w *writeSoul) Name() string { return "write_soul" }
 func (w *writeSoul) Description() string {
 	return "Persist the agent's identity (SOUL.md) for the current user. " +
 		"Call exactly once at the end of the bootstrap interview, after collecting " +
-		"company, industry, compliance frameworks, risk tolerance, escalation contact, " +
-		"monitored repositories, and a free-form persona description."
+		"company, industry, the data sensitivity of what they handle, their primary " +
+		"tech stack, their infrastructure, how they store secrets, compliance " +
+		"frameworks, risk tolerance, escalation contact, and a persona paragraph."
 }
 
 func (w *writeSoul) Schema() map[string]any {
@@ -37,6 +38,25 @@ func (w *writeSoul) Schema() map[string]any {
 			"industry": map[string]any{
 				"type":        "string",
 				"description": "Industry vertical (e.g. saas, fintech, healthcare, cybersecurity).",
+			},
+			"data_sensitivity": map[string]any{
+				"type":        "string",
+				"enum":        []string{"public", "internal", "pii", "phi", "pci", "regulated"},
+				"description": "Sensitivity of the data the software handles. Drives severity calibration of crypto/leak findings.",
+			},
+			"primary_stack": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Languages / runtimes the codebase predominantly uses (e.g. [\"Go\", \"Python\", \"TypeScript\"]).",
+			},
+			"infra": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Platforms / orchestrators / key data stores (e.g. [\"AWS\", \"Kubernetes\", \"PostgreSQL\"]).",
+			},
+			"secret_storage": map[string]any{
+				"type":        "string",
+				"description": "Where production secrets actually live (e.g. \"HashiCorp Vault\", \"AWS Secrets Manager\", \"K8s Secrets\"). Used to suppress false positives on placeholder references.",
 			},
 			"compliance": map[string]any{
 				"type":        "array",
@@ -52,14 +72,9 @@ func (w *writeSoul) Schema() map[string]any {
 				"type":        "string",
 				"description": "Email or chat handle for the security owner to escalate to.",
 			},
-			"monitored_repos": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "GitHub repository identifiers (e.g. github.com/owner/repo) the agent watches.",
-			},
 			"persona": map[string]any{
 				"type":        "string",
-				"description": "Free-form prose describing tone, priorities, and behavior. This becomes the body of SOUL.md.",
+				"description": "Free-form prose paragraph (~3-5 sentences) describing tone, priorities, and any extra context that doesn't fit a structured field.",
 			},
 		},
 		"required": []string{"company", "persona"},
@@ -77,13 +92,16 @@ func (w *writeSoul) Execute(_ context.Context, args map[string]any) (string, err
 	}
 
 	s := &soul.Soul{
-		Company:        company,
-		Industry:       stringOpt(args, "industry"),
-		Compliance:     stringSliceOpt(args, "compliance"),
-		RiskTolerance:  stringOpt(args, "risk_tolerance"),
-		Escalation:     stringOpt(args, "escalation"),
-		MonitoredRepos: stringSliceOpt(args, "monitored_repos"),
-		Persona:        persona,
+		Company:         company,
+		Industry:        stringOpt(args, "industry"),
+		DataSensitivity: stringOpt(args, "data_sensitivity"),
+		PrimaryStack:    stringSliceOpt(args, "primary_stack"),
+		Infra:           stringSliceOpt(args, "infra"),
+		SecretStorage:   stringOpt(args, "secret_storage"),
+		Compliance:      stringSliceOpt(args, "compliance"),
+		RiskTolerance:   stringOpt(args, "risk_tolerance"),
+		Escalation:      stringOpt(args, "escalation"),
+		Persona:         persona,
 	}
 
 	if err := soul.Write(w.path, s); err != nil {

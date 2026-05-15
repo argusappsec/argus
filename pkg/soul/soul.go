@@ -23,16 +23,50 @@ import (
 )
 
 // Soul is the agent's persistent identity.
+//
+// Schema rule: every field here is loaded as the LLM's system prompt on
+// EVERY agent run. Token budget matters. Only put here info that's
+// relevant to most reviews. Per-project deep-dive (architecture, threat
+// model, known FPs) belongs in CONTEXT/ — loaded on demand.
 type Soul struct {
-	Company        string   `yaml:"company,omitempty"`
-	Industry       string   `yaml:"industry,omitempty"`
-	Compliance     []string `yaml:"compliance,omitempty"`
-	RiskTolerance  string   `yaml:"risk_tolerance,omitempty"`
-	Escalation     string   `yaml:"escalation,omitempty"`
-	MonitoredRepos []string `yaml:"monitored_repos,omitempty"`
+	Company  string `yaml:"company,omitempty"`
+	Industry string `yaml:"industry,omitempty"`
 
-	// Persona is the markdown body after the frontmatter. It is the prose the
-	// human wrote about how the agent should behave, tone, priorities, ecc.
+	// DataSensitivity is the broad category of data the software handles.
+	// Drives encryption / retention / leak severity calibration.
+	// Suggested values: "public", "internal", "pii", "phi", "pci", "regulated".
+	DataSensitivity string `yaml:"data_sensitivity,omitempty"`
+
+	// PrimaryStack lists the languages/runtimes the codebase predominantly
+	// uses (e.g. ["Go", "Python", "TypeScript"]). Lets the agent prioritise
+	// lang-specific scanners and reason about idiomatic vulnerabilities.
+	PrimaryStack []string `yaml:"primary_stack,omitempty"`
+
+	// Infra lists the platforms / orchestrators / data stores the software
+	// runs on (e.g. ["AWS", "Kubernetes", "PostgreSQL"]). Drives which
+	// IaC / cloud-specific rules matter.
+	Infra []string `yaml:"infra,omitempty"`
+
+	// SecretStorage describes WHERE secrets actually live in production.
+	// Massive false-positive reducer: if the agent knows secrets come from
+	// Vault, then `${VAULT_TOKEN}` in a manifest is a placeholder, not a leak.
+	// Examples: "HashiCorp Vault", "AWS Secrets Manager", "K8s Secrets",
+	// "Doppler", ".env files (dev only)".
+	SecretStorage string `yaml:"secret_storage,omitempty"`
+
+	// Compliance frameworks the company is subject to.
+	Compliance []string `yaml:"compliance,omitempty"`
+
+	// RiskTolerance: "low" | "medium" | "high".
+	RiskTolerance string `yaml:"risk_tolerance,omitempty"`
+
+	// Escalation is the security owner's email or chat handle. Cited by
+	// the agent in HIGH+ findings.
+	Escalation string `yaml:"escalation,omitempty"`
+
+	// Persona is the markdown body after the frontmatter. Free-form prose
+	// the human (or the bootstrap agent) wrote about tone, priorities and
+	// any context that doesn't fit the structured fields.
 	Persona string `yaml:"-"`
 }
 
@@ -118,6 +152,18 @@ func (s *Soul) SystemPrompt() string {
 	if s.Industry != "" {
 		fmt.Fprintf(&b, "Industry: %s.\n", s.Industry)
 	}
+	if s.DataSensitivity != "" {
+		fmt.Fprintf(&b, "Data sensitivity: %s.\n", s.DataSensitivity)
+	}
+	if len(s.PrimaryStack) > 0 {
+		fmt.Fprintf(&b, "Primary stack: %s.\n", strings.Join(s.PrimaryStack, ", "))
+	}
+	if len(s.Infra) > 0 {
+		fmt.Fprintf(&b, "Infrastructure: %s.\n", strings.Join(s.Infra, ", "))
+	}
+	if s.SecretStorage != "" {
+		fmt.Fprintf(&b, "Secret storage: %s — treat placeholders referencing this system as expected, not as leaks.\n", s.SecretStorage)
+	}
 	if len(s.Compliance) > 0 {
 		fmt.Fprintf(&b, "Compliance frameworks: %s.\n", strings.Join(s.Compliance, ", "))
 	}
@@ -126,9 +172,6 @@ func (s *Soul) SystemPrompt() string {
 	}
 	if s.Escalation != "" {
 		fmt.Fprintf(&b, "Escalation contact: %s.\n", s.Escalation)
-	}
-	if len(s.MonitoredRepos) > 0 {
-		fmt.Fprintf(&b, "Monitored repositories: %s.\n", strings.Join(s.MonitoredRepos, ", "))
 	}
 	if s.Persona != "" {
 		b.WriteString("\n# Persona\n")

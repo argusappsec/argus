@@ -15,15 +15,16 @@ func TestWriteSoul_TracerCreatesFile(t *testing.T) {
 	ws := tool.NewWriteSoul(path)
 
 	out, err := ws.Execute(context.Background(), map[string]any{
-		"company":        "RedCarbon",
-		"industry":       "cybersecurity",
-		"compliance":     []any{"SOC2", "ISO27001"},
-		"risk_tolerance": "low",
-		"escalation":     "ciso@redcarbon.ai",
-		"monitored_repos": []any{
-			"github.com/redcarbon-dev/argus",
-		},
-		"persona": "You are RedCarbon's security copilot. Be terse and technical. Cite CWE/OWASP.",
+		"company":          "RedCarbon",
+		"industry":         "cybersecurity",
+		"data_sensitivity": "pii",
+		"primary_stack":    []any{"Go", "Python"},
+		"infra":            []any{"AWS", "Kubernetes"},
+		"secret_storage":   "HashiCorp Vault",
+		"compliance":       []any{"SOC2", "ISO27001"},
+		"risk_tolerance":   "low",
+		"escalation":       "ciso@redcarbon.ai",
+		"persona":          "You are RedCarbon's security copilot. Be terse and technical. Cite CWE/OWASP.",
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -55,8 +56,17 @@ func TestWriteSoul_TracerCreatesFile(t *testing.T) {
 	if s.Escalation != "ciso@redcarbon.ai" {
 		t.Errorf("escalation = %q", s.Escalation)
 	}
-	if len(s.MonitoredRepos) != 1 {
-		t.Errorf("monitored_repos = %v", s.MonitoredRepos)
+	if s.DataSensitivity != "pii" {
+		t.Errorf("data_sensitivity = %q", s.DataSensitivity)
+	}
+	if len(s.PrimaryStack) != 2 || s.PrimaryStack[0] != "Go" {
+		t.Errorf("primary_stack = %v", s.PrimaryStack)
+	}
+	if len(s.Infra) != 2 || s.Infra[1] != "Kubernetes" {
+		t.Errorf("infra = %v", s.Infra)
+	}
+	if s.SecretStorage != "HashiCorp Vault" {
+		t.Errorf("secret_storage = %q", s.SecretStorage)
 	}
 	if !strings.Contains(s.Persona, "RedCarbon's security copilot") {
 		t.Errorf("persona = %q", s.Persona)

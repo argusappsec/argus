@@ -12,14 +12,19 @@ func TestParse_FrontmatterAndBody(t *testing.T) {
 	raw := `---
 company: RedCarbon
 industry: cybersecurity
+data_sensitivity: pii
+primary_stack:
+  - Go
+  - Python
+infra:
+  - AWS
+  - Kubernetes
+secret_storage: HashiCorp Vault
 compliance:
   - SOC2
   - ISO27001
 risk_tolerance: low
 escalation: ciso@redcarbon.ai
-monitored_repos:
-  - github.com/redcarbon-dev/argus
-  - github.com/redcarbon-dev/rc-guest-portal
 ---
 You are the security agent for RedCarbon. Tone: technical, terse.
 Always cite CWE/OWASP IDs. Prioritize findings by real-world impact.
@@ -43,8 +48,17 @@ Always cite CWE/OWASP IDs. Prioritize findings by real-world impact.
 	if s.Escalation != "ciso@redcarbon.ai" {
 		t.Errorf("escalation = %q", s.Escalation)
 	}
-	if len(s.MonitoredRepos) != 2 {
-		t.Errorf("monitored_repos = %v", s.MonitoredRepos)
+	if s.DataSensitivity != "pii" {
+		t.Errorf("data_sensitivity = %q", s.DataSensitivity)
+	}
+	if len(s.PrimaryStack) != 2 || s.PrimaryStack[0] != "Go" {
+		t.Errorf("primary_stack = %v", s.PrimaryStack)
+	}
+	if len(s.Infra) != 2 || s.Infra[1] != "Kubernetes" {
+		t.Errorf("infra = %v", s.Infra)
+	}
+	if s.SecretStorage != "HashiCorp Vault" {
+		t.Errorf("secret_storage = %q", s.SecretStorage)
 	}
 	if !strings.Contains(s.Persona, "security agent for RedCarbon") {
 		t.Errorf("persona missing: %q", s.Persona)
@@ -78,13 +92,16 @@ func TestLoad_MissingFileReturnsNil(t *testing.T) {
 func TestWriteAndLoad_Roundtrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "SOUL.md")
 	in := &soul.Soul{
-		Company:        "Acme",
-		Industry:       "saas",
-		Compliance:     []string{"SOC2"},
-		RiskTolerance:  "medium",
-		Escalation:     "sec@acme.io",
-		MonitoredRepos: []string{"github.com/acme/web"},
-		Persona:        "You are Acme's security copilot.",
+		Company:         "Acme",
+		Industry:        "saas",
+		DataSensitivity: "pii",
+		PrimaryStack:    []string{"TypeScript"},
+		Infra:           []string{"GCP", "Cloud Run"},
+		SecretStorage:   "GCP Secret Manager",
+		Compliance:      []string{"SOC2"},
+		RiskTolerance:   "medium",
+		Escalation:      "sec@acme.io",
+		Persona:         "You are Acme's security copilot.",
 	}
 	if err := soul.Write(path, in); err != nil {
 		t.Fatalf("write: %v", err)
