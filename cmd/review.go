@@ -96,7 +96,7 @@ func reviewCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&model, "model", "gemini-2.5-flash", "Gemini model id")
+	c.Flags().StringVar(&model, "model", "", "Override the default model from argus.yaml (e.g. gemini-2.5-pro)")
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA to review (default: remote HEAD)")
 	c.Flags().IntVar(&maxTurns, "max-turns", 50, "Safety-net cap on agent loop turns")
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")

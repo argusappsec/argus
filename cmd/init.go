@@ -1,17 +1,16 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/redcarbon-dev/argus/pkg/agent"
@@ -23,19 +22,14 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
-// initCmd is the bootstrap flow. It runs in two phases:
+// initCmd is the bootstrap flow. Two phases:
 //
-//	Phase A: pre-LLM config. Plain stdin prompts ask for provider / model /
-//	         API key and write them to ~/.argus/.env. We do this in Go (no
-//	         agent involved) because the agent needs the API key to talk —
-//	         chicken-and-egg.
+//	Phase A — provider & API key (no LLM yet, huh-driven form).
+//	          Select provider → select model → enter API key.
+//	          Writes ~/.argus/argus.yaml + ~/.argus/.env.
+//	Phase B — SOUL interview via the chat TUI (existing).
 //
-//	Phase B: SOUL interview. Standard chat TUI with a curated "interviewer"
-//	         agent that asks about company, persona, etc., then calls
-//	         write_soul + finalize_report. Already implemented in v0.2.1.
-//
-// Either phase can be skipped if the relevant artifact already exists and
-// --force was not passed.
+// Either phase is skipped if its artifact already exists, unless --force.
 func initCmd() *cobra.Command {
 	var (
 		homeDir string
@@ -43,11 +37,11 @@ func initCmd() *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Interactive bootstrap: configure your provider/API key and create SOUL.md.",
+		Short: "Interactive bootstrap: pick provider, set API key, and create SOUL.md.",
 		Long: "Run a two-phase bootstrap:\n" +
-			"  1) plain prompts for LLM provider, model id, and API key (saved to ~/.argus/.env)\n" +
-			"  2) a chat-based interview with the Argus agent to populate SOUL.md\n\n" +
-			"Existing values are kept unless --force is passed; missing values are prompted.",
+			"  1) provider/model selection + API key (saved to ~/.argus/argus.yaml and ~/.argus/.env)\n" +
+			"  2) chat-based interview with the Argus agent to populate SOUL.md\n\n" +
+			"Existing values are kept unless --force is passed.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -56,26 +50,43 @@ func initCmd() *cobra.Command {
 				return err
 			}
 
-			// --- Phase A: config (~/.argus/.env) -------------------------------
-			env, err := config.LoadEnv(filepath.Join(home, ".env"))
+			// --- Phase A: provider + API key ---------------------------------
+			cfgPath := filepath.Join(home, "argus.yaml")
+			envPath := filepath.Join(home, ".env")
+
+			cfg, err := config.LoadConfig(cfgPath)
+			if err != nil {
+				return err
+			}
+			env, err := config.LoadEnv(envPath)
 			if err != nil {
 				return err
 			}
 
-			cfg, err := promptConfig(cmd.InOrStdin(), cmd.OutOrStdout(), env)
+			picked, err := runProviderForm(cfg, env)
 			if err != nil {
 				return err
 			}
 
-			env.Set("GEMINI_API_KEY", cfg.APIKey)
-			env.Set("ARGUS_DEFAULT_MODEL", cfg.Model)
+			cfg.Providers = map[string]config.ProviderConfig{
+				picked.Provider: {
+					Type:      picked.Provider,
+					APIKeyEnv: providerEnvVar(picked.Provider),
+				},
+			}
+			cfg.DefaultModel = picked.Model
+			if err := config.SaveConfig(cfgPath, cfg); err != nil {
+				return fmt.Errorf("save config: %w", err)
+			}
+
+			env.Set(providerEnvVar(picked.Provider), picked.APIKey)
 			if err := env.Save(); err != nil {
 				return fmt.Errorf("save .env: %w", err)
 			}
 			env.ApplyToProcess()
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ config saved to %s\n\n", filepath.Join(home, ".env"))
+			fmt.Fprintf(cmd.OutOrStdout(), "\n✓ config:  %s\n✓ secrets: %s\n\n", cfgPath, envPath)
 
-			// --- Phase B: SOUL interview ---------------------------------------
+			// --- Phase B: SOUL interview -------------------------------------
 			soulPath := filepath.Join(home, "SOUL.md")
 			if !force {
 				if _, err := os.Stat(soulPath); err == nil {
@@ -86,7 +97,7 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			prov, err := gemini.New(ctx, cfg.APIKey, cfg.Model)
+			prov, err := gemini.New(ctx, picked.APIKey, picked.Model)
 			if err != nil {
 				return err
 			}
@@ -98,7 +109,7 @@ func initCmd() *cobra.Command {
 
 			var program *tea.Program
 			dispatch := func(userInput string) tea.Cmd {
-				go runInterview(ctx, prov, reg, interviewer, userInput, cfg.Model, program)
+				go runInterview(ctx, prov, reg, interviewer, userInput, program)
 				return nil
 			}
 
@@ -127,94 +138,166 @@ func initCmd() *cobra.Command {
 	return c
 }
 
-// initConfig holds the values collected in Phase A.
-type initConfig struct {
-	Provider string // currently always "gemini" — kept for forward-compat
+// providerSelection captures the answers of the provider form.
+type providerSelection struct {
+	Provider string
 	Model    string
 	APIKey   string
 }
 
-// promptConfig asks the user for provider / model / API key, defaulting to
-// any values already present in env. The provider question is hidden today
-// (we only support gemini) but the structure is ready for multi-provider.
-func promptConfig(in io.Reader, out io.Writer, env *config.Env) (initConfig, error) {
-	r := bufio.NewReader(in)
-
-	fmt.Fprintln(out, "=== Argus init — provider configuration ===")
-	fmt.Fprintln(out)
-
-	cfg := initConfig{Provider: "gemini"}
-
-	// Model.
-	defaultModel := env.Get("ARGUS_DEFAULT_MODEL")
-	if defaultModel == "" {
-		defaultModel = "gemini-2.5-flash"
+// runProviderForm shows a huh form: pick provider → pick model → enter API key.
+// Existing values from cfg/env are used as the form's defaults so re-running
+// init only needs ENTER on what you want to keep.
+func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, error) {
+	sel := providerSelection{
+		Provider: "gemini",
+		Model:    cfg.DefaultModel,
+		APIKey:   env.Get(providerEnvVar("gemini")),
 	}
-	model, err := promptLine(r, out, "Model id", defaultModel)
-	if err != nil {
-		return cfg, err
+	if sel.Provider == "" {
+		sel.Provider = "gemini"
 	}
-	cfg.Model = model
 
-	// API key. Show only the last 4 chars of any existing key as a hint.
-	existingKey := env.Get("GEMINI_API_KEY")
-	hint := ""
-	if existingKey != "" {
-		if len(existingKey) > 8 {
-			hint = "current: …" + existingKey[len(existingKey)-4:]
-		} else {
-			hint = "current set"
-		}
-	}
-	prompt := "Gemini API key"
-	if hint != "" {
-		prompt = fmt.Sprintf("Gemini API key (%s — press Enter to keep)", hint)
-	}
-	key, err := promptLine(r, out, prompt, existingKey)
-	if err != nil {
-		return cfg, err
-	}
-	if strings.TrimSpace(key) == "" {
-		return cfg, errors.New("a Gemini API key is required (get one at https://aistudio.google.com/apikey)")
-	}
-	cfg.APIKey = strings.TrimSpace(key)
+	var modelChoice string
+	var customModel string
 
-	return cfg, nil
-}
+	providerStep := huh.NewSelect[string]().
+		Title("Provider").
+		Description("Which LLM provider does Argus talk to?").
+		Options(
+			huh.NewOption("Gemini (Google)", "gemini"),
+			huh.NewOption("OpenAI — not yet implemented", "openai").Selected(false),
+			huh.NewOption("Anthropic — not yet implemented", "anthropic").Selected(false),
+		).
+		Validate(func(s string) error {
+			if s != "gemini" {
+				return fmt.Errorf("%s is not implemented yet (only gemini works today)", s)
+			}
+			return nil
+		}).
+		Value(&sel.Provider)
 
-// promptLine writes a prompt and reads one line from r. Pressing Enter with
-// no input returns def. An EOF is returned as io.EOF so callers can decide
-// (init treats it as an abort).
-func promptLine(r *bufio.Reader, out io.Writer, label, def string) (string, error) {
-	if def != "" {
-		fmt.Fprintf(out, "%s [%s]: ", label, redactSecret(def))
+	modelStep := huh.NewSelect[string]().
+		Title("Model").
+		Description("Pick the default model. You can override with --model on every command.").
+		OptionsFunc(func() []huh.Option[string] {
+			return modelOptionsFor(sel.Provider, sel.Model)
+		}, &sel.Provider).
+		Value(&modelChoice)
+
+	customStep := huh.NewInput().
+		Title("Custom model id").
+		Description("Enter any model name supported by your provider.").
+		Placeholder("gemini-2.5-flash-latest").
+		Value(&customModel).
+		Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("model id required")
+			}
+			return nil
+		})
+
+	hint := "Get a free Gemini key at https://aistudio.google.com/apikey"
+	if sel.APIKey != "" {
+		hint += "  •  current: …" + tailOf(sel.APIKey, 4) + " (leave empty to keep)"
+	}
+	keyStep := huh.NewInput().
+		Title("API key").
+		Description(hint).
+		EchoMode(huh.EchoModePassword).
+		Value(&sel.APIKey).
+		Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("API key required")
+			}
+			return nil
+		})
+
+	form := huh.NewForm(
+		huh.NewGroup(providerStep),
+		huh.NewGroup(modelStep),
+		huh.NewGroup(customStep).WithHideFunc(func() bool { return modelChoice != "custom" }),
+		huh.NewGroup(keyStep),
+	).WithTheme(huh.ThemeBase16())
+
+	if err := form.Run(); err != nil {
+		return providerSelection{}, fmt.Errorf("init form: %w", err)
+	}
+
+	if modelChoice == "custom" {
+		sel.Model = strings.TrimSpace(customModel)
 	} else {
-		fmt.Fprintf(out, "%s: ", label)
+		sel.Model = modelChoice
 	}
-	line, err := r.ReadString('\n')
-	if err != nil && (err != io.EOF || line == "") {
-		return "", err
-	}
-	line = strings.TrimRight(line, "\r\n")
-	if strings.TrimSpace(line) == "" {
-		return def, nil
-	}
-	return line, nil
+	sel.APIKey = strings.TrimSpace(sel.APIKey)
+	return sel, nil
 }
 
-// redactSecret returns a display-safe rendering of v. Long strings (assumed
-// to be keys/tokens) are shown as the last 4 chars only.
-func redactSecret(v string) string {
-	if len(v) <= 8 {
-		return v
+// modelOptionsFor returns a curated list of models for the chosen provider,
+// always with a "custom" tail option for keys we don't know about. The
+// `current` arg is the model already in config; it's marked as the
+// preselected option.
+func modelOptionsFor(provider string, current string) []huh.Option[string] {
+	var models []string
+	switch provider {
+	case "gemini":
+		models = []string{
+			"gemini-2.5-flash",
+			"gemini-2.5-pro",
+			"gemini-2.0-flash",
+			"gemini-1.5-pro",
+			"gemini-1.5-flash",
+		}
+	default:
+		models = []string{"gemini-2.5-flash"}
 	}
-	return "…" + v[len(v)-4:]
+
+	opts := make([]huh.Option[string], 0, len(models)+1)
+	for _, m := range models {
+		label := m
+		switch m {
+		case "gemini-2.5-flash":
+			label += " (recommended)"
+		case "gemini-2.5-pro":
+			label += " (premium quality, slower)"
+		case "gemini-2.0-flash":
+			label += " (cheaper)"
+		}
+		o := huh.NewOption(label, m)
+		if m == current {
+			o = o.Selected(true)
+		}
+		opts = append(opts, o)
+	}
+	opts = append(opts, huh.NewOption("custom...", "custom"))
+	return opts
+}
+
+// providerEnvVar returns the env var name where the secret for `provider`
+// is stored. Kept in one place so the convention is consistent.
+func providerEnvVar(provider string) string {
+	switch provider {
+	case "gemini":
+		return "GEMINI_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	default:
+		return strings.ToUpper(provider) + "_API_KEY"
+	}
+}
+
+func tailOf(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // runInterview is the interviewer-side dispatcher: it kicks off one agent.Run
 // per user message, streaming responses back into the TUI program.
-func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registry, interviewer *soul.Soul, userInput, model string, program *tea.Program) {
-	_ = model // reserved for future per-turn model override
+func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registry, interviewer *soul.Soul, userInput string, program *tea.Program) {
 	ag := agent.New(agent.Options{
 		Provider: prov,
 		Tools:    reg,

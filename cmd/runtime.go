@@ -48,10 +48,23 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		return nil, err
 	}
 
-	// Auto-load ~/.argus/.env so users don't have to `export GEMINI_API_KEY`
-	// in every shell. Shell-exported values still win (handled by ApplyToProcess).
+	// Load preferences first (argus.yaml) and then secrets (~/.argus/.env).
+	// Shell-exported values still win in env (handled by ApplyToProcess).
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		return nil, err
+	}
 	if err := loadHomeEnv(home); err != nil {
 		return nil, err
+	}
+
+	// Resolve the model id: explicit --model flag > argus.yaml default.
+	modelID := opts.Model
+	if modelID == "" {
+		modelID = cfg.DefaultModel
+	}
+	if modelID == "" {
+		return nil, fmt.Errorf("no model configured. Run `argus init` to pick one, or pass --model")
 	}
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
@@ -80,7 +93,7 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		return nil, fmt.Errorf("soul: %w", err)
 	}
 
-	prov, err := gemini.New(ctx, apiKey, opts.Model)
+	prov, err := gemini.New(ctx, apiKey, modelID)
 	if err != nil {
 		aud.Close()
 		convoWriter.Close()
