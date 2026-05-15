@@ -3,25 +3,23 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/redcarbon-dev/argus/pkg/agent"
-	"github.com/redcarbon-dev/argus/pkg/audit"
 	"github.com/redcarbon-dev/argus/pkg/codehost/github"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/memory"
-	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
 	"github.com/redcarbon-dev/argus/pkg/report"
-	"github.com/redcarbon-dev/argus/pkg/security"
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/soul"
-	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
+// reviewCmd is the non-interactive entry point. It clones the target repo,
+// seeds the agent with a "Please review …" prompt and exits when
+// finalize_report is called. Shares the runtime (provider, registry, soul,
+// audit, conversation) with `argus chat` via buildRuntime — the only
+// review-specific code is the clone, the report writer, and the post-run
+// memory curation.
 func reviewCmd() *cobra.Command {
 	var (
 		model    string
@@ -31,21 +29,17 @@ func reviewCmd() *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "review <github-url>",
-		Short: "Run a white-box security review on a GitHub repository.",
+		Short: "Run a non-interactive security review on a GitHub repository.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := resolveHome(homeDir)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
+			defer cancel()
+
+			rt, err := buildRuntime(ctx, runtimeOptions{HomeOverride: homeDir, Model: model})
 			if err != nil {
 				return err
 			}
-
-			apiKey := os.Getenv("GEMINI_API_KEY")
-			if apiKey == "" {
-				return fmt.Errorf("GEMINI_API_KEY is required (export it or place it in %s/.env)", home)
-			}
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
-			defer cancel()
+			defer rt.Close()
 
 			u, err := github.ParseURL(args[0])
 			if err != nil {
@@ -53,62 +47,23 @@ func reviewCmd() *cobra.Command {
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "→ resolving %s@%s\n", u.FullName, defaultIfEmpty(ref, "HEAD"))
-			cloner := github.NewCloner(filepath.Join(home, "cache"))
-			co, err := cloner.Clone(ctx, u, ref)
+			co, err := rt.Cloner.Clone(ctx, u, ref)
 			if err != nil {
 				return fmt.Errorf("clone: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "→ checkout ready at %s (sha=%s)\n", co.Path, co.SHA)
 
-			aud, err := audit.NewLogger(filepath.Join(home, "audit.log.jsonl"))
-			if err != nil {
-				return err
-			}
-			defer aud.Close()
+			rt.Session.SetRoot(co.Path)
 
-			sess := session.New()
-			sess.SetRoot(co.Path)
-
-			convoPath := filepath.Join(home, "conversations", sess.ID()+".jsonl")
-			convoWriter, err := conversation.NewWriter(convoPath, sess.ID())
-			if err != nil {
-				return err
-			}
-			defer convoWriter.Close()
-
-			soulPath := filepath.Join(home, "SOUL.md")
-			s, err := soul.Load(soulPath)
-			if err != nil {
-				return fmt.Errorf("load soul: %w", err)
-			}
-
-			contextDir := filepath.Join(home, "context")
-
-			reg := tool.NewRegistry()
-			reg.Register(tool.NewListFiles(sess))
-			reg.Register(tool.NewReadFile(sess))
-			reg.Register(tool.NewGrep(sess))
-			reg.Register(tool.NewListContext(contextDir))
-			reg.Register(tool.NewReadContext(contextDir))
-			reg.Register(tool.NewStartReviewLocal(sess))
-			reg.Register(tool.NewStartReviewGitHub(sess, cloner))
-			reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
-			reg.Register(security.NewGitleaks(sess, security.ExecRunner{}))
-
-			rw := report.NewWriter(filepath.Join(home, "reports"))
-
-			prov, err := gemini.New(ctx, apiKey, model)
-			if err != nil {
-				return err
-			}
+			rw := report.NewWriter(filepath.Join(rt.Home, "reports"))
 
 			ag := agent.New(agent.Options{
-				Provider:     prov,
-				Audit:        aud,
+				Provider:     rt.Provider,
+				Audit:        rt.Audit,
 				Reports:      rw,
-				Tools:        reg,
-				Conversation: convoWriter,
-				Soul:         s,
+				Tools:        rt.Registry,
+				Conversation: rt.Conversation,
+				Soul:         rt.Soul,
 				MaxTurns:     maxTurns,
 			})
 
@@ -122,22 +77,21 @@ func reviewCmd() *cobra.Command {
 				return fmt.Errorf("agent: %w", err)
 			}
 
-			reportPath := filepath.Join(home, "reports", reportSlug(u.FullName), co.SHA+".md")
+			reportPath := filepath.Join(rt.Home, "reports", reportSlug(u.FullName), co.SHA+".md")
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ review complete: %d findings — %s\n", len(rep.Findings), reportPath)
-			fmt.Fprintf(cmd.OutOrStdout(), "  conversation log: %s\n", convoPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "  conversation log: %s\n", rt.ConvoPath)
 
-			// Curate memory on successful completion. A failure here should not
-			// fail the review — the report is the user-facing product, memory is
-			// background hygiene. Log and continue.
+			// Curate memory on successful completion. Failure is non-fatal —
+			// the report is the user-facing product; memory is hygiene.
 			fmt.Fprintln(cmd.OutOrStdout(), "→ curating memory")
 			if err := memory.Curate(ctx, memory.Options{
-				ConversationPath: convoPath,
-				MemoryPath:       filepath.Join(home, "MEMORY.md"),
-				Provider:         prov,
+				ConversationPath: rt.ConvoPath,
+				MemoryPath:       filepath.Join(rt.Home, "MEMORY.md"),
+				Provider:         rt.Provider,
 			}); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "  warning: memory curation failed: %v\n", err)
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "  memory: %s\n", filepath.Join(home, "MEMORY.md"))
+				fmt.Fprintf(cmd.OutOrStdout(), "  memory: %s\n", filepath.Join(rt.Home, "MEMORY.md"))
 			}
 			return nil
 		},
@@ -149,33 +103,8 @@ func reviewCmd() *cobra.Command {
 	return c
 }
 
-func resolveHome(override string) (string, error) {
-	if override != "" {
-		if err := os.MkdirAll(override, 0o700); err != nil {
-			return "", fmt.Errorf("create home: %w", err)
-		}
-		return override, nil
-	}
-	if env := os.Getenv("ARGUS_HOME"); env != "" {
-		if err := os.MkdirAll(env, 0o700); err != nil {
-			return "", fmt.Errorf("create home: %w", err)
-		}
-		return env, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locate home dir: %w", err)
-	}
-	dir := filepath.Join(home, ".argus")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create home: %w", err)
-	}
-	return dir, nil
-}
-
+// resolveHome and friends are shared with runtime.go.
 func reportSlug(full string) string {
-	// Mirror report.slugify (kept private there). Acceptable duplication for
-	// the CLI; we only need it to print the expected path.
 	out := make([]rune, 0, len(full))
 	for _, r := range full {
 		switch r {

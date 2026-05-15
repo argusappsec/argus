@@ -18,5 +18,11 @@ func Root() *cobra.Command {
 }
 
 func init() {
+	chat := chatCmd()
+	rootCmd.AddCommand(chat)
 	rootCmd.AddCommand(reviewCmd())
+
+	// `argus` with no arguments opens the interactive chat — the primary UX.
+	// Explicit subcommands (review, chat, future ones) still work as before.
+	rootCmd.RunE = chat.RunE
 }

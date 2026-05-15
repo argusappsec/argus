@@ -43,6 +43,17 @@ type Options struct {
 	// where the agent is started with a structured task instead of a review.
 	SeedMessages []provider.Message
 
+	// OnMessage, if non-nil, is invoked for every message appended to the
+	// running history (user seed, model turn, tool result). Used by UIs that
+	// stream the conversation to the screen as it unfolds (TUI, future Slack).
+	// Errors thrown by the callback are intentionally swallowed: a misbehaving
+	// listener must not abort the agent run.
+	OnMessage func(provider.Message)
+
+	// OnUsage, if non-nil, is invoked once per LLM call with the token usage
+	// of that call. Used by UIs to maintain a cumulative cost/token counter.
+	OnUsage func(provider.Usage)
+
 	MaxTurns int
 }
 
@@ -101,6 +112,9 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 			"input_tokens":  resp.Usage.InputTokens,
 			"output_tokens": resp.Usage.OutputTokens,
 		})
+		if a.opts.OnUsage != nil {
+			a.opts.OnUsage(resp.Usage)
+		}
 
 		// Record the model turn so future turns see its context.
 		modelMsg := provider.Message{Role: "model", ToolCalls: resp.ToolCalls, Content: resp.Text}
@@ -260,13 +274,18 @@ func (a *Agent) audit(evtType string, data map[string]any) error {
 	return a.opts.Audit.Log(audit.Event{Type: evtType, Data: data})
 }
 
-// persistMessage writes the message to the conversation log if a writer was
-// supplied. Errors are intentionally swallowed: a flaky disk write should not
-// abort the agent run mid-conversation. They will surface as gaps in the log
-// rather than as fatal failures.
+// persistMessage records the message to the conversation log (if configured)
+// and notifies the OnMessage listener (if configured). The two are independent
+// concerns: persistence is forensic, notification is for live UIs.
+//
+// Errors from the writer are intentionally swallowed: a flaky disk write
+// should not abort the agent run mid-conversation. They surface as gaps in
+// the log, not as fatal failures.
 func (a *Agent) persistMessage(m provider.Message) {
-	if a.opts.Conversation == nil {
-		return
+	if a.opts.Conversation != nil {
+		_ = a.opts.Conversation.Append(conversation.Record{Message: m})
 	}
-	_ = a.opts.Conversation.Append(conversation.Record{Message: m})
+	if a.opts.OnMessage != nil {
+		a.opts.OnMessage(m)
+	}
 }
