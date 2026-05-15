@@ -32,12 +32,18 @@ type Target struct {
 // Options bundles the dependencies of an agent run.
 type Options struct {
 	Provider     provider.Provider
-	Audit        *audit.Logger
-	Reports      *report.Writer
+	Audit        *audit.Logger        // optional
+	Reports      *report.Writer       // optional: when nil, finalize_report terminates without writing a file
 	Tools        *tool.Registry       // env tools (list_files, read_file, grep, ...). May be nil.
 	Conversation *conversation.Writer // optional: persists every message to disk for forensic resume.
 	Soul         *soul.Soul           // optional: injected into the LLM as system prompt.
-	MaxTurns     int
+
+	// SeedMessages, if non-empty, replaces the default "Review {repo} at {sha}"
+	// user seed. Used by subagent flows (memory curator, future spawn_agent)
+	// where the agent is started with a structured task instead of a review.
+	SeedMessages []provider.Message
+
+	MaxTurns int
 }
 
 // Agent is the orchestrator. One Agent per run; create a new one per review.
@@ -69,9 +75,18 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		return nil, err
 	}
 
-	seedMsg := provider.Message{Role: "user", Content: fmt.Sprintf("Review %s at %s.", t.Repo, t.SHA)}
-	msgs := []provider.Message{seedMsg}
-	a.persistMessage(seedMsg)
+	var msgs []provider.Message
+	if len(a.opts.SeedMessages) > 0 {
+		msgs = append(msgs, a.opts.SeedMessages...)
+	} else {
+		msgs = append(msgs, provider.Message{
+			Role:    "user",
+			Content: fmt.Sprintf("Review %s at %s.", t.Repo, t.SHA),
+		})
+	}
+	for _, m := range msgs {
+		a.persistMessage(m)
+	}
 
 	decls := a.allToolDecls()
 	system := a.opts.Soul.SystemPrompt()
@@ -105,11 +120,17 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 				results = append(results, provider.ToolResult{CallID: tc.ID, Name: tc.Name, Output: "ok"})
 			case "finalize_report":
 				rep.Summary, _ = tc.Args["summary"].(string)
-				path, err := a.opts.Reports.Write(*rep)
-				if err != nil {
-					return nil, fmt.Errorf("write report: %w", err)
+				// Reports is optional: subagent flows (e.g. memory curator)
+				// terminate via finalize_report without producing a report file.
+				if a.opts.Reports != nil {
+					path, err := a.opts.Reports.Write(*rep)
+					if err != nil {
+						return nil, fmt.Errorf("write report: %w", err)
+					}
+					_ = a.audit("session_end", map[string]any{"report_path": path, "findings": len(rep.Findings)})
+				} else {
+					_ = a.audit("session_end", map[string]any{"findings": len(rep.Findings)})
 				}
-				_ = a.audit("session_end", map[string]any{"report_path": path, "findings": len(rep.Findings)})
 				return rep, nil
 			default:
 				out, err := a.dispatchEnvTool(ctx, tc)

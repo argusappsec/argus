@@ -11,8 +11,9 @@ import (
 
 	"github.com/redcarbon-dev/argus/pkg/agent"
 	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/codehost/github"
+	"github.com/redcarbon-dev/argus/pkg/conversation"
+	"github.com/redcarbon-dev/argus/pkg/memory"
 	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
 	"github.com/redcarbon-dev/argus/pkg/report"
 	"github.com/redcarbon-dev/argus/pkg/security"
@@ -124,6 +125,20 @@ func reviewCmd() *cobra.Command {
 			reportPath := filepath.Join(home, "reports", reportSlug(u.FullName), co.SHA+".md")
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ review complete: %d findings — %s\n", len(rep.Findings), reportPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  conversation log: %s\n", convoPath)
+
+			// Curate memory on successful completion. A failure here should not
+			// fail the review — the report is the user-facing product, memory is
+			// background hygiene. Log and continue.
+			fmt.Fprintln(cmd.OutOrStdout(), "→ curating memory")
+			if err := memory.Curate(ctx, memory.Options{
+				ConversationPath: convoPath,
+				MemoryPath:       filepath.Join(home, "MEMORY.md"),
+				Provider:         prov,
+			}); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  warning: memory curation failed: %v\n", err)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "  memory: %s\n", filepath.Join(home, "MEMORY.md"))
+			}
 			return nil
 		},
 	}
