@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -112,9 +113,32 @@ func initCmd() *cobra.Command {
 			state := &interviewState{}
 			pricing := defaultPricing()
 
+			// Snapshot the SOUL.md state BEFORE the interview so we can detect
+			// when the agent writes (or rewrites) it during this run.
+			initialSoulMtime := soulMtime(soulPath)
+
 			var program *tea.Program
 			dispatch := func(userInput string) tea.Cmd {
-				go runInterview(ctx, prov, reg, interviewer, userInput, picked.Model, pricing, state, program)
+				go func() {
+					runInterview(ctx, prov, reg, interviewer, userInput, picked.Model, pricing, state, program)
+
+					// After every turn, check whether SOUL.md was just written.
+					// If yes, the interview is done — show the user a clear
+					// closing message and exit the TUI so they're not stuck
+					// in a now-purposeless chat.
+					if cur := soulMtime(soulPath); !cur.IsZero() && cur.After(initialSoulMtime) {
+						program.Send(tui.AgentMessageMsg{Message: provider.Message{
+							Role: "system",
+							Content: fmt.Sprintf(
+								"✓ SOUL.md saved to %s\n\nSetup complete. Press q (or Ctrl+C) to exit, then try:\n  • argus chat — open an interactive chat with your agent\n  • argus review <github-url> — run a one-shot review",
+								soulPath,
+							),
+						}})
+						// Give the user 4s to read the goodbye, then quit.
+						time.Sleep(4 * time.Second)
+						program.Quit()
+					}
+				}()
 				return nil
 			}
 
@@ -307,6 +331,16 @@ func tailOf(s string, n int) string {
 type interviewState struct {
 	mu      sync.Mutex
 	history []provider.Message
+}
+
+// soulMtime returns the modification time of soulPath, or the zero time if
+// the file does not exist.
+func soulMtime(path string) time.Time {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 // runInterview kicks off one agent run per user message, streaming responses
