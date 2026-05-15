@@ -1,25 +1,25 @@
 // Package tui implements the bubbletea-based terminal chat for Argus.
 //
-// The TUI is structured around the Elm pattern: an immutable Model + an
-// Update function that returns a new Model in response to messages. The
-// program owns rendering (View) and dispatches input events.
+// Visual style is intentionally close to Claude Code's terminal UI:
+// bordered viewport for scrollable history on top, bordered input at the
+// bottom, single-line status bar showing cumulative usage and a spinner
+// while the agent is working.
 //
-// External integration:
-//
-//   - Submitting text triggers a goroutine (started by the dispatcher
-//     supplied via Config.Dispatch) that calls agent.Run with the input as a
-//     SeedMessage. The agent's OnMessage hook funnels each generated message
-//     back to the bubbletea program as AgentMessageMsg via tea.Program.Send.
-//   - When the agent run terminates, the dispatcher posts AgentDoneMsg or
-//     AgentErrorMsg, which clears the busy state.
+// The model follows the Elm pattern: Update returns a new Model in response
+// to messages; View renders the current state. External integration is via
+// a Dispatcher closure (see Config) and tea.Program.Send for streaming
+// agent events.
 package tui
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/redcarbon-dev/argus/pkg/provider"
 )
@@ -46,6 +46,9 @@ type Config struct {
 	// submission is recorded in history but no agent run is started — useful
 	// for tests that exercise Model state without provider/agent wiring.
 	Dispatch Dispatcher
+
+	// Title appears in the header. Empty defaults to "argus".
+	Title string
 }
 
 // --- tea.Msg types emitted by the dispatcher ---
@@ -77,13 +80,24 @@ type AgentErrorMsg struct {
 // Model is the Elm-pattern state. Methods return new Model values; the value
 // type is intentional so accidental shared mutation is impossible.
 type Model struct {
-	cfg      Config
-	messages []Message
+	cfg     Config
+	styles  styles
+
+	// Layout — populated by WindowSizeMsg.
+	width, height int
+	ready         bool
+
+	// Components.
+	viewport viewport.Model
 	input    textinput.Model
+	spinner  spinner.Model
+
+	// State.
+	messages []Message
 	busy     bool
 	lastErr  error
 
-	// Cumulative usage across the session, for the status bar.
+	// Cumulative usage for the status bar.
 	tokensIn, tokensOut int
 	costUSD             float64
 }
@@ -91,20 +105,34 @@ type Model struct {
 // New constructs a Model with empty history and a configured text input.
 func New(cfg Config) Model {
 	ti := textinput.New()
-	ti.Placeholder = "Type your message and press Enter..."
+	ti.Placeholder = "Type a message and press Enter — slash commands like /help work here"
+	ti.Prompt = "▷ "
 	ti.Focus()
+	ti.CharLimit = 4096
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+
 	return Model{
-		cfg:   cfg,
-		input: ti,
+		cfg:     cfg,
+		styles:  newStyles(),
+		input:   ti,
+		spinner: sp,
 	}
 }
 
 // Init satisfies tea.Model.
-func (m Model) Init() tea.Cmd { return textinput.Blink }
+func (m Model) Init() tea.Cmd { return tea.Batch(textinput.Blink, m.spinner.Tick) }
 
 // Update handles one bubbletea event.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m = m.relayout()
+		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -115,14 +143,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case AgentMessageMsg:
-		// The agent emits OnMessage for EVERY message it appends to its
-		// running history — including the user seed we just submitted via
-		// handleSubmit. Skip user-role echoes so we don't render the same
-		// prompt twice in the chat.
+		// Drop user-role echoes from the agent's OnMessage hook (we already
+		// rendered them locally in handleSubmit).
 		if msg.Message.Role == "user" {
 			return m, nil
 		}
 		m.messages = append(m.messages, fromProviderMessage(msg.Message))
+		m.refreshViewport()
 		return m, nil
 
 	case AgentDoneMsg:
@@ -139,11 +166,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tokensOut += msg.OutputTokens
 		m.costUSD += msg.CostUSD
 		return m, nil
+
+	case spinner.TickMsg:
+		if !m.busy {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	}
 
+	// Forward everything else to the input + viewport so they get keystrokes,
+	// scroll wheels, etc.
+	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	return m, cmd
+	cmds = append(cmds, cmd)
+	if m.ready {
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
@@ -153,70 +196,180 @@ func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
 	}
 	m.input.SetValue("")
 
-	// Slash commands are client-side: they NEVER reach the dispatcher/agent.
-	// /cancel is the only one allowed while busy; the others are a no-op then.
 	if isSlashCommand(text) {
 		newModel, cmd := m.runSlashCommand(text)
+		newModel.refreshViewport()
 		return newModel, cmd
 	}
 
 	if m.busy {
-		// Ignore plain text while the agent is running. We could queue it,
-		// but silent ignoring is least surprising.
 		return m, nil
 	}
 
 	m.messages = append(m.messages, Message{Role: "user", Content: text})
 	m.busy = true
+	m.refreshViewport()
 
+	cmds := []tea.Cmd{m.spinner.Tick}
 	if m.cfg.Dispatch != nil {
-		return m, m.cfg.Dispatch(text)
+		cmds = append(cmds, m.cfg.Dispatch(text))
 	}
-	// No dispatcher configured (tests): the model is "busy" but never
-	// receives AgentDoneMsg. Tests can dispatch that themselves.
-	return m, nil
+	return m, tea.Batch(cmds...)
+}
+
+// relayout recomputes the viewport size and rebuilds its content. Called on
+// WindowSizeMsg.
+func (m Model) relayout() Model {
+	// Reserve rows for: input box (3: border+line+border) + status bar (1) +
+	// some breathing room between input and status (1).
+	const inputRows = 3
+	const statusRows = 1
+	const padding = 1
+
+	historyHeight := m.height - inputRows - statusRows - padding
+	if historyHeight < 3 {
+		historyHeight = 3
+	}
+	historyWidth := m.width - 2 // borders
+	if historyWidth < 20 {
+		historyWidth = 20
+	}
+
+	if !m.ready {
+		m.viewport = viewport.New(historyWidth, historyHeight)
+		m.ready = true
+	} else {
+		m.viewport.Width = historyWidth
+		m.viewport.Height = historyHeight
+	}
+
+	m.input.Width = m.width - 4 // borders + prompt
+
+	m.refreshViewport()
+	return m
+}
+
+// refreshViewport re-renders all history into the viewport and keeps the user
+// pinned to the bottom (chat-style auto-scroll).
+func (m *Model) refreshViewport() {
+	if !m.ready {
+		return
+	}
+	m.viewport.SetContent(m.renderHistory())
+	m.viewport.GotoBottom()
 }
 
 // View renders the current Model state.
 func (m Model) View() string {
-	var b strings.Builder
-	for _, msg := range m.messages {
-		b.WriteString(renderMessage(msg))
-		b.WriteByte('\n')
+	if !m.ready {
+		// Test / pre-size fallback: simple top-to-bottom rendering so unit
+		// tests that don't dispatch WindowSizeMsg still see the expected text.
+		return m.fallbackView()
 	}
+
+	historyPane := m.styles.historyBox.
+		Width(m.viewport.Width).
+		Height(m.viewport.Height).
+		Render(m.viewport.View())
+
+	inputPane := m.styles.inputBox.
+		Width(m.width - 2).
+		Render(m.input.View())
+
+	statusLine := m.styles.statusBar.Render(m.statusLine())
+
+	return lipgloss.JoinVertical(lipgloss.Left, historyPane, inputPane, statusLine)
+}
+
+// fallbackView is used when no WindowSizeMsg has arrived (typical in tests).
+// It mirrors View() conceptually but skips lipgloss boxing so plain-string
+// assertions still match.
+func (m Model) fallbackView() string {
+	var b strings.Builder
+	b.WriteString(m.renderHistory())
 	if m.lastErr != nil {
 		fmt.Fprintf(&b, "\n[error] %s\n", m.lastErr.Error())
 	}
 	if m.busy {
 		b.WriteString("\n(working...)\n")
 	}
-	b.WriteByte('\n')
+	b.WriteString("\n")
 	b.WriteString(m.input.View())
-	b.WriteByte('\n')
-	b.WriteString(m.statusBar())
+	b.WriteString("\n")
+	b.WriteString(m.statusLine())
 	return b.String()
 }
 
-// statusBar renders the bottom line showing cumulative usage.
-func (m Model) statusBar() string {
-	return fmt.Sprintf("─── tokens in:%d out:%d  cost:$%.4f ───",
-		m.tokensIn, m.tokensOut, m.costUSD)
+func (m Model) renderHistory() string {
+	if len(m.messages) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, msg := range m.messages {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(m.renderMessage(msg))
+	}
+	return b.String()
 }
 
-func renderMessage(msg Message) string {
+func (m Model) renderMessage(msg Message) string {
 	switch msg.Role {
 	case "user":
-		return "> " + msg.Content
+		return m.styles.userPrompt.Render("▶ you") + "\n" +
+			m.styles.userBody.Render(indent(msg.Content, "  "))
 	case "agent":
-		if msg.Content == "" {
-			return "argus: …"
+		body := msg.Content
+		if body == "" {
+			body = "…"
 		}
-		return "argus: " + msg.Content
+		return m.styles.agentPrompt.Render("◆ argus") + "\n" +
+			m.styles.agentBody.Render(indent(body, "  "))
 	case "tool":
-		return "  [tool " + msg.Name + "] " + truncate(msg.Content, 200)
+		header := m.styles.toolPrefix.Render(fmt.Sprintf("  ↳ %s", msg.Name))
+		body := m.styles.toolBody.Render(indent(truncate(msg.Content, 400), "    "))
+		return header + "\n" + body
+	case "system":
+		return m.styles.systemPrefix.Render("• system") + "\n" +
+			m.styles.systemBody.Render(indent(msg.Content, "  "))
 	default:
 		return msg.Content
 	}
+}
+
+func (m Model) statusLine() string {
+	parts := []string{
+		fmt.Sprintf("%s %s",
+			m.styles.statusLabel.Render("tokens in:"),
+			m.styles.statusValue.Render(fmt.Sprintf("%d", m.tokensIn))),
+		fmt.Sprintf("%s %s",
+			m.styles.statusLabel.Render("out:"),
+			m.styles.statusValue.Render(fmt.Sprintf("%d", m.tokensOut))),
+		fmt.Sprintf("%s %s",
+			m.styles.statusLabel.Render("cost:"),
+			m.styles.statusValue.Render(fmt.Sprintf("$%.4f", m.costUSD))),
+	}
+	line := strings.Join(parts, m.styles.statusDivide.Render(" │ "))
+
+	if m.busy {
+		line += "  " + m.styles.statusWork.Render(m.spinner.View()+" working")
+	}
+	if m.lastErr != nil {
+		line += "  " + m.styles.errorBody.Render("⚠ "+m.lastErr.Error())
+	}
+	return line
+}
+
+func indent(s, prefix string) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = prefix + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 func truncate(s string, max int) string {
@@ -226,14 +379,13 @@ func truncate(s string, max int) string {
 	return s[:max] + " …"
 }
 
-// fromProviderMessage converts the agent's wire-format Message into one or
-// more displayable Messages. A single agent turn may produce multiple tool
-// call lines and/or a text body — we collapse them here into a representative
-// display Message (we may iterate later if granular display is needed).
+// fromProviderMessage converts the agent's wire-format Message into one
+// displayable Message. A single agent turn may produce multiple tool call
+// lines and/or a text body — we collapse them into a representative display
+// message (granular per-call display can be added later if needed).
 func fromProviderMessage(m provider.Message) Message {
 	switch m.Role {
 	case "model":
-		// Prefer text content if present; else describe the tool calls.
 		if m.Content != "" {
 			return Message{Role: "agent", Content: m.Content}
 		}
@@ -250,12 +402,8 @@ func fromProviderMessage(m provider.Message) Message {
 		if len(m.ToolResults) == 0 {
 			return Message{Role: "tool", Content: ""}
 		}
-		tr := m.ToolResults[0] // simplification: show only first result
-		return Message{
-			Role:    "tool",
-			Name:    tr.Name,
-			Content: tr.Output,
-		}
+		tr := m.ToolResults[0]
+		return Message{Role: "tool", Name: tr.Name, Content: tr.Output}
 
 	case "user":
 		return Message{Role: "user", Content: m.Content}
