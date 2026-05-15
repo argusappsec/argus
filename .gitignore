@@ -1,0 +1,21 @@
+# Binaries
+/argus
+*.test
+*.out
+
+# Go workspace
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Local secrets and runtime
+.env
+.env.local
+.argus/
+coverage.txt
