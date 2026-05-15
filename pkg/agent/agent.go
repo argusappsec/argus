@@ -121,6 +121,16 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		msgs = append(msgs, modelMsg)
 		a.persistMessage(modelMsg)
 
+		// Text-only response (no tool calls) = natural pause point.
+		// In chat mode this returns control to the user. In review mode it
+		// means the model has nothing actionable to do; we exit instead of
+		// burning turns asking it the same question. Same exit path either
+		// way; callers distinguish via opts.Reports being nil/non-nil.
+		if len(resp.ToolCalls) == 0 {
+			_ = a.audit("session_end", map[string]any{"reason": "text_only_response", "findings": len(rep.Findings)})
+			return rep, nil
+		}
+
 		results := make([]provider.ToolResult, 0, len(resp.ToolCalls))
 		for _, tc := range resp.ToolCalls {
 			_ = a.audit("tool_call", map[string]any{"turn": turn, "name": tc.Name})

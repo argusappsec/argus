@@ -9,6 +9,30 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/provider"
 )
 
+// TestModel_AgentEchoesUserMessageIsIgnored: the agent's OnMessage hook
+// fires for every message it appends to its history, including the seed user
+// message that the TUI already rendered locally in handleSubmit. The TUI
+// must drop those echoes to avoid double-displaying user input.
+func TestModel_AgentEchoesUserMessageIsIgnored(t *testing.T) {
+	m := tui.New(tui.Config{Dispatch: func(string) tea.Cmd { return nil }})
+	m = m.WithInput("review github.com/x/y")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model := updated.(tui.Model)
+	if len(model.Messages()) != 1 {
+		t.Fatalf("setup: expected 1 message after submit, got %d", len(model.Messages()))
+	}
+
+	// Now simulate the agent's OnMessage echoing the same user seed.
+	updated, _ = model.Update(tui.AgentMessageMsg{
+		Message: provider.Message{Role: "user", Content: "review github.com/x/y"},
+	})
+	model = updated.(tui.Model)
+
+	if len(model.Messages()) != 1 {
+		t.Errorf("user echo from agent must be ignored; got %d messages: %+v", len(model.Messages()), model.Messages())
+	}
+}
+
 // TestModel_AgentMessageAppendsToHistory: when the agent dispatcher sends an
 // AgentMessageMsg back into the TUI (via tea.Program.Send), the new message
 // is appended to history with the appropriate role.

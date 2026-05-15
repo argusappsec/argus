@@ -115,6 +115,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case AgentMessageMsg:
+		// The agent emits OnMessage for EVERY message it appends to its
+		// running history — including the user seed we just submitted via
+		// handleSubmit. Skip user-role echoes so we don't render the same
+		// prompt twice in the chat.
+		if msg.Message.Role == "user" {
+			return m, nil
+		}
 		m.messages = append(m.messages, fromProviderMessage(msg.Message))
 		return m, nil
 
