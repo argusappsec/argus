@@ -33,6 +33,52 @@
 
 ---
 
+## 2bis. Modello di deployment (daemon + client)
+
+Da v0.4 in poi Argus segue il pattern **single daemon + many clients**, simile a Docker (`dockerd` + `docker` CLI) o a OpenClaw (Gateway + apps).
+
+```
+                    ┌───────────────────────────────────┐
+                    │         ARGUS DAEMON              │
+                    │   (un solo processo, sempre vivo) │
+                    │                                   │
+                    │  • Agent loop                     │
+                    │  • Tool Registry                  │
+                    │  • Cron scheduler                 │
+                    │  • Audit log + budget             │
+                    │  • Cache repo + reports store     │
+                    │                                   │
+                    │  Endpoint:                        │
+                    │  • Unix socket   (locale)         │
+                    │  • Slack Socket Mode (outbound)   │
+                    │  • MCP HTTP    (v0.7, inbound)    │
+                    │  • Webhook     (v0.7)             │
+                    │  • argus serve HTTP (web UI)      │
+                    └──────┬────────────────────────────┘
+                           │
+   ┌───────────────────────┼────────────────────┬──────────────────────┐
+   ▼                       ▼                    ▼                      ▼
+┌──────────┐         ┌──────────┐         ┌──────────┐         ┌─────────────┐
+│ argus    │         │ argus    │         │ Slack    │         │ Claude Code │
+│ chat     │         │ review   │         │ user     │         │ + altri MCP │
+│ (TUI)    │         │ (script) │         │ X        │         │ client      │
+└──────────┘         └──────────┘         └──────────┘         └─────────────┘
+ operatore           operatore             utenti finali        dev/automation
+ con shell           con shell             del team
+```
+
+**Punti chiave**:
+
+- **Tutto è client del daemon**. La TUI locale, lo script `review`, Slack, MCP. Il loop dell'agente vive UNA volta sola, dentro il daemon.
+- **Sul server di produzione gira solo il daemon**. Nessuna TUI lì. Gli operatori (Davide) accedono via SSH e usano `argus chat` localmente — il client trova il socket Unix sulla macchina remota.
+- **Utenti finali del team usano Slack** (canale principale) o **web UI** (dashboard report). Non hanno bisogno di shell access.
+- **Per visualizzare i report**: il daemon serve HTTP via `argus serve`. Slack risponde con un link diretto. Il browser è la home dell'umano.
+- **Auth tra client e daemon**: Unix socket usa OS permissions; Slack usa user_id allowlist; MCP usa bearer token; web UI usa bearer token in v0.4 (OAuth in v0.7).
+
+**Per le versioni pre-v0.4**: il "daemon" non esiste ancora. `argus review` (v0.1) e `argus chat` (v0.2) sono **processi self-contained**: il loop gira inline, esce a fine. La transizione client-server è il refactor centrale di v0.4 (lifecycle, IPC, separazione di codice). La TUI di v0.2 viene scritta per essere già "pronta a parlare con un transport": cambia solo *da dove* arrivano e *dove vanno* i messaggi.
+
+---
+
 ## 3. Roadmap ad anelli concentrici
 
 Ogni anello aggiunge **un solo concetto agentic nuovo** da imparare. Si parte dal cuore (agent loop) e si espande verso l'esterno (canali, integrazioni, autonomia).
@@ -62,17 +108,45 @@ Ogni anello aggiunge **un solo concetto agentic nuovo** da imparare. Si parte da
 - Output: report markdown con frontmatter YAML in `~/.argus/reports/<repo>/<sha>.md`
 - Finding ID stabile: `hash(rule_id + normalized_code_snippet)` (sopravvive a refactor di righe/file)
 
-### v0.2 — Soul, Memory, Context
-**Concetto pedagogico**: identità, knowledge injection, context economy.
+### v0.2 — Chat TUI + Soul, Memory, Context
+**Concetto pedagogico**: identità, knowledge injection, context economy, UX conversazionale, separazione client UX vs LLM agency.
 
+**Chat TUI (bubbletea)** — anticipata da v0.5 perché senza chat l'identità persistente (SOUL) è invisibile:
+- `argus chat` (o `argus` senza argomenti) apre TUI conversazionale costruita su `github.com/charmbracelet/bubbletea` (pattern Elm: model/view/update).
+- Layout: pannello chat scrollabile in alto, input box in basso, status bar (turn corrente, tokens, costo) in fondo.
+- `argus review <github-url>` rimane come scorciatoia non-interattiva (= chat seeded con un solo prompt iniziale, esce al `finalize_report`). Stessa pipeline sotto.
+
+**Input flessibile** — un review può ora partire da:
+- GitHub URL: `start_review_github(url, ref?)` come tool (l'LLM lo invoca quando l'utente lo chiede in chat)
+- Path locale: `start_review_local(path)` per codice già sulla macchina (utile per dev, per testare skill, per integrazioni MCP future)
+- I tool file-scoped (list_files, read_file, grep, semgrep, gitleaks) diventano **session-aware**: invece di ricevere `root string` al costruttore, ricevono un `*Session` con un `Root()` dinamico. Quando `start_review_*` clona, aggiorna la session. Cambia il target → cambia tutto.
+
+**Slash commands (client-side, non passano dall'LLM)**:
+- `/help` — elenco
+- `/clear` — chiude sessione corrente (MEMORY curator gira), apre nuova
+- `/cost` — token cumulativi + USD spesi
+- `/cancel` — interrompe tool call in corso (alias Ctrl-C)
+- `/quit` — esce (alias Ctrl-D)
+Pedagogicamente mostrano il confine tra "cosa decide il client" vs "cosa decide l'LLM".
+
+**Conversation persistence** — ogni messaggio user/model/tool viene appeso a `~/.argus/conversations/<session-id>.jsonl` appena prodotto:
+- Resume: `argus chat --resume <id>`
+- Lista: `argus chat --list`
+- Forensic value: in security il *processo* che porta a un finding *è il prodotto*. Se l'audit della conversazione vive solo in RAM, perdi la catena di reasoning quando un finding viene contestato.
+
+**SOUL / MEMORY / CONTEXT** (come da spec precedente):
 - `SOUL.md` — markdown + frontmatter, generato da `argus init` (bootstrap interview, come WildGecu). Contiene: azienda, industry, compliance regime, risk tolerance, escalation contact, repo monitorati, persona/tone.
 - `CONTEXT/` — cartella di markdown letta on-demand dall'agente con tool `list_context()` e `read_context(name)`. Esempi: `architecture.md`, `threat-model.md`, `compliance-soc2.md`, `known-fps.md`, `escalation.md`.
 - `MEMORY.md` — curato da un **memory-curator subagent** a fine sessione (anche se la spec subagent completa arriva in v0.3, questo è il primo spawn ephemeral implementato).
 - Vector store / embeddings: rinviati a post-v0.7 quando il CONTEXT supererà i 100KB.
 
-### v0.3 — Skill system + Subagent ephemeral
-**Concetto pedagogico**: delega, isolamento contesto, riusabilità.
+**Preparation refactor per onboarding collega** (fatto durante v0.2):
+- Split di `pkg/security/security.go` in file separati (`semgrep.go`, `gitleaks.go`, `exec.go`) per facilitare l'aggiunta di nuovi tool security senza conflitti di merge.
 
+### v0.3 — Skill system + Subagent ephemeral + HTML renderer
+**Concetto pedagogico**: delega, isolamento contesto, riusabilità + visibilità output.
+
+**Skill + subagent**:
 - Skill loader markdown: `~/.argus/skills/<name>/SKILL.md` con frontmatter YAML (description, model, tools, when_to_use). Lazy-loaded come WildGecu.
 - 2-3 skill markdown oltre alla white-box review (es. `secret-scan`, `dep-audit`, `threat-model`).
 - Subagent ephemeral via tool `spawn_agent(name, task, model?, tools?)`:
@@ -82,16 +156,20 @@ Ogni anello aggiunge **un solo concetto agentic nuovo** da imparare. Si parte da
   - Ritorna stringa (o JSON) al parent
 - Ogni tipo di subagent ha **proprio SOUL** in `~/.argus/subagents/<name>/SOUL.md`.
 
-### v0.4 — Daemon, cron, HTML renderer
-**Concetto pedagogico**: stato persistente, scheduling, separazione data/view (two-layer reporting).
+**HTML renderer** (`argus serve`) — promosso a v0.3 perché senza dashboard accessibile via browser, il team non può vedere i report (un utente Slack non ha shell sul server). Pattern **two-layer**:
+- L'agente continua a produrre markdown + frontmatter YAML
+- Pacchetto Go `pkg/render/` legge i report e produce HTML (`html/template` + Chart.js per trend)
+- `argus serve --port 8080` espone HTTP locale: dashboard cross-repo, trend, diff side-by-side, filtri severity/category, drill-down al singolo finding
+- v0.3 ancora senza auth (assume rete fidata / Tailscale / SSH tunnel). Auth bearer-token in v0.4 quando arriva il daemon.
+
+### v0.4 — Daemon, cron, web auth
+**Concetto pedagogico**: stato persistente, scheduling, lifecycle daemon, client-server split.
 
 - `argus start` daemon background. IPC via Unix socket. Lifecycle: `start`/`stop`/`restart`/`status`/`logs`/`health`.
+- `argus chat`, `argus review`, `argus cron` diventano **client** che parlano al daemon via Unix socket. Refactor: il loop migra dal codice CLI al codice daemon. La TUI rimane invariata (cambia solo il transport).
 - Scheduler in-process: `gocron`. Comandi: `argus cron ls/add/rm`.
-- HTML renderer pattern **two-layer**:
-  - L'agente continua a produrre markdown + frontmatter YAML
-  - Pacchetto Go `pkg/render/` legge i report e produce HTML statico (`html/template` + Chart.js per trend)
-  - `argus serve` apre HTTP locale (es. :8080) con dashboard cross-repo, trend, diff side-by-side, filtri severity/category
-  - Output statico pubblicabile su S3/GitHub Pages per scenari aziendali
+- `argus serve` diventa parte del daemon, con bearer-token auth (token salvato in `~/.argus/serve-token`).
+- Output statico pubblicabile su S3/GitHub Pages per scenari aziendali.
 
 ### v0.5 — Slack bridge
 **Concetto pedagogico**: canali I/O asincroni, multi-actor identity.
@@ -247,30 +325,52 @@ argus/
 │   ├── costs.go                  # v0.1 — view spend
 │   └── serve.go                  # v0.4 — HTTP renderer
 ├── pkg/
+│   ├── ── CORE ──
 │   ├── agent/                    # agent loop, prompt assembly, stop conditions
-│   ├── provider/                 # interface Provider
-│   │   ├── provider.go
-│   │   └── gemini/               # GeminiProvider (v0.1)
-│   │       └── gemini.go
-│   ├── session/                  # message history, context budget
-│   ├── skill/                    # SkillLoader (markdown frontmatter)
-│   ├── subagent/                 # spawn_agent, isolated context
-│   ├── soul/                     # SOUL parser+writer + bootstrap interview
-│   ├── memory/                   # memory-curator subagent
-│   ├── context/                  # list/read tools per knowledge aziendale
+│   ├── session/                  # mutable run-scoped state (Root, ID, ...)
+│   ├── soul/                     # SOUL.md identity (parse/write + SystemPrompt)
+│   ├── memory/                   # memory-curator subagent (v0.2.1)
+│   ├── conversation/             # JSONL append-only conversation persistence
 │   ├── audit/                    # JSONL hash-chain logger
 │   ├── budget/                   # cost calculator, daily cap, per-session cap
-│   ├── github/                   # PAT auth, clone+cache per SHA
-│   ├── security/                 # wrappers su semgrep, gitleaks, trivy, govulncheck
 │   ├── report/                   # markdown writer + finding-id (hash snippet)
-│   ├── render/                   # html/template, Chart.js, argus serve
-│   ├── daemon/                   # Unix socket, gocron
-│   ├── channel/                  # interface Channel
-│   │   └── slack/                # Socket Mode bridge (v0.5)
-│   ├── mcp/                      # MCP server Resources+Tools (v0.7)
-│   └── pentest/                  # v1.0 — scope, denylist, sandbox Docker
+│   ├── tool/                     # Tool interface + Registry + file-scoped tools
+│   ├── skill/                    # SkillLoader (markdown frontmatter) — v0.3
+│   ├── subagent/                 # spawn_agent, isolated context — v0.3
+│   ├── render/                   # html/template, Chart.js, argus serve — v0.3
+│   ├── daemon/                   # Unix socket, gocron — v0.4
+│   ├── pentest/                  # scope, denylist, sandbox Docker — v1.0
+│   │
+│   ├── ── EXTERNAL INTEGRATIONS (categorie, una sotto-cartella per servizio) ──
+│   ├── provider/                 # LLM providers
+│   │   ├── provider.go           #   interface Provider
+│   │   ├── gemini/               #   GeminiProvider (v0.1)
+│   │   ├── openai/               #   OpenAIProvider (v0.6)
+│   │   └── anthropic/            #   AnthropicProvider (v0.6)
+│   ├── codehost/                 # Code source hosts
+│   │   ├── github/               #   PAT auth, clone+cache per SHA
+│   │   └── gitlab/               #   futuro, se servirà
+│   ├── channel/                  # User I/O channels — v0.2.1+
+│   │   ├── channel.go            #   interface Channel
+│   │   ├── tui/                  #   bubbletea (v0.2.1)
+│   │   ├── slack/                #   Socket Mode (v0.5)
+│   │   ├── mcp/                  #   MCP server (v0.7)
+│   │   └── webhook/              #   GitHub webhook (v0.7) — usa codehost/github per signature
+│   └── security/                 # Security scanner CLIs (un file per tool)
+│       ├── exec.go               #   Runner interface + ExecRunner
+│       ├── semgrep.go            #   v0.1
+│       ├── gitleaks.go           #   v0.1
+│       ├── trivy.go              #   v0.2.1+ (primo PR del collega)
+│       ├── trufflehog.go         #   v0.2.1+
+│       └── osv-scanner.go        #   v0.2.1+
 └── ARCHITECTURE.md               # questo documento
 ```
+
+**Tassonomia dei package**: top-level dentro `pkg/` ci sono due tipi:
+- **Core** — l'agente e il suo stato. Nome = funzione interna (agent, session, audit, ...).
+- **External integrations** — categorie di servizi esterni. Nome = *tipo* di servizio (provider, codehost, channel, security), una sotto-cartella per ciascun servizio concreto.
+
+Regola: se il nome è specifico di un servizio (github, slack, gemini, semgrep) deve stare DENTRO una categoria, non al top level.
 
 ---
 
@@ -281,7 +381,13 @@ argus/
 | Linguaggio | Go | da v0.1 |
 | Tool calling | Native Function Calling Gemini | da v0.1 |
 | Storage | Markdown + frontmatter YAML | da v0.1 |
-| Two-layer reporting | Agent→markdown, renderer Go→HTML | renderer in v0.4 |
+| Two-layer reporting | Agent→markdown, renderer Go→HTML | renderer in v0.3 |
+| TUI library | bubbletea (Charmbracelet) | da v0.2 |
+| Chat persistence | Conversazione JSONL su disco + resume per session-id | da v0.2 |
+| Slash commands client-side | /help /clear /cost /cancel /quit | da v0.2 |
+| Input review | GitHub URL (start_review_github) + path locale (start_review_local) | da v0.2 |
+| Session-aware tools | I tool file-scoped leggono root da Session, non costruttore | da v0.2 |
+| Deployment model | Daemon + many clients (TUI, Slack, MCP, webhook) — pre-v0.4 self-contained | da v0.4 |
 | Finding ID | `hash(rule_id + normalized_snippet)` | da v0.1 |
 | Subagent | Ephemeral spawn (pattern WildGecu) | da v0.3 |
 | SOUL per subagent | Sì, file dedicato per tipo | da v0.3 |
@@ -306,9 +412,9 @@ argus/
 | Anello | Cosa impari |
 |--------|-------------|
 | v0.1 | Agent loop sincrono, native tool calling, prompt assembly, stop conditions, token budget. |
-| v0.2 | Prompt assembly dinamica, context economy, identità persistente, memory curation come subagent. |
-| v0.3 | Delega via spawn, isolamento context, riusabilità via skill markdown, model override per cost. |
-| v0.4 | Daemon lifecycle, IPC Unix socket, scheduling persistente, separazione data/view. |
+| v0.2 | TUI conversazionale (pattern Elm/bubbletea), identità persistente (SOUL), context economy (CONTEXT on-demand), memory curation come subagent, separazione client UX vs LLM agency (slash commands), conversation persistence. |
+| v0.3 | Delega via spawn, isolamento context, riusabilità via skill markdown, model override per cost, two-layer reporting (markdown→HTML). |
+| v0.4 | Daemon lifecycle, IPC Unix socket, scheduling persistente, client-server split, bearer-token auth web UI. |
 | v0.5 | Canali asincroni, multi-actor identity, Block Kit, streaming live message updates. |
 | v0.6 | Scaling parallelismo, astrazione provider, alias di modelli. |
 | v0.7 | Interoperabilità MCP, RBAC, webhook + signature verification. |
