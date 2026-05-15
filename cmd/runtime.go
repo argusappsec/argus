@@ -114,6 +114,7 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 	reg.Register(tool.NewGrep(sess))
 	reg.Register(tool.NewListContext(filepath.Join(home, "context")))
 	reg.Register(tool.NewReadContext(filepath.Join(home, "context")))
+	reg.Register(tool.NewWriteContext(filepath.Join(home, "context")))
 	reg.Register(tool.NewStartReviewLocal(sess))
 	reg.Register(tool.NewStartReviewGitHub(sess, cloner))
 	reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
