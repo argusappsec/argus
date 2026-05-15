@@ -67,9 +67,13 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		return nil, fmt.Errorf("no model configured. Run `argus init` to pick one, or pass --model")
 	}
 
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is required. Run `argus init` to configure it, or set it in %s/.env", home)
+	// Resolve the provider's API key via the config (env() reference is the
+	// common case). Falls back to direct GEMINI_API_KEY lookup so users who
+	// haven't run `argus init` yet but exported the var still get a working
+	// runtime.
+	apiKey, err := resolveAPIKey(cfg, modelID)
+	if err != nil {
+		return nil, fmt.Errorf("api key: %w (run `argus init` to configure)", err)
 	}
 
 	sess := session.New()
@@ -154,6 +158,23 @@ func loadHomeEnv(home string) error {
 	}
 	e.ApplyToProcess()
 	return nil
+}
+
+// resolveAPIKey returns the secret for the provider that backs modelID.
+// First tries cfg's provider entry (the canonical path after `argus init`).
+// If the config has no matching provider, falls back to a direct lookup of
+// GEMINI_API_KEY so a freshly-shell-exported value still works.
+func resolveAPIKey(cfg *config.Config, modelID string) (string, error) {
+	if cfg != nil && len(cfg.Providers) > 0 {
+		tmp := &config.Config{Providers: cfg.Providers, DefaultModel: modelID}
+		if p, _, err := tmp.ProviderForDefaultModel(); err == nil {
+			return p.ResolveAPIKey()
+		}
+	}
+	if k := os.Getenv("GEMINI_API_KEY"); k != "" {
+		return k, nil
+	}
+	return "", fmt.Errorf("no provider configured for model %q and GEMINI_API_KEY unset", modelID)
 }
 
 // resolveHome returns the directory Argus reads and writes state from.

@@ -70,8 +70,8 @@ func initCmd() *cobra.Command {
 
 			cfg.Providers = map[string]config.ProviderConfig{
 				picked.Provider: {
-					Type:      picked.Provider,
-					APIKeyEnv: providerEnvVar(picked.Provider),
+					Type:   picked.Provider,
+					APIKey: config.EnvRef(providerEnvVar(picked.Provider)),
 				},
 			}
 			cfg.DefaultModel = picked.Model

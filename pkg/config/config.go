@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,12 +16,16 @@ import (
 // intentionally readable: a human can hand-edit it to add a second provider
 // or swap a default model.
 //
+// Any string field can use the env(VAR_NAME) reference syntax to pull a
+// value from the process environment at load time. This is how secrets are
+// kept out of the YAML while still being part of the same config surface.
+//
 // Example:
 //
 //	providers:
 //	  gemini:
 //	    type: gemini
-//	    api_key_env: GEMINI_API_KEY
+//	    api_key: env(GEMINI_API_KEY)
 //	default_model: gemini-2.5-flash
 type Config struct {
 	// Providers maps a logical name (free choice) to its connection config.
@@ -36,15 +41,62 @@ type Config struct {
 
 // ProviderConfig captures one provider's connection info. Today only `type`
 // "gemini" is implemented; "openai" / "anthropic" / "ollama" are reserved.
+//
+// Both APIKey and URL accept the env(VAR_NAME) syntax for indirection —
+// resolve them via ResolveAPIKey / ResolveURL rather than reading the raw
+// fields directly.
 type ProviderConfig struct {
 	Type string `yaml:"type"`
-	// APIKeyEnv is the name of the env var (in .env or the shell) that holds
-	// the secret API key. Indirection on purpose: secrets never get committed.
-	APIKeyEnv string `yaml:"api_key_env,omitempty"`
-	// DefaultURL is an optional base URL override (for self-hosted or proxy
+	// APIKey is either a literal secret (discouraged) or an env() reference
+	// like "env(GEMINI_API_KEY)". The env form is what `argus init` writes
+	// so secrets stay out of the YAML file.
+	APIKey string `yaml:"api_key,omitempty"`
+	// URL is an optional base URL override (self-hosted or proxy
 	// deployments). Empty means "use the provider's official endpoint".
-	DefaultURL string `yaml:"default_url,omitempty"`
+	// Also accepts env() references.
+	URL string `yaml:"url,omitempty"`
 }
+
+// ResolveValue takes a raw config string and returns:
+//   - the value of the referenced env var, if `raw` is `env(VAR_NAME)`
+//   - the raw string unchanged otherwise
+//
+// Whitespace inside env(...) is allowed: `env( GEMINI_API_KEY )` works.
+// An empty env var name or a missing referenced variable both return an
+// error so misconfiguration surfaces early rather than as a 401 from the
+// provider.
+func ResolveValue(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if !strings.HasPrefix(s, "env(") || !strings.HasSuffix(s, ")") {
+		return raw, nil
+	}
+	name := strings.TrimSpace(s[len("env(") : len(s)-1])
+	if name == "" {
+		return "", fmt.Errorf("config: env() reference has empty variable name")
+	}
+	val := os.Getenv(name)
+	if val == "" {
+		return "", fmt.Errorf("config: env var %q is empty or unset", name)
+	}
+	return val, nil
+}
+
+// ResolveAPIKey returns the resolved secret. See ResolveValue for syntax.
+func (p ProviderConfig) ResolveAPIKey() (string, error) {
+	return ResolveValue(p.APIKey)
+}
+
+// ResolveURL returns the resolved URL (empty if not set).
+func (p ProviderConfig) ResolveURL() (string, error) {
+	if p.URL == "" {
+		return "", nil
+	}
+	return ResolveValue(p.URL)
+}
+
+// EnvRef returns the raw config string formatted as an env() reference.
+// Used by argus init when writing the YAML.
+func EnvRef(varName string) string { return "env(" + varName + ")" }
 
 // LoadConfig reads path. A missing file is not an error: the returned Config
 // is empty and ready to be filled in by argus init.
