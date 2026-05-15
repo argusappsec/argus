@@ -86,17 +86,25 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		return nil, err
 	}
 
+	// Build the initial conversation. When SeedMessages is provided the
+	// caller already owns those messages (history from a previous turn,
+	// a structured prompt, etc.); we DO NOT replay them through
+	// persistMessage — that would duplicate them in the conversation log
+	// and re-emit them to the OnMessage listener. The caller is responsible
+	// for any persistence of seed messages.
+	//
+	// When SeedMessages is empty we synthesize the default "Review {repo}
+	// at {sha}" prompt and persist it ourselves: the caller never saw it.
 	var msgs []provider.Message
 	if len(a.opts.SeedMessages) > 0 {
 		msgs = append(msgs, a.opts.SeedMessages...)
 	} else {
-		msgs = append(msgs, provider.Message{
+		seedMsg := provider.Message{
 			Role:    "user",
 			Content: fmt.Sprintf("Review %s at %s.", t.Repo, t.SHA),
-		})
-	}
-	for _, m := range msgs {
-		a.persistMessage(m)
+		}
+		msgs = append(msgs, seedMsg)
+		a.persistMessage(seedMsg)
 	}
 
 	decls := a.allToolDecls()

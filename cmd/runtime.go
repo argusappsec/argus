@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
+	"github.com/redcarbon-dev/argus/pkg/budget"
 	"github.com/redcarbon-dev/argus/pkg/codehost/github"
 	"github.com/redcarbon-dev/argus/pkg/config"
 	"github.com/redcarbon-dev/argus/pkg/conversation"
@@ -22,7 +23,8 @@ import (
 // argus review. Constructing them in one place keeps the two commands
 // drift-proof — if a new tool is added, it's registered here once.
 type runtime struct {
-	Home string
+	Home    string
+	ModelID string // resolved model id (flag override > config default)
 
 	Session      *session.Session
 	Registry     *tool.Registry
@@ -119,6 +121,7 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 
 	return &runtime{
 		Home:         home,
+		ModelID:      modelID,
 		Session:      sess,
 		Registry:     reg,
 		Soul:         soulPtr,
@@ -128,6 +131,20 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		ConvoPath:    convoPath,
 		Provider:     prov,
 	}, nil
+}
+
+// defaultPricing returns a hardcoded best-effort pricing table for the
+// models Argus knows about. Numbers are USD per 1M tokens, sourced from the
+// provider's public pricing page as of the time this code was written. They
+// drift; v0.4+ will move this to argus.yaml so users can override.
+func defaultPricing() budget.Pricing {
+	return budget.Pricing{
+		"gemini-2.5-flash": {InputUSDPer1M: 0.30, OutputUSDPer1M: 2.50},
+		"gemini-2.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 10.00},
+		"gemini-2.0-flash": {InputUSDPer1M: 0.10, OutputUSDPer1M: 0.40},
+		"gemini-1.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 5.00},
+		"gemini-1.5-flash": {InputUSDPer1M: 0.075, OutputUSDPer1M: 0.30},
+	}
 }
 
 // Close releases the runtime's resources. Safe to call on a nil runtime.

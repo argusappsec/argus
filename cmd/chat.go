@@ -9,7 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/redcarbon-dev/argus/pkg/agent"
+	"github.com/redcarbon-dev/argus/pkg/budget"
 	"github.com/redcarbon-dev/argus/pkg/channel/tui"
+	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/memory"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 )
@@ -80,7 +82,33 @@ func chatCmd() *cobra.Command {
 
 // runChatAgent executes one agent run for a single user input and streams its
 // progress to the TUI program. Called in its own goroutine by the dispatcher.
+//
+// Multi-turn context is preserved across runs by re-seeding the agent with
+// every persisted message from the conversation log. The agent no longer
+// emits the seed messages back through OnMessage/persistMessage, so we are
+// responsible for persisting the new user message directly here.
 func runChatAgent(ctx context.Context, rt *runtime, userInput string, maxTurns int, program *tea.Program) {
+	prev, err := conversation.ReadAll(rt.ConvoPath)
+	if err != nil {
+		program.Send(tui.AgentErrorMsg{Err: fmt.Errorf("read history: %w", err)})
+		return
+	}
+	seed := make([]provider.Message, 0, len(prev)+1)
+	for _, r := range prev {
+		seed = append(seed, r.Message)
+	}
+	userMsg := provider.Message{Role: "user", Content: userInput}
+	seed = append(seed, userMsg)
+
+	// Persist the new user input ourselves (the agent skips persistence of
+	// caller-provided SeedMessages).
+	if err := rt.Conversation.Append(conversation.Record{Message: userMsg}); err != nil {
+		program.Send(tui.AgentErrorMsg{Err: fmt.Errorf("persist user message: %w", err)})
+		return
+	}
+
+	pricing := defaultPricing()
+
 	ag := agent.New(agent.Options{
 		Provider:     rt.Provider,
 		Audit:        rt.Audit,
@@ -88,17 +116,16 @@ func runChatAgent(ctx context.Context, rt *runtime, userInput string, maxTurns i
 		Conversation: rt.Conversation,
 		Soul:         rt.Soul,
 		MaxTurns:     maxTurns,
-		SeedMessages: []provider.Message{{Role: "user", Content: userInput}},
+		SeedMessages: seed,
 
 		OnMessage: func(m provider.Message) {
 			program.Send(tui.AgentMessageMsg{Message: m})
 		},
 		OnUsage: func(u provider.Usage) {
-			// Cost computation deferred — for now we surface raw token counts.
-			// pkg/budget will be wired in once the pricing table is populated.
 			program.Send(tui.AgentUsageMsg{
 				InputTokens:  u.InputTokens,
 				OutputTokens: u.OutputTokens,
+				CostUSD:      budget.CostFor(pricing, rt.ModelID, u.InputTokens, u.OutputTokens),
 			})
 		},
 	})
