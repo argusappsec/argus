@@ -84,14 +84,12 @@ func initCmd() *cobra.Command {
 				return nil
 			}
 
-			seed := "Hi, I'm here to help you set up Argus for your team. " +
-				"I'll ask a few questions, then write a SOUL.md you can edit later. " +
-				"Reply with anything to begin (or describe your company/use-case if you already know what you want)."
+			welcome := "Welcome! I'm the Argus onboarding interviewer.\n" +
+				"I'll ask a few questions about your company and how you want the agent to behave, " +
+				"then write your SOUL.md. Type anything to begin (e.g. 'hi' or a short intro about your team)."
 
-			tuiModel := tui.New(tui.Config{Dispatch: dispatch}).WithInput(seed)
-			// Auto-submit the seed so the chat already shows the welcome line.
-			updated, _ := tuiModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			tuiModel = updated.(tui.Model)
+			tuiModel := tui.New(tui.Config{Dispatch: dispatch}).
+				WithInitialMessages([]tui.Message{{Role: "system", Content: welcome}})
 
 			program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithContext(ctx))
 			if _, err := program.Run(); err != nil {

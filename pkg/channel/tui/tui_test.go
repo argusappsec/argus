@@ -52,3 +52,28 @@ func TestModel_ViewIncludesHistoryAndInput(t *testing.T) {
 		t.Errorf("view missing submitted message %q:\n%s", "hi", view)
 	}
 }
+
+// TestModel_WithInitialMessages: pre-populating the history at construction
+// (used by `argus init` for the welcome banner) must NOT trigger the
+// dispatcher. This is the regression guard for a panic where the init flow
+// auto-submitted the welcome text before the *tea.Program had been wired up.
+func TestModel_WithInitialMessages(t *testing.T) {
+	dispatched := false
+	cfg := tui.Config{Dispatch: func(string) tea.Cmd {
+		dispatched = true
+		return nil
+	}}
+	m := tui.New(cfg).WithInitialMessages([]tui.Message{
+		{Role: "system", Content: "welcome"},
+	})
+
+	if dispatched {
+		t.Error("WithInitialMessages must NOT invoke the dispatcher")
+	}
+	if got := m.Messages(); len(got) != 1 || got[0].Content != "welcome" {
+		t.Errorf("messages = %+v, want one welcome system message", got)
+	}
+	if m.IsBusy() {
+		t.Error("WithInitialMessages must NOT mark the model busy")
+	}
+}

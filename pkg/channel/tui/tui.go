@@ -304,3 +304,12 @@ func (m Model) WithInput(s string) Model {
 	m.input.SetValue(s)
 	return m
 }
+
+// WithInitialMessages returns a new Model with the supplied history baked in.
+// Used to display a welcome/instructions message before the first user input.
+// Do NOT use this to inject "user" messages that should be processed by the
+// agent — those must go through the Dispatch flow.
+func (m Model) WithInitialMessages(msgs []Message) Model {
+	m.messages = append([]Message{}, msgs...)
+	return m
+}
