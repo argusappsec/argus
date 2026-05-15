@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/github"
+	"github.com/redcarbon-dev/argus/pkg/codehost/github"
 )
 
 func TestParseURL_HTTPSForm(t *testing.T) {

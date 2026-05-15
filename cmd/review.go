@@ -11,10 +11,13 @@ import (
 
 	"github.com/redcarbon-dev/argus/pkg/agent"
 	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/github"
+	"github.com/redcarbon-dev/argus/pkg/conversation"
+	"github.com/redcarbon-dev/argus/pkg/codehost/github"
 	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
 	"github.com/redcarbon-dev/argus/pkg/report"
 	"github.com/redcarbon-dev/argus/pkg/security"
+	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/redcarbon-dev/argus/pkg/soul"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
@@ -62,12 +65,34 @@ func reviewCmd() *cobra.Command {
 			}
 			defer aud.Close()
 
+			sess := session.New()
+			sess.SetRoot(co.Path)
+
+			convoPath := filepath.Join(home, "conversations", sess.ID()+".jsonl")
+			convoWriter, err := conversation.NewWriter(convoPath, sess.ID())
+			if err != nil {
+				return err
+			}
+			defer convoWriter.Close()
+
+			soulPath := filepath.Join(home, "SOUL.md")
+			s, err := soul.Load(soulPath)
+			if err != nil {
+				return fmt.Errorf("load soul: %w", err)
+			}
+
+			contextDir := filepath.Join(home, "context")
+
 			reg := tool.NewRegistry()
-			reg.Register(tool.NewListFiles(co.Path))
-			reg.Register(tool.NewReadFile(co.Path))
-			reg.Register(tool.NewGrep(co.Path))
-			reg.Register(security.NewSemgrep(co.Path, security.ExecRunner{}))
-			reg.Register(security.NewGitleaks(co.Path, security.ExecRunner{}))
+			reg.Register(tool.NewListFiles(sess))
+			reg.Register(tool.NewReadFile(sess))
+			reg.Register(tool.NewGrep(sess))
+			reg.Register(tool.NewListContext(contextDir))
+			reg.Register(tool.NewReadContext(contextDir))
+			reg.Register(tool.NewStartReviewLocal(sess))
+			reg.Register(tool.NewStartReviewGitHub(sess, cloner))
+			reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
+			reg.Register(security.NewGitleaks(sess, security.ExecRunner{}))
 
 			rw := report.NewWriter(filepath.Join(home, "reports"))
 
@@ -77,11 +102,13 @@ func reviewCmd() *cobra.Command {
 			}
 
 			ag := agent.New(agent.Options{
-				Provider: prov,
-				Audit:    aud,
-				Reports:  rw,
-				Tools:    reg,
-				MaxTurns: maxTurns,
+				Provider:     prov,
+				Audit:        aud,
+				Reports:      rw,
+				Tools:        reg,
+				Conversation: convoWriter,
+				Soul:         s,
+				MaxTurns:     maxTurns,
 			})
 
 			fmt.Fprintln(cmd.OutOrStdout(), "→ running agent loop")
@@ -96,6 +123,7 @@ func reviewCmd() *cobra.Command {
 
 			reportPath := filepath.Join(home, "reports", reportSlug(u.FullName), co.SHA+".md")
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ review complete: %d findings — %s\n", len(rep.Findings), reportPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "  conversation log: %s\n", convoPath)
 			return nil
 		},
 	}

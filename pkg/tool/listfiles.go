@@ -8,13 +8,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/redcarbon-dev/argus/pkg/session"
 )
 
-// NewListFiles returns a list_files tool rooted at root. All paths returned
-// or accepted are relative to root; absolute or escaping paths are refused.
-func NewListFiles(root string) Tool { return &listFiles{root: root} }
+// NewListFiles returns a list_files tool that reads its target directory from
+// the supplied Session at every Execute. The Session's root may change
+// mid-conversation (e.g. after a start_review_* tool call); the same tool
+// instance will simply see the new target on the next invocation.
+func NewListFiles(s *session.Session) Tool { return &listFiles{sess: s} }
 
-type listFiles struct{ root string }
+type listFiles struct{ sess *session.Session }
 
 func (l *listFiles) Name() string { return "list_files" }
 
@@ -35,8 +39,12 @@ func (l *listFiles) Schema() map[string]any {
 }
 
 func (l *listFiles) Execute(_ context.Context, args map[string]any) (string, error) {
+	root := l.sess.Root()
+	if root == "" {
+		return "", errors.New("no target set: call start_review_local or start_review_github first")
+	}
 	sub, _ := args["path"].(string)
-	abs, err := resolveWithinRoot(l.root, sub)
+	abs, err := resolveWithinRoot(root, sub)
 	if err != nil {
 		return "", err
 	}
@@ -53,7 +61,7 @@ func (l *listFiles) Execute(_ context.Context, args map[string]any) (string, err
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(l.root, p)
+		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return err
 		}

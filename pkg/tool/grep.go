@@ -3,6 +3,7 @@ package tool
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,12 +11,15 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/redcarbon-dev/argus/pkg/session"
 )
 
-// NewGrep returns a grep tool that searches files under root for a regex.
-func NewGrep(root string) Tool { return &grep{root: root} }
+// NewGrep returns a grep tool that searches files under the Session's current
+// root for a regex.
+func NewGrep(s *session.Session) Tool { return &grep{sess: s} }
 
-type grep struct{ root string }
+type grep struct{ sess *session.Session }
 
 func (g *grep) Name() string { return "grep" }
 
@@ -35,6 +39,10 @@ func (g *grep) Schema() map[string]any {
 }
 
 func (g *grep) Execute(_ context.Context, args map[string]any) (string, error) {
+	root := g.sess.Root()
+	if root == "" {
+		return "", errors.New("no target set: call start_review_local or start_review_github first")
+	}
 	pattern, _ := args["pattern"].(string)
 	if pattern == "" {
 		return "", fmt.Errorf("grep: pattern required")
@@ -44,7 +52,7 @@ func (g *grep) Execute(_ context.Context, args map[string]any) (string, error) {
 		return "", fmt.Errorf("grep: invalid pattern: %w", err)
 	}
 	sub, _ := args["path"].(string)
-	start, err := resolveWithinRoot(g.root, sub)
+	start, err := resolveWithinRoot(root, sub)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +73,7 @@ func (g *grep) Execute(_ context.Context, args map[string]any) (string, error) {
 		if err != nil {
 			return nil // skip unreadable files silently
 		}
-		rel, _ := filepath.Rel(g.root, p)
+		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
