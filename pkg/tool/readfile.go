@@ -3,15 +3,19 @@ package tool
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/redcarbon-dev/argus/pkg/session"
 )
 
-// NewReadFile returns a read_file tool rooted at root.
-func NewReadFile(root string) Tool { return &readFile{root: root} }
+// NewReadFile returns a read_file tool that resolves paths against the
+// Session's current root at every invocation.
+func NewReadFile(s *session.Session) Tool { return &readFile{sess: s} }
 
-type readFile struct{ root string }
+type readFile struct{ sess *session.Session }
 
 func (r *readFile) Name() string { return "read_file" }
 
@@ -32,11 +36,15 @@ func (r *readFile) Schema() map[string]any {
 }
 
 func (r *readFile) Execute(_ context.Context, args map[string]any) (string, error) {
+	root := r.sess.Root()
+	if root == "" {
+		return "", errors.New("no target set: call start_review_local or start_review_github first")
+	}
 	path, _ := args["path"].(string)
 	if path == "" {
 		return "", fmt.Errorf("read_file: path required")
 	}
-	abs, err := resolveWithinRoot(r.root, path)
+	abs, err := resolveWithinRoot(root, path)
 	if err != nil {
 		return "", err
 	}

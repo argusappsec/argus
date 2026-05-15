@@ -13,7 +13,7 @@ func TestReadFile_ReturnsFullContent(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "a.txt"), "line1\nline2\nline3\n")
 
-	rf := tool.NewReadFile(root)
+	rf := tool.NewReadFile(sessionWith(root))
 	out, err := rf.Execute(context.Background(), map[string]any{"path": "a.txt"})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -27,7 +27,7 @@ func TestReadFile_LineRange(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "a.txt"), "L1\nL2\nL3\nL4\nL5\n")
 
-	rf := tool.NewReadFile(root)
+	rf := tool.NewReadFile(sessionWith(root))
 	out, err := rf.Execute(context.Background(), map[string]any{
 		"path":       "a.txt",
 		"line_start": float64(2),
@@ -45,7 +45,7 @@ func TestReadFile_LineRange(t *testing.T) {
 }
 
 func TestReadFile_RejectsEscape(t *testing.T) {
-	rf := tool.NewReadFile(t.TempDir())
+	rf := tool.NewReadFile(sessionWith(t.TempDir()))
 	if _, err := rf.Execute(context.Background(), map[string]any{"path": "../etc/passwd"}); err == nil {
 		t.Error("expected escape rejection")
 	}
@@ -56,7 +56,7 @@ func TestGrep_FindsMatchesWithLineNumbers(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "code.go"), "package main\nfunc secret() {}\nvar password string\n")
 	mustWrite(t, filepath.Join(root, "skip.md"), "# password\n")
 
-	g := tool.NewGrep(root)
+	g := tool.NewGrep(sessionWith(root))
 	out, err := g.Execute(context.Background(), map[string]any{"pattern": "password"})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -70,7 +70,7 @@ func TestGrep_FindsMatchesWithLineNumbers(t *testing.T) {
 }
 
 func TestGrep_RejectsInvalidRegex(t *testing.T) {
-	g := tool.NewGrep(t.TempDir())
+	g := tool.NewGrep(sessionWith(t.TempDir()))
 	if _, err := g.Execute(context.Background(), map[string]any{"pattern": "[unterminated"}); err == nil {
 		t.Error("expected error for invalid regex")
 	}

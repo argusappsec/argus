@@ -7,12 +7,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/redcarbon-dev/argus/pkg/session"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
+// sessionWith returns a Session pre-rooted at root, the common setup pattern.
+func sessionWith(root string) *session.Session {
+	s := session.New()
+	s.SetRoot(root)
+	return s
+}
+
 func TestRegistry_RegisterAndGet(t *testing.T) {
 	r := tool.NewRegistry()
-	lf := tool.NewListFiles("/tmp")
+	lf := tool.NewListFiles(sessionWith("/tmp"))
 	r.Register(lf)
 
 	got, ok := r.Get("list_files")
@@ -26,7 +34,7 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 
 func TestRegistry_DeclsExposeAllRegistered(t *testing.T) {
 	r := tool.NewRegistry()
-	r.Register(tool.NewListFiles("/tmp"))
+	r.Register(tool.NewListFiles(sessionWith("/tmp")))
 	decls := r.Decls()
 	if len(decls) != 1 {
 		t.Fatalf("decls = %d, want 1", len(decls))
@@ -48,7 +56,7 @@ func TestListFiles_ReturnsRepoRelativePaths(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "pkg/a/file.go"), "package a\n")
 	mustWrite(t, filepath.Join(root, "pkg/b/file.go"), "package b\n")
 
-	lf := tool.NewListFiles(root)
+	lf := tool.NewListFiles(sessionWith(root))
 	out, err := lf.Execute(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -62,7 +70,7 @@ func TestListFiles_ReturnsRepoRelativePaths(t *testing.T) {
 
 func TestListFiles_RejectsEscapeAttempt(t *testing.T) {
 	root := t.TempDir()
-	lf := tool.NewListFiles(root)
+	lf := tool.NewListFiles(sessionWith(root))
 	if _, err := lf.Execute(context.Background(), map[string]any{"path": "../"}); err == nil {
 		t.Error("expected error when path escapes root")
 	}

@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
+	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/redcarbon-dev/argus/pkg/soul"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
@@ -29,11 +31,13 @@ type Target struct {
 
 // Options bundles the dependencies of an agent run.
 type Options struct {
-	Provider provider.Provider
-	Audit    *audit.Logger
-	Reports  *report.Writer
-	Tools    *tool.Registry // env tools (list_files, read_file, grep, ...). May be nil.
-	MaxTurns int
+	Provider     provider.Provider
+	Audit        *audit.Logger
+	Reports      *report.Writer
+	Tools        *tool.Registry       // env tools (list_files, read_file, grep, ...). May be nil.
+	Conversation *conversation.Writer // optional: persists every message to disk for forensic resume.
+	Soul         *soul.Soul           // optional: injected into the LLM as system prompt.
+	MaxTurns     int
 }
 
 // Agent is the orchestrator. One Agent per run; create a new one per review.
@@ -65,13 +69,15 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		return nil, err
 	}
 
-	msgs := []provider.Message{
-		{Role: "user", Content: fmt.Sprintf("Review %s at %s.", t.Repo, t.SHA)},
-	}
+	seedMsg := provider.Message{Role: "user", Content: fmt.Sprintf("Review %s at %s.", t.Repo, t.SHA)}
+	msgs := []provider.Message{seedMsg}
+	a.persistMessage(seedMsg)
+
 	decls := a.allToolDecls()
+	system := a.opts.Soul.SystemPrompt()
 
 	for turn := 1; turn <= a.opts.MaxTurns; turn++ {
-		resp, err := a.opts.Provider.Generate(ctx, provider.Request{Messages: msgs, Tools: decls})
+		resp, err := a.opts.Provider.Generate(ctx, provider.Request{System: system, Messages: msgs, Tools: decls})
 		if err != nil {
 			return nil, fmt.Errorf("turn %d generate: %w", turn, err)
 		}
@@ -82,7 +88,9 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		})
 
 		// Record the model turn so future turns see its context.
-		msgs = append(msgs, provider.Message{Role: "model", ToolCalls: resp.ToolCalls, Content: resp.Text})
+		modelMsg := provider.Message{Role: "model", ToolCalls: resp.ToolCalls, Content: resp.Text}
+		msgs = append(msgs, modelMsg)
+		a.persistMessage(modelMsg)
 
 		results := make([]provider.ToolResult, 0, len(resp.ToolCalls))
 		for _, tc := range resp.ToolCalls {
@@ -114,7 +122,9 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		}
 
 		if len(results) > 0 {
-			msgs = append(msgs, provider.Message{Role: "tool", ToolResults: results})
+			toolMsg := provider.Message{Role: "tool", ToolResults: results}
+			msgs = append(msgs, toolMsg)
+			a.persistMessage(toolMsg)
 		}
 	}
 
@@ -227,4 +237,15 @@ func (a *Agent) audit(evtType string, data map[string]any) error {
 		return nil
 	}
 	return a.opts.Audit.Log(audit.Event{Type: evtType, Data: data})
+}
+
+// persistMessage writes the message to the conversation log if a writer was
+// supplied. Errors are intentionally swallowed: a flaky disk write should not
+// abort the agent run mid-conversation. They will surface as gaps in the log
+// rather than as fatal failures.
+func (a *Agent) persistMessage(m provider.Message) {
+	if a.opts.Conversation == nil {
+		return
+	}
+	_ = a.opts.Conversation.Append(conversation.Record{Message: m})
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/audit"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/redcarbon-dev/argus/pkg/session"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
@@ -50,8 +51,10 @@ func TestAgentDispatchesEnvTool(t *testing.T) {
 	defer aud.Close()
 	rw := report.NewWriter(filepath.Join(tmp, "reports"))
 
+	sess := session.New()
+	sess.SetRoot(repoDir)
 	reg := tool.NewRegistry()
-	reg.Register(tool.NewListFiles(repoDir))
+	reg.Register(tool.NewListFiles(sess))
 
 	ag := agent.New(agent.Options{
 		Provider: op,
@@ -104,8 +107,10 @@ func TestToolResultsCarryName(t *testing.T) {
 	aud, _ := audit.NewLogger(filepath.Join(tmp, "audit.jsonl"))
 	defer aud.Close()
 	rw := report.NewWriter(filepath.Join(tmp, "reports"))
+	sess := session.New()
+	sess.SetRoot(repoDir)
 	reg := tool.NewRegistry()
-	reg.Register(tool.NewListFiles(repoDir))
+	reg.Register(tool.NewListFiles(sess))
 
 	ag := agent.New(agent.Options{Provider: op, Audit: aud, Reports: rw, Tools: reg})
 	if _, err := ag.Run(context.Background(), agent.Target{Repo: "r", SHA: "s", Path: repoDir}); err != nil {
@@ -139,10 +144,12 @@ func TestAgentExposesRegistryDeclsToProvider(t *testing.T) {
 	defer aud.Close()
 	rw := report.NewWriter(filepath.Join(tmp, "reports"))
 
+	sess := session.New()
+	sess.SetRoot(tmp)
 	reg := tool.NewRegistry()
-	reg.Register(tool.NewListFiles(tmp))
-	reg.Register(tool.NewReadFile(tmp))
-	reg.Register(tool.NewGrep(tmp))
+	reg.Register(tool.NewListFiles(sess))
+	reg.Register(tool.NewReadFile(sess))
+	reg.Register(tool.NewGrep(sess))
 
 	ag := agent.New(agent.Options{
 		Provider: op,
