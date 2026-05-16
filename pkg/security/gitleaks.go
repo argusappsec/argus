@@ -32,6 +32,14 @@ func (g *gitleaks) Schema() map[string]any {
 	}
 }
 
+// Requires advertises this tool's binary dependency to argus doctor.
+func (g *gitleaks) Requires() []tool.Requirement {
+	return []tool.Requirement{{
+		Binary:      "gitleaks",
+		InstallHint: "brew install gitleaks",
+	}}
+}
+
 func (g *gitleaks) Execute(ctx context.Context, _ map[string]any) (string, error) {
 	root := g.sess.Root()
 	if root == "" {

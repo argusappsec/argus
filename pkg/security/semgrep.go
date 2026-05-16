@@ -37,6 +37,14 @@ func (s *semgrep) Schema() map[string]any {
 	}
 }
 
+// Requires advertises this tool's binary dependency to argus doctor.
+func (s *semgrep) Requires() []tool.Requirement {
+	return []tool.Requirement{{
+		Binary:      "semgrep",
+		InstallHint: "brew install semgrep  (or pip install semgrep)",
+	}}
+}
+
 func (s *semgrep) Execute(ctx context.Context, args map[string]any) (string, error) {
 	root := s.sess.Root()
 	if root == "" {
