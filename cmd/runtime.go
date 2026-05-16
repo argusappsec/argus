@@ -13,6 +13,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
+	"github.com/redcarbon-dev/argus/pkg/report"
 	"github.com/redcarbon-dev/argus/pkg/security"
 	"github.com/redcarbon-dev/argus/pkg/session"
 	"github.com/redcarbon-dev/argus/pkg/soul"
@@ -35,6 +36,7 @@ type runtime struct {
 	Conversation *conversation.Writer
 	ConvoPath    string
 	Provider     provider.Provider
+	Reports      *report.Writer // shared report writer (chat + review both use it)
 }
 
 // runtimeOptions captures user-facing knobs that affect the runtime.
@@ -142,6 +144,7 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		Conversation: convoWriter,
 		ConvoPath:    convoPath,
 		Provider:     prov,
+		Reports:      report.NewWriter(filepath.Join(home, "reports")),
 	}, nil
 }
 

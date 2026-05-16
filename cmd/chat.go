@@ -112,6 +112,7 @@ func runChatAgent(ctx context.Context, rt *runtime, userInput string, maxTurns i
 	ag := agent.New(agent.Options{
 		Provider:     rt.Provider,
 		Audit:        rt.Audit,
+		Reports:      rt.Reports,
 		Tools:        rt.Registry,
 		Conversation: rt.Conversation,
 		Soul:         rt.Soul,

@@ -49,6 +49,11 @@ type Config struct {
 
 	// Title appears in the header. Empty defaults to "argus".
 	Title string
+
+	// AutoSubmit, if non-empty, is submitted as the first user message after
+	// the TUI starts. Used by `argus review <url>` to drop the user straight
+	// into a chat where the agent is already working on the requested review.
+	AutoSubmit string
 }
 
 // --- tea.Msg types emitted by the dispatcher ---
@@ -69,6 +74,10 @@ type AgentUsageMsg struct {
 
 // AgentDoneMsg signals the agent loop terminated normally.
 type AgentDoneMsg struct{}
+
+// autoSubmitMsg fires once after Init() when Config.AutoSubmit is set. The
+// handler treats it as if the user had typed AutoSubmit and pressed Enter.
+type autoSubmitMsg struct{ text string }
 
 // AgentErrorMsg signals the agent loop returned an error.
 type AgentErrorMsg struct {
@@ -121,8 +130,17 @@ func New(cfg Config) Model {
 	}
 }
 
-// Init satisfies tea.Model.
-func (m Model) Init() tea.Cmd { return tea.Batch(textinput.Blink, m.spinner.Tick) }
+// Init satisfies tea.Model. If Config.AutoSubmit is set, a one-shot Cmd is
+// scheduled that delivers an autoSubmitMsg — handled in Update as if the user
+// had typed it.
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{textinput.Blink, m.spinner.Tick}
+	if m.cfg.AutoSubmit != "" {
+		text := m.cfg.AutoSubmit
+		cmds = append(cmds, func() tea.Msg { return autoSubmitMsg{text: text} })
+	}
+	return tea.Batch(cmds...)
+}
 
 // Update handles one bubbletea event.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -166,6 +184,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tokensOut += msg.OutputTokens
 		m.costUSD += msg.CostUSD
 		return m, nil
+
+	case autoSubmitMsg:
+		m.input.SetValue(msg.text)
+		return m.handleSubmit()
 
 	case spinner.TickMsg:
 		if !m.busy {
