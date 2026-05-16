@@ -115,6 +115,7 @@ func runChatAgent(ctx context.Context, rt *runtime, userInput string, maxTurns i
 		Tools:        rt.Registry,
 		Conversation: rt.Conversation,
 		Soul:         rt.Soul,
+		Memory:       rt.Memory,
 		MaxTurns:     maxTurns,
 		SeedMessages: seed,
 

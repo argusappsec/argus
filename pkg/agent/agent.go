@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
@@ -53,6 +54,13 @@ type Options struct {
 	// OnUsage, if non-nil, is invoked once per LLM call with the token usage
 	// of that call. Used by UIs to maintain a cumulative cost/token counter.
 	OnUsage func(provider.Usage)
+
+	// Memory is the curated cross-session memory (typically the content of
+	// ~/.argus/MEMORY.md). When set, it is appended to the system prompt
+	// under a dedicated "# Memory" section so the agent remembers prior
+	// sessions' preferences, decisions and accepted exceptions. Updated
+	// by the memory-curator subagent at the end of each session.
+	Memory string
 
 	MaxTurns int
 }
@@ -108,7 +116,7 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 	}
 
 	decls := a.allToolDecls()
-	system := a.opts.Soul.SystemPrompt()
+	system := a.composeSystemPrompt()
 
 	for turn := 1; turn <= a.opts.MaxTurns; turn++ {
 		resp, err := a.opts.Provider.Generate(ctx, provider.Request{System: system, Messages: msgs, Tools: decls})
@@ -283,6 +291,25 @@ func controlToolDecls() []provider.ToolDecl {
 			},
 		},
 	}
+}
+
+// composeSystemPrompt builds the full system instruction by stacking:
+//  1. SOUL — identity (always-load, slow-moving facts about who/what)
+//  2. MEMORY — session continuity (preferences, accepted FPs, recent decisions)
+//
+// Both are optional. If neither is set the system instruction is empty and
+// the agent runs unstyled — useful for tests and for the bootstrap interview
+// before SOUL.md exists.
+func (a *Agent) composeSystemPrompt() string {
+	soulPart := a.opts.Soul.SystemPrompt()
+	memPart := strings.TrimSpace(a.opts.Memory)
+	if memPart == "" {
+		return soulPart
+	}
+	if soulPart == "" {
+		return "# Memory — what you remember from prior sessions\n" + memPart
+	}
+	return soulPart + "\n\n# Memory — what you remember from prior sessions\n" + memPart
 }
 
 func (a *Agent) audit(evtType string, data map[string]any) error {

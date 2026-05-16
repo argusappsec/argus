@@ -29,6 +29,7 @@ type runtime struct {
 	Session      *session.Session
 	Registry     *tool.Registry
 	Soul         *soul.Soul
+	Memory       string // contents of ~/.argus/MEMORY.md (empty if file absent)
 	Cloner       *github.Cloner
 	Audit        *audit.Logger
 	Conversation *conversation.Writer
@@ -99,6 +100,15 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		return nil, fmt.Errorf("soul: %w", err)
 	}
 
+	// Load curated cross-session memory. Missing file is fine — it just
+	// means no prior sessions have run yet (or the curator hasn't curated).
+	memoryBytes, err := os.ReadFile(filepath.Join(home, "MEMORY.md"))
+	if err != nil && !os.IsNotExist(err) {
+		aud.Close()
+		convoWriter.Close()
+		return nil, fmt.Errorf("read MEMORY.md: %w", err)
+	}
+
 	prov, err := gemini.New(ctx, apiKey, modelID)
 	if err != nil {
 		aud.Close()
@@ -126,6 +136,7 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		Session:      sess,
 		Registry:     reg,
 		Soul:         soulPtr,
+		Memory:       string(memoryBytes),
 		Cloner:       cloner,
 		Audit:        aud,
 		Conversation: convoWriter,
