@@ -162,15 +162,30 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 				rep.Summary, _ = tc.Args["summary"].(string)
 				// Reports is optional: subagent flows (e.g. memory curator)
 				// terminate via finalize_report without producing a report file.
+				var reportPath string
 				if a.opts.Reports != nil {
 					path, err := a.opts.Reports.Write(*rep)
 					if err != nil {
 						return nil, fmt.Errorf("write report: %w", err)
 					}
+					reportPath = path
 					_ = a.audit("session_end", map[string]any{"report_path": path, "findings": len(rep.Findings)})
 				} else {
 					_ = a.audit("session_end", map[string]any{"findings": len(rep.Findings)})
 				}
+				// Synthesize an acknowledgment so the TUI (and the
+				// conversation log, and any follow-up agent run) sees where
+				// the report landed and a short recap of findings. Without
+				// this the loop terminates silently and the user has no
+				// inline confirmation that anything was saved.
+				results = append(results, provider.ToolResult{
+					CallID: tc.ID,
+					Name:   tc.Name,
+					Output: buildFinalizeAck(rep, reportPath),
+				})
+				toolMsg := provider.Message{Role: "tool", ToolResults: results}
+				msgs = append(msgs, toolMsg)
+				a.persistMessage(toolMsg)
 				return rep, nil
 			default:
 				out, err := a.dispatchEnvTool(ctx, tc)
@@ -291,6 +306,62 @@ func controlToolDecls() []provider.ToolDecl {
 			},
 		},
 	}
+}
+
+// buildFinalizeAck renders the human-readable acknowledgment for a
+// finalize_report tool call. Includes the report file path (when written),
+// the agent's own summary, severity counts, and a capped list of finding
+// titles so the user has immediate inline visibility without opening the
+// markdown.
+func buildFinalizeAck(rep *report.Report, path string) string {
+	var b strings.Builder
+	if path != "" {
+		fmt.Fprintf(&b, "✓ Report saved to %s\n", path)
+	} else {
+		b.WriteString("✓ Report finalized (no file written — reports writer not configured)\n")
+	}
+	if rep.Summary != "" {
+		fmt.Fprintf(&b, "Summary: %s\n", rep.Summary)
+	}
+	fmt.Fprintf(&b, "Findings: %d total", len(rep.Findings))
+	if c := severityCounts(rep.Findings); c != "" {
+		fmt.Fprintf(&b, " (%s)", c)
+	}
+	b.WriteByte('\n')
+
+	const maxList = 10
+	for i, f := range rep.Findings {
+		if i == maxList {
+			fmt.Fprintf(&b, "  …and %d more (see the full markdown for details)\n", len(rep.Findings)-maxList)
+			break
+		}
+		loc := f.File
+		if f.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", f.File, f.Line)
+		}
+		title := f.Title
+		if title == "" {
+			title = f.RuleID
+		}
+		fmt.Fprintf(&b, "  • [%s] %s — %s\n", strings.ToUpper(f.Severity), title, loc)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// severityCounts returns "3 high, 5 medium" style summary, empty if no findings.
+func severityCounts(findings []report.Finding) string {
+	counts := map[string]int{}
+	for _, f := range findings {
+		counts[f.Severity]++
+	}
+	order := []string{"critical", "high", "medium", "low", "info"}
+	var parts []string
+	for _, sev := range order {
+		if n := counts[sev]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, sev))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // composeSystemPrompt builds the full system instruction by stacking:
