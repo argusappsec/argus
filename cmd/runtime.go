@@ -16,6 +16,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/report"
 	"github.com/redcarbon-dev/argus/pkg/security"
 	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/redcarbon-dev/argus/pkg/skill"
 	"github.com/redcarbon-dev/argus/pkg/soul"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
@@ -131,6 +132,8 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 	reg.Register(tool.NewStartReviewGitHub(sess, cloner))
 	reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(sess, security.ExecRunner{}))
+	reg.Register(tool.NewListSkills(filepath.Join(home, "skills")))
+	reg.Register(tool.NewReadSkill(filepath.Join(home, "skills")))
 
 	return &runtime{
 		Home:         home,
@@ -146,6 +149,24 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		Provider:     prov,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
 	}, nil
+}
+
+// skillResolver returns a function that loads a user-curated skill by name and
+// formats its body as a one-shot prompt for the agent. It backs the TUI's
+// "/<skill-name>" slash command. Unknown or malformed skills resolve to
+// ok=false, so the TUI reports them as unknown commands.
+func skillResolver(home string) func(string) (string, bool) {
+	dir := filepath.Join(home, "skills")
+	return func(name string) (string, bool) {
+		s, err := skill.Load(dir, name)
+		if err != nil {
+			return "", false
+		}
+		return fmt.Sprintf(
+			"Use the %q skill for this task. Follow these instructions:\n\n%s",
+			s.Name, s.Content,
+		), true
+	}
 }
 
 // defaultPricing returns a hardcoded best-effort pricing table for the

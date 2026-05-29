@@ -86,17 +86,25 @@ GitHub org) — not a coding dependency but a coordination one.
 
 ---
 
-### E — Skill foundation
+### E — Skill foundation  ✅ user-curated slice landed (2026-05-29)
 
-**Scope.** Tools `list_skills` and `read_skill(name)`. `embed.FS` of
-`pkg/skill/builtin/`. Scanner for `~/.argus/skills/`. Override resolution
-(user-curated overrides built-in by name). RBAC gate (analyst+).
+**Scope (done).** `pkg/skill` loader (parse/load/save/delete of
+`~/.argus/skills/<name>/SKILL.md`; frontmatter `name`/`description`/`tags`,
+path-traversal-guarded). Tools `list_skills` + `read_skill(name)` in
+`pkg/tool/skills.go`. The `/<name>` chat trigger (loads the skill and injects
+its body as one agent turn). `argus skill ls|rm`.
 
-**Outcome.** The agent can discover and load skills; the slash-command
-trigger from chat works.
+**Sequenced into stream F.** The `embed.FS` built-in source under
+`pkg/skill/builtin/` and user-overrides-built-in resolution — they land with
+the built-in skill content, since shipping empty plumbing has no value. The
+RBAC gate (analyst+) is deferred until stream A wires channel auth; it is a
+Tool-layer no-op until then.
 
-**Touches.** `pkg/skill/`, `pkg/tool/list_skills.go`,
-`pkg/tool/read_skill.go`.
+**Outcome.** A user writes `~/.argus/skills/<name>/SKILL.md` and runs it with
+`/<name>`; the agent can also discover and load skills on its own.
+
+**Touches.** `pkg/skill/`, `pkg/tool/skills.go`, `pkg/channel/tui/`,
+`cmd/skill.go`, `cmd/runtime.go`.
 
 **Depends on.** Nothing new — the Tool registry already exists.
 
@@ -104,19 +112,21 @@ trigger from chat works.
 
 ---
 
-### F — Built-in skill authoring
+### F — Built-in skills (content + `embed.FS` plumbing)
 
-**Scope.** Write the first 5 markdown skills under `pkg/skill/builtin/`:
-`pr-quick-check`, `threat-modeling`, `dep-audit-deep`, `release-readiness`,
-`secret-rotation-plan`. Pure markdown contributions. Iterate by trying
-each one against a real repo.
+**Scope.** Add the `embed.FS` built-in source and override resolution
+(user-curated beats built-in by name) to `pkg/skill`, then write the first 5
+markdown skills under `pkg/skill/builtin/`: `pr-quick-check`,
+`threat-modeling`, `dep-audit-deep`, `release-readiness`,
+`secret-rotation-plan`. Iterate by trying each one against a real repo.
 
 **Outcome.** Out-of-the-box, Argus knows how to do the common security
 workflows without anyone having to teach it each time.
 
-**Touches.** `pkg/skill/builtin/<name>/SKILL.md`.
+**Touches.** `pkg/skill/` (embed.FS + override),
+`pkg/skill/builtin/<name>/SKILL.md`.
 
-**Depends on.** Stream E ready enough to load skills.
+**Depends on.** Stream E (the loader + tools landed).
 
 **Unblocks.** Demonstrates the skill model to future contributors.
 
