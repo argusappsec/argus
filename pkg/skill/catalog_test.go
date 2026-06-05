@@ -333,6 +333,90 @@ func TestBuiltin_ShipsExpectedSkills(t *testing.T) {
 	}
 }
 
+func TestCatalog_ListEntries_ClassifiesSource(t *testing.T) {
+	bOnly, bOnlyFile := skillFile("only-builtin", valid("only-builtin", "from builtin"))
+	bDup, bDupFile := skillFile("dup", valid("dup", "builtin dup"))
+	uOnly, uOnlyFile := skillFile("only-user", valid("only-user", "from user"))
+	uDup, uDupFile := skillFile("dup", valid("dup", "user dup"))
+
+	cat := skill.NewCatalogFS(
+		fstest.MapFS{bOnly: bOnlyFile, bDup: bDupFile},
+		fstest.MapFS{uOnly: uOnlyFile, uDup: uDupFile},
+	)
+
+	entries, errs := cat.ListEntries()
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	got := make(map[string]skill.Source, len(entries))
+	for _, e := range entries {
+		got[e.Skill.Name] = e.Source
+	}
+	want := map[string]skill.Source{
+		"only-builtin": skill.SourceBuiltin,
+		"only-user":    skill.SourceUser,
+		"dup":          skill.SourceUserOverride,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ListEntries returned %d entries, want %d: %v", len(got), len(want), got)
+	}
+	for name, src := range want {
+		if got[name] != src {
+			t.Errorf("source of %q = %q, want %q", name, got[name], src)
+		}
+	}
+}
+
+func TestSource_String(t *testing.T) {
+	cases := map[skill.Source]string{
+		skill.SourceBuiltin:      "built-in",
+		skill.SourceUser:         "user",
+		skill.SourceUserOverride: "user (overrides built-in)",
+	}
+	for src, want := range cases {
+		if got := src.String(); got != want {
+			t.Errorf("Source(%d).String() = %q, want %q", src, got, want)
+		}
+	}
+}
+
+func TestCatalog_Locate(t *testing.T) {
+	bName, bFile := skillFile("builtin-only", valid("builtin-only", "b"))
+	bDup, bDupFile := skillFile("override", valid("override", "b"))
+	uName, uFile := skillFile("user-only", valid("user-only", "u"))
+	uDup, uDupFile := skillFile("override", valid("override", "u"))
+
+	cat := skill.NewCatalogFS(
+		fstest.MapFS{bName: bFile, bDup: bDupFile},
+		fstest.MapFS{uName: uFile, uDup: uDupFile},
+	)
+
+	cases := []struct {
+		name         string
+		wantU, wantB bool
+	}{
+		{"builtin-only", false, true},
+		{"user-only", true, false},
+		{"override", true, true},
+		{"missing", false, false},
+	}
+	for _, tc := range cases {
+		u, b, err := cat.Locate(tc.name)
+		if err != nil {
+			t.Errorf("Locate(%q): %v", tc.name, err)
+			continue
+		}
+		if u != tc.wantU || b != tc.wantB {
+			t.Errorf("Locate(%q) = user=%v builtin=%v, want user=%v builtin=%v", tc.name, u, b, tc.wantU, tc.wantB)
+		}
+	}
+
+	if _, _, err := cat.Locate("../escape"); err == nil {
+		t.Error("Locate should reject a traversal name")
+	}
+}
+
 func equal(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

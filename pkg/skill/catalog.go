@@ -41,6 +41,43 @@ func NewCatalogFS(builtin, user fs.FS) *Catalog {
 	return &Catalog{builtin: builtin, user: user}
 }
 
+// Source classifies where an active skill comes from, for human-facing
+// listings (argus skill ls). The agent does not care — it only sees a resolved
+// body — but an operator needs to know at a glance what is shipped, what they
+// authored, and what they are shadowing.
+type Source int
+
+const (
+	// SourceBuiltin ships in the binary and no user directory claims its name.
+	SourceBuiltin Source = iota
+	// SourceUser is user-curated with no built-in of the same name.
+	SourceUser
+	// SourceUserOverride is user-curated and shadows a built-in of the same name.
+	SourceUserOverride
+)
+
+// String renders the source as the label argus skill ls prints in its SOURCE
+// column.
+func (s Source) String() string {
+	switch s {
+	case SourceBuiltin:
+		return "built-in"
+	case SourceUser:
+		return "user"
+	case SourceUserOverride:
+		return "user (overrides built-in)"
+	default:
+		return "unknown"
+	}
+}
+
+// Entry is one resolved skill paired with its Source, returned by ListEntries
+// for the CLI. The agent-facing List drops the Source and returns bare skills.
+type Entry struct {
+	Skill  *Skill
+	Source Source
+}
+
 // List returns the merged set of skills the agent can load: every user skill,
 // plus every built-in whose name no user directory claims. Malformed user
 // overrides are omitted from the returned skills (they are not loadable) but
@@ -48,10 +85,31 @@ func NewCatalogFS(builtin, user fs.FS) *Catalog {
 // returned skills are not sorted; callers that present them order as they see
 // fit (list_skills and argus skill ls both sort).
 func (c *Catalog) List() ([]*Skill, []error) {
+	entries, errs := c.ListEntries()
+	skills := make([]*Skill, len(entries))
+	for i, e := range entries {
+		skills[i] = e.Skill
+	}
+	return skills, errs
+}
+
+// ListEntries is List with each skill's Source attached, for argus skill ls.
+// The merge, override, and error-collection behaviour is identical to List —
+// the only addition is classifying each loadable skill as built-in, user, or
+// user-override. A name present in both sources collapses to one entry (the
+// user's) marked SourceUserOverride.
+func (c *Catalog) ListEntries() ([]Entry, []error) {
 	userWalks, userErr := walkSkills(c.user)
 	builtinWalks, builtinErr := walkSkills(c.builtin)
 
-	var skills []*Skill
+	// Directory presence in the built-in source decides whether a user skill is
+	// an override; a malformed built-in still claims its name for this purpose.
+	builtinNames := make(map[string]bool, len(builtinWalks))
+	for _, w := range builtinWalks {
+		builtinNames[w.dir] = true
+	}
+
+	var entries []Entry
 	var errs []error
 	if userErr != nil {
 		errs = append(errs, userErr)
@@ -66,7 +124,11 @@ func (c *Catalog) List() ([]*Skill, []error) {
 			errs = append(errs, w.err)
 			continue
 		}
-		skills = append(skills, w.skill)
+		src := SourceUser
+		if builtinNames[w.dir] {
+			src = SourceUserOverride
+		}
+		entries = append(entries, Entry{Skill: w.skill, Source: src})
 	}
 
 	// Built-ins fill in only the names no user override claims.
@@ -78,13 +140,13 @@ func (c *Catalog) List() ([]*Skill, []error) {
 			errs = append(errs, w.err)
 			continue
 		}
-		skills = append(skills, w.skill)
+		entries = append(entries, Entry{Skill: w.skill, Source: SourceBuiltin})
 	}
 	if builtinErr != nil {
 		errs = append(errs, builtinErr)
 	}
 
-	return skills, errs
+	return entries, errs
 }
 
 // Load resolves a single skill by name, honouring the whole-bundle override:
@@ -137,8 +199,27 @@ func (c *Catalog) OpenFile(name, filePath string) ([]byte, error) {
 // the resolution Load and List apply, so OpenFile reads files from the same
 // source whose body those return.
 func (c *Catalog) sourceFor(name string) fs.FS {
-	if _, err := fs.Stat(c.user, path.Join(name, SkillFile)); err == nil {
+	if claims(c.user, name) {
 		return c.user
 	}
 	return c.builtin
+}
+
+// Locate reports whether name is claimed by the user dir and/or the built-in
+// source, by the same directory-presence rule the override uses (a <name>/
+// holding a SKILL.md claims the name, even if that SKILL.md is malformed). The
+// argus skill rm command uses it to pick among its three cases — pure built-in,
+// override, user-only — without reaching into either fs.FS itself.
+func (c *Catalog) Locate(name string) (user, builtin bool, err error) {
+	if err := validateName(name); err != nil {
+		return false, false, err
+	}
+	return claims(c.user, name), claims(c.builtin, name), nil
+}
+
+// claims reports whether fsys holds <name>/SKILL.md, i.e. whether that source
+// claims the name. A bare directory with no SKILL.md does not claim it.
+func claims(fsys fs.FS, name string) bool {
+	_, err := fs.Stat(fsys, path.Join(name, SkillFile))
+	return err == nil
 }

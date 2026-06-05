@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -42,23 +43,26 @@ func skillListCmd() *cobra.Command {
 				return err
 			}
 			dir := filepath.Join(home, "skills")
-			skills, errs := skill.LoadAll(dir)
+			cat := skill.NewCatalog(skill.Builtin(), dir)
+			entries, errs := cat.ListEntries()
 			for _, e := range errs {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", e)
 			}
-			if len(skills) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "No skills found in %s\n", dir)
+			if len(entries) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "No skills found.\n")
 				fmt.Fprintf(cmd.OutOrStdout(), "Add one by creating %s/<name>/SKILL.md\n", dir)
 				return nil
 			}
+			sort.Slice(entries, func(i, j int) bool { return entries[i].Skill.Name < entries[j].Skill.Name })
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tDESCRIPTION\tTAGS")
-			for _, s := range skills {
+			fmt.Fprintln(w, "NAME\tSOURCE\tDESCRIPTION\tTAGS")
+			for _, e := range entries {
+				s := e.Skill
 				desc := s.Description
 				if len(desc) > 60 {
 					desc = desc[:57] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, desc, strings.Join(s.Tags, ", "))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Name, e.Source, desc, strings.Join(s.Tags, ", "))
 			}
 			return w.Flush()
 		},
@@ -79,11 +83,33 @@ func skillRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dir := filepath.Join(home, "skills")
 			name := args[0]
-			if err := skill.Delete(filepath.Join(home, "skills"), name); err != nil {
+			cat := skill.NewCatalog(skill.Builtin(), dir)
+			user, builtin, err := cat.Locate(name)
+			if err != nil {
 				return fmt.Errorf("remove skill %q: %w", name, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed skill %q\n", name)
+			out := cmd.OutOrStdout()
+			switch {
+			case !user && !builtin:
+				fmt.Fprintf(out, "No skill named %q found.\n", name)
+			case !user && builtin:
+				// Pure built-in: nothing on disk to remove. Say so plainly rather
+				// than printing a misleading "Removed".
+				fmt.Fprintf(out, "Skill %q is built-in: it lives in the binary and cannot be removed.\n", name)
+			case user && builtin:
+				// Override: delete the user copy; the built-in resurfaces.
+				if err := skill.Delete(dir, name); err != nil {
+					return fmt.Errorf("remove skill %q: %w", name, err)
+				}
+				fmt.Fprintf(out, "Removed your override of %q; the built-in skill is active again.\n", name)
+			default: // user && !builtin: user-only, today's behaviour
+				if err := skill.Delete(dir, name); err != nil {
+					return fmt.Errorf("remove skill %q: %w", name, err)
+				}
+				fmt.Fprintf(out, "Removed skill %q\n", name)
+			}
 			return nil
 		},
 	}
