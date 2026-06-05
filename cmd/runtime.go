@@ -16,6 +16,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/report"
 	"github.com/redcarbon-dev/argus/pkg/security"
 	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/redcarbon-dev/argus/pkg/skill"
 	"github.com/redcarbon-dev/argus/pkg/soul"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
@@ -131,6 +132,8 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 	reg.Register(tool.NewStartReviewGitHub(sess, cloner))
 	reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(sess, security.ExecRunner{}))
+	reg.Register(tool.NewListSkills(filepath.Join(home, "skills")))
+	reg.Register(tool.NewReadSkill(filepath.Join(home, "skills")))
 
 	return &runtime{
 		Home:         home,
@@ -146,6 +149,24 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		Provider:     prov,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
 	}, nil
+}
+
+// skillResolver returns a function that loads a user-curated skill by name and
+// formats its body as a one-shot prompt for the agent. It backs the TUI's
+// "/<skill-name>" slash command. Unknown or malformed skills resolve to
+// ok=false, so the TUI reports them as unknown commands.
+func skillResolver(home string) func(string) (string, bool) {
+	dir := filepath.Join(home, "skills")
+	return func(name string) (string, bool) {
+		s, err := skill.Load(dir, name)
+		if err != nil {
+			return "", false
+		}
+		return fmt.Sprintf(
+			"Use the %q skill for this task. Follow these instructions:\n\n%s",
+			s.Name, s.Content,
+		), true
+	}
 }
 
 // defaultPricing returns a hardcoded best-effort pricing table for the
@@ -210,8 +231,19 @@ func resolveAPIKey(cfg *config.Config, modelID string) (string, error) {
 }
 
 // resolveHome returns the directory Argus reads and writes state from.
-// Precedence: explicit override > ARGUS_HOME env > $HOME/.argus.
-// The directory is created if missing.
+// Precedence:
+//  1. explicit override (--home)
+//  2. ARGUS_HOME env var
+//  3. ./.argus in the current working directory, but only if it already
+//     exists (project-local home; never auto-created)
+//  4. $HOME/.argus (the default; created if missing)
+//
+// Step 3 activates only when ./.argus already exists, so running Argus in an
+// arbitrary directory never silently creates state there. Because a
+// project-local home can carry SOUL.md, skills and .env authored by whoever
+// owns that repo — i.e. instructions and secrets you didn't write — Argus
+// prints a notice when it selects one, so you always know when you're running
+// with directory-supplied state instead of your own ~/.argus.
 func resolveHome(override string) (string, error) {
 	if override != "" {
 		if err := os.MkdirAll(override, 0o700); err != nil {
@@ -224,6 +256,15 @@ func resolveHome(override string) (string, error) {
 			return "", fmt.Errorf("create home: %w", err)
 		}
 		return env, nil
+	}
+	// Project-local home: use ./.argus only if it already exists as a dir.
+	// We never create it here — its mere presence is the opt-in signal.
+	if cwd, err := os.Getwd(); err == nil {
+		local := filepath.Join(cwd, ".argus")
+		if info, statErr := os.Stat(local); statErr == nil && info.IsDir() {
+			fmt.Fprintf(os.Stderr, "argus: using project-local home %s\n", local)
+			return local, nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -54,6 +54,14 @@ type Config struct {
 	// the TUI starts. Used by `argus review <url>` to drop the user straight
 	// into a chat where the agent is already working on the requested review.
 	AutoSubmit string
+
+	// ResolveSkill maps a skill name (the token after the leading slash — e.g.
+	// "pr-quick-check" for "/pr-quick-check") to the prompt to dispatch to the
+	// agent, and reports whether a skill by that name exists. The TUI consults
+	// it when a slash command is not a built-in client command, so "/<name>"
+	// loads that skill and runs it through the agent. Nil disables skill slash
+	// commands (an unknown slash command is then simply rejected).
+	ResolveSkill func(name string) (prompt string, ok bool)
 }
 
 // --- tea.Msg types emitted by the dispatcher ---
@@ -89,8 +97,8 @@ type AgentErrorMsg struct {
 // Model is the Elm-pattern state. Methods return new Model values; the value
 // type is intentional so accidental shared mutation is impossible.
 type Model struct {
-	cfg     Config
-	styles  styles
+	cfg    Config
+	styles styles
 
 	// Layout — populated by WindowSizeMsg.
 	width, height int

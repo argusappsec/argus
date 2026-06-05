@@ -60,6 +60,31 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 		return m, tea.Quit
 
 	default:
+		// Not a built-in client command. Fall back to skill resolution:
+		// "/pr-quick-check" loads that skill and runs it through the agent.
+		// This is the ONE slash path that reaches the LLM (see ResolveSkill).
+		name := strings.TrimPrefix(cmd, "/")
+		if m.cfg.ResolveSkill != nil {
+			if prompt, ok := m.cfg.ResolveSkill(name); ok {
+				if m.busy {
+					m.messages = append(m.messages, Message{
+						Role:    "system",
+						Content: "agent is busy — wait for the current turn to finish, then retry",
+					})
+					return m, nil
+				}
+				m.messages = append(m.messages, Message{
+					Role:    "system",
+					Content: fmt.Sprintf("invoking skill: %s", name),
+				})
+				m.busy = true
+				cmds := []tea.Cmd{m.spinner.Tick}
+				if m.cfg.Dispatch != nil {
+					cmds = append(cmds, m.cfg.Dispatch(prompt))
+				}
+				return m, tea.Batch(cmds...)
+			}
+		}
 		m.messages = append(m.messages, Message{
 			Role:    "system",
 			Content: fmt.Sprintf("unknown command %s (try /help)", cmd),
@@ -70,11 +95,14 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 
 func helpText() string {
 	return strings.Join([]string{
-		"slash commands (client-side, never reach the agent):",
+		"client-side slash commands (never reach the agent):",
 		"  /help    show this help",
 		"  /clear   wipe the chat history",
 		"  /cost    show cumulative tokens and USD spend",
 		"  /cancel  abort the current agent run",
 		"  /quit    exit Argus",
+		"",
+		"skills (run through the agent):",
+		"  /<skill-name>  load and run a saved skill (list them: `argus skill ls`)",
 	}, "\n")
 }

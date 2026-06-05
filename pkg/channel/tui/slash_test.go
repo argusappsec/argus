@@ -123,3 +123,52 @@ func TestNonSlashTextStillReachesAgent(t *testing.T) {
 		t.Error("non-slash input must reach the dispatcher")
 	}
 }
+
+// TestSlashCommand_SkillIsDispatchedToAgent: typing `/<skill>` for a skill
+// that resolves loads its body and dispatches it to the agent (the ONE slash
+// path that reaches the LLM), marking the model busy and showing a notice.
+func TestSlashCommand_SkillIsDispatchedToAgent(t *testing.T) {
+	var dispatched string
+	cfg := tui.Config{
+		Dispatch: func(p string) tea.Cmd { dispatched = p; return nil },
+		ResolveSkill: func(name string) (string, bool) {
+			if name == "pr-check" {
+				return "Use the \"pr-check\" skill. Follow:\n\nDo the thing.", true
+			}
+			return "", false
+		},
+	}
+	m := tui.New(cfg).WithInput("/pr-check")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model := updated.(tui.Model)
+
+	if !strings.Contains(dispatched, "Do the thing") {
+		t.Errorf("a resolved skill must be dispatched with its body; got %q", dispatched)
+	}
+	if !model.IsBusy() {
+		t.Error("invoking a skill should mark the model busy")
+	}
+	if !strings.Contains(model.View(), "invoking skill") {
+		t.Errorf("expected an 'invoking skill' notice; view:\n%s", model.View())
+	}
+}
+
+// TestSlashCommand_UnknownSkillIsRejected: a `/<name>` that resolves to no
+// skill must not reach the agent and is reported as unknown.
+func TestSlashCommand_UnknownSkillIsRejected(t *testing.T) {
+	dispatched := false
+	cfg := tui.Config{
+		Dispatch:     func(string) tea.Cmd { dispatched = true; return nil },
+		ResolveSkill: func(string) (string, bool) { return "", false },
+	}
+	m := tui.New(cfg).WithInput("/does-not-exist")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model := updated.(tui.Model)
+
+	if dispatched {
+		t.Error("an unresolved skill slash command must not be dispatched")
+	}
+	if !strings.Contains(model.View(), "unknown") {
+		t.Errorf("unresolved skill should be reported as unknown; view:\n%s", model.View())
+	}
+}

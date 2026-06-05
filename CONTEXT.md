@@ -119,17 +119,17 @@ not. See ADR 0006.
 
 ### Skill
 
-A markdown document — frontmatter (name + description only) plus a
-free-form body — that describes a multi-step workflow the agent can
-follow. Skills are **content, not state**: the agent calls `read_skill`,
-receives the body, and follows the instructions. There is no active /
-inactive mode, no per-skill tool whitelist, no `finalize_skill`.
+A markdown document — frontmatter (`name`, `description`, optional
+`tags`) plus a free-form body — that describes a multi-step workflow the
+agent can follow. Skills are **content, not state**: the agent reads the
+body and follows the instructions. There is no active / inactive mode, no
+per-skill tool whitelist, no `finalize_skill`.
 
-Skills come in two flavours:
-
-- **Built-in** — bundled with the binary in `pkg/skill/builtin/<name>/SKILL.md`.
-- **User-curated** — files under `~/.argus/skills/<name>/SKILL.md`.
-  User-curated wins when both define the same name.
+- **User-curated** — files under `~/.argus/skills/<name>/SKILL.md` on the
+  daemon host. This is the implemented surface (`pkg/skill`).
+- **Built-in** — bundled with the binary via `embed.FS` in
+  `pkg/skill/builtin/<name>/SKILL.md`. Planned (PLANNING stream F); when
+  present, a user-curated skill overrides the built-in of the same name.
 
 Skills compose existing Tools; they never define new ones. If a skill
 references a Tool that isn't registered, the agent simply doesn't have
@@ -138,15 +138,17 @@ the skill: a skill cannot escalate the caller's permissions.
 
 LLM-facing surface:
 
-- `list_skills` — returns `[{name, description}, …]` for the merged
-  built-in + user-curated set.
+- `list_skills` — returns one `name — description [tags]` line per skill.
 - `read_skill(name)` — returns the full markdown body.
 
-User-explicit trigger: `/skill <name>` (or just `/<name>`) in chat
-synthesises a user message like "Use the <name> skill for this task";
-the agent then calls `read_skill` itself and follows the instructions.
+User-explicit trigger: `/<name>` in chat. When the token is not a built-in
+client command, Argus loads that skill and dispatches its body directly to
+the agent as one turn — deterministic, with no dependence on the model
+choosing to call `read_skill`. The body enters the conversation, so it
+stays in context for follow-up turns.
 
-Viewer Persons cannot use the skill surface. analyst+ can.
+Skills are an analyst+ capability (viewers can't use them), enforced at the
+Tool layer once channel auth (stream A) lands.
 
 ---
 
