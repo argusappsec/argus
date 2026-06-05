@@ -1,0 +1,18 @@
+# thomctl project config. Picked up automatically when thomctl is invoked
+# from anywhere under this directory.
+backend: github
+
+# GitHub backend has no required fields today — repo is resolved by `gh`
+# from cwd. Uncomment + populate when switching to Jira:
+#
+# backend: jira
+# jira:
+#   project_key: OPE
+#   prd_issue_type: Epic
+#   subissue_issue_type: Task
+#   close_status: Done
+#   site: https://acme.atlassian.net  # optional; enables clickable KEYs in list/view
+
+prd_label: PRD
+ready_label: ready-for-agent
+default_assignee: "@me"

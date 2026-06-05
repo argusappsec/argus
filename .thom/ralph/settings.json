@@ -1,0 +1,8 @@
+{
+  "model": "opus",
+  "effortLevel": "medium",
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": ["Edit", "Write", "Read", "WebSearch", "WebFetch", "Bash(*)"]
+  }
+}
