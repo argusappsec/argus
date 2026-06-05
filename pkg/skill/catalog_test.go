@@ -199,9 +199,129 @@ func TestBuiltin_EveryEmbeddedSkillParses(t *testing.T) {
 	}
 }
 
+func TestCatalog_OpenFile_ReadsFromWinningSource(t *testing.T) {
+	// The built-in carries a template; an unrelated user skill exists but does
+	// not claim "bundle", so OpenFile reads the built-in's template.
+	bName, bFile := skillFile("bundle", valid("bundle", "builtin body"))
+	cat := skill.NewCatalogFS(
+		fstest.MapFS{
+			bName:                bFile,
+			"bundle/template.md": {Data: []byte("BUILTIN TEMPLATE")},
+		},
+		fstest.MapFS{},
+	)
+
+	data, err := cat.OpenFile("bundle", "template.md")
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if string(data) != "BUILTIN TEMPLATE" {
+		t.Errorf("OpenFile = %q, want BUILTIN TEMPLATE", data)
+	}
+}
+
+func TestCatalog_OpenFile_UserOverrideWinsWholeBundle(t *testing.T) {
+	// Both sources claim "bundle" and both carry template.md. The user override
+	// wins the whole bundle: OpenFile must read the user's file, never cross to
+	// the built-in's.
+	bName, bFile := skillFile("bundle", valid("bundle", "builtin body"))
+	uName, uFile := skillFile("bundle", valid("bundle", "user body"))
+	cat := skill.NewCatalogFS(
+		fstest.MapFS{
+			bName:                bFile,
+			"bundle/template.md": {Data: []byte("BUILTIN TEMPLATE")},
+		},
+		fstest.MapFS{
+			uName:                uFile,
+			"bundle/template.md": {Data: []byte("USER TEMPLATE")},
+		},
+	)
+
+	data, err := cat.OpenFile("bundle", "template.md")
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if string(data) != "USER TEMPLATE" {
+		t.Errorf("OpenFile = %q, want USER TEMPLATE (override wins the whole bundle)", data)
+	}
+}
+
+func TestCatalog_OpenFile_NoCrossSourceFallback(t *testing.T) {
+	// The user wins the name (its SKILL.md exists) but ships no template. The
+	// built-in's template must NOT leak through — a file missing from the
+	// winning bundle errors cleanly.
+	bName, bFile := skillFile("bundle", valid("bundle", "builtin body"))
+	uName, uFile := skillFile("bundle", valid("bundle", "user body"))
+	cat := skill.NewCatalogFS(
+		fstest.MapFS{
+			bName:                bFile,
+			"bundle/template.md": {Data: []byte("BUILTIN TEMPLATE")},
+		},
+		fstest.MapFS{uName: uFile},
+	)
+
+	if _, err := cat.OpenFile("bundle", "template.md"); err == nil {
+		t.Error("OpenFile should error when the winning bundle lacks the file, not fall back to the built-in")
+	}
+}
+
+func TestCatalog_OpenFile_SandboxRejectsTraversal(t *testing.T) {
+	bName, bFile := skillFile("bundle", valid("bundle", "builtin body"))
+	cat := skill.NewCatalogFS(
+		fstest.MapFS{
+			bName:                bFile,
+			"bundle/template.md": {Data: []byte("ok")},
+		},
+		fstest.MapFS{},
+	)
+
+	// Bad skill names (path traversal in the name itself).
+	for _, bad := range []string{"../escape", "a/b", `a\b`, "..", ""} {
+		if _, err := cat.OpenFile(bad, "template.md"); err == nil {
+			t.Errorf("OpenFile(%q, ...) should reject the name", bad)
+		}
+	}
+	// Bad file paths: fs.ValidPath rejects "..", absolute, malformed, and empty.
+	for _, bad := range []string{"../../etc/passwd", "/etc/passwd", "", ".", "a//b", "sub/../../escape"} {
+		if _, err := cat.OpenFile("bundle", bad); err == nil {
+			t.Errorf("OpenFile(bundle, %q) should reject the path", bad)
+		}
+	}
+}
+
+func TestCatalog_OpenFile_MissingFileErrors(t *testing.T) {
+	bName, bFile := skillFile("bundle", valid("bundle", "builtin body"))
+	cat := skill.NewCatalogFS(fstest.MapFS{bName: bFile}, fstest.MapFS{})
+
+	if _, err := cat.OpenFile("bundle", "nope.md"); err == nil {
+		t.Error("OpenFile of a missing file should error")
+	}
+}
+
+func TestBuiltin_ThreatModelingShipsStrideTemplate(t *testing.T) {
+	cat := skill.NewCatalog(skill.Builtin(), t.TempDir())
+
+	s, err := cat.Load("threat-modeling")
+	if err != nil {
+		t.Fatalf("load threat-modeling: %v", err)
+	}
+	// The body must reference the template it pulls, so the agent knows to read it.
+	if !strings.Contains(s.Content, "stride-template.md") {
+		t.Error("threat-modeling body should reference stride-template.md")
+	}
+
+	data, err := cat.OpenFile("threat-modeling", "stride-template.md")
+	if err != nil {
+		t.Fatalf("open bundled STRIDE template: %v", err)
+	}
+	if !strings.Contains(string(data), "STRIDE") {
+		t.Errorf("bundled template should be a STRIDE worksheet, got %q", data)
+	}
+}
+
 func TestBuiltin_ShipsExpectedSkills(t *testing.T) {
 	cat := skill.NewCatalog(skill.Builtin(), t.TempDir())
-	for _, want := range []string{"pr-quick-check", "secret-rotation-plan"} {
+	for _, want := range []string{"pr-quick-check", "secret-rotation-plan", "threat-modeling"} {
 		s, err := cat.Load(want)
 		if err != nil {
 			t.Errorf("expected built-in %q to load: %v", want, err)

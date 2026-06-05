@@ -136,6 +136,7 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 	skills := skill.NewCatalog(skill.Builtin(), filepath.Join(home, "skills"))
 	reg.Register(tool.NewListSkills(skills))
 	reg.Register(tool.NewReadSkill(skills))
+	reg.Register(tool.NewReadSkillFile(skills))
 
 	return &runtime{
 		Home:         home,

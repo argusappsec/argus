@@ -97,3 +97,58 @@ func (r *readSkill) Execute(_ context.Context, args map[string]any) (string, err
 	}
 	return s.Content, nil
 }
+
+// NewReadSkillFile returns a `read_skill_file` tool that returns a supporting
+// file bundled inside a skill (a template, example, or checklist its body
+// references). Resolution goes through the Catalog, so the file is read from
+// whichever source won the whole-bundle override (a user override wins body and
+// files together). The path is sandboxed within the skill's own directory via
+// fs.ValidPath — `..`, absolute paths, and malformed separators are rejected —
+// and the skill name passes the same path-traversal validation as read_skill.
+// There is deliberately no file-listing tool: supporting files are discovered
+// only by reading the SKILL.md body, which names the files it wants.
+func NewReadSkillFile(cat *skill.Catalog) Tool { return &readSkillFile{cat: cat} }
+
+type readSkillFile struct{ cat *skill.Catalog }
+
+func (r *readSkillFile) Name() string { return "read_skill_file" }
+
+func (r *readSkillFile) Description() string {
+	return "Read a supporting file bundled inside a skill (a template, example, or checklist the skill references). " +
+		"Use it after read_skill, when the skill body names a file to load. " +
+		"`skill` is the skill name; `path` is the file's location relative to the skill's own directory. " +
+		"The path cannot escape that directory — `..` and absolute paths are rejected."
+}
+
+func (r *readSkillFile) Schema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"skill": map[string]any{
+				"type":        "string",
+				"description": "Skill name (the directory handle, e.g. \"threat-modeling\"). Must not contain path separators.",
+			},
+			"path": map[string]any{
+				"type":        "string",
+				"description": "Path to the file within the skill's directory (e.g. \"stride-template.md\"). Relative only; \"..\" and absolute paths are rejected.",
+			},
+		},
+		"required": []string{"skill", "path"},
+	}
+}
+
+func (r *readSkillFile) Execute(_ context.Context, args map[string]any) (string, error) {
+	name, _ := args["skill"].(string)
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("read_skill_file: skill required")
+	}
+	filePath, _ := args["path"].(string)
+	if strings.TrimSpace(filePath) == "" {
+		return "", errors.New("read_skill_file: path required")
+	}
+	data, err := r.cat.OpenFile(name, filePath)
+	if err != nil {
+		return "", fmt.Errorf("read_skill_file: %w", err)
+	}
+	return string(data), nil
+}

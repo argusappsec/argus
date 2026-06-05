@@ -1,10 +1,10 @@
 package skill
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 )
 
 // Catalog is the single source of truth for skill resolution. It merges a
@@ -90,26 +90,55 @@ func (c *Catalog) List() ([]*Skill, []error) {
 // Load resolves a single skill by name, honouring the whole-bundle override:
 // if a user <name>/SKILL.md exists it is used (and a parse failure is returned
 // rather than silently falling back to the built-in — the user owns the name);
-// otherwise the built-in of that name is loaded.
+// otherwise the built-in of that name is loaded. The winning source is decided
+// by sourceFor, the same resolution OpenFile applies, so a skill's body and its
+// supporting files always come from one source.
 func (c *Catalog) Load(name string) (*Skill, error) {
 	if err := validateName(name); err != nil {
 		return nil, err
 	}
-
-	s, err := parseSkillAt(c.user, name)
-	if err == nil {
-		return s, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		// A user SKILL.md exists but failed to parse (or another read error):
-		// the user owns this name, so surface the error instead of resurfacing
-		// the built-in.
-		return nil, fmt.Errorf("skill: load %q: %w", name, err)
-	}
-
-	s, err = parseSkillAt(c.builtin, name)
+	s, err := parseSkillAt(c.sourceFor(name), name)
 	if err != nil {
 		return nil, fmt.Errorf("skill: load %q: %w", name, err)
 	}
 	return s, nil
+}
+
+// OpenFile returns the bytes of a supporting file from within a skill's bundle
+// (a template, example, or checklist the SKILL.md body references). It honours
+// the whole-bundle override: the file is read from whichever source won the
+// name — a user <name>/ directory wins the entire bundle over the built-in, so
+// a body and its supporting files never cross sources, and a file missing from
+// the winning bundle errors cleanly rather than falling back to the other one.
+//
+// The lookup is sandboxed to the skill's own directory: name passes the usual
+// flat-handle validation, and filePath must satisfy fs.ValidPath, which rejects
+// "..", absolute paths, and malformed separators. Both guarantees come from the
+// fs.FS contract rather than a hand-rolled path resolver.
+func (c *Catalog) OpenFile(name, filePath string) ([]byte, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	if !fs.ValidPath(filePath) {
+		return nil, fmt.Errorf("skill: invalid file path %q: must be a clean relative path within the skill directory", filePath)
+	}
+
+	src := c.sourceFor(name)
+	data, err := fs.ReadFile(src, path.Join(name, filePath))
+	if err != nil {
+		return nil, fmt.Errorf("skill: open %q/%q: %w", name, filePath, err)
+	}
+	return data, nil
+}
+
+// sourceFor returns the fs.FS that won the override for name: the user source
+// when a user <name>/SKILL.md exists (a user directory claims the whole bundle,
+// even if its body is malformed), otherwise the built-in source. This mirrors
+// the resolution Load and List apply, so OpenFile reads files from the same
+// source whose body those return.
+func (c *Catalog) sourceFor(name string) fs.FS {
+	if _, err := fs.Stat(c.user, path.Join(name, SkillFile)); err == nil {
+		return c.user
+	}
+	return c.builtin
 }
