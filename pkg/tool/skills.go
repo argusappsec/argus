@@ -10,13 +10,14 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/skill"
 )
 
-// NewListSkills returns a `list_skills` tool that enumerates the user-curated
-// skills available under dir (typically ~/.argus/skills/). The agent calls it
-// to discover which reusable workflows it can load, paying no token cost for
-// the skill bodies it doesn't need.
-func NewListSkills(dir string) Tool { return &listSkills{dir: dir} }
+// NewListSkills returns a `list_skills` tool that enumerates the skills the
+// agent can load, reading through the Catalog (built-in skills merged with
+// user-curated ones, user winning by name). The agent calls it to discover
+// which reusable workflows exist, paying no token cost for the bodies it
+// doesn't need.
+func NewListSkills(cat *skill.Catalog) Tool { return &listSkills{cat: cat} }
 
-type listSkills struct{ dir string }
+type listSkills struct{ cat *skill.Catalog }
 
 func (l *listSkills) Name() string { return "list_skills" }
 
@@ -33,7 +34,7 @@ func (l *listSkills) Schema() map[string]any {
 func (l *listSkills) Execute(_ context.Context, _ map[string]any) (string, error) {
 	// Malformed skills are skipped: surfacing parse errors to the LLM adds
 	// noise. `argus skill ls` reports them to the human author instead.
-	skills, _ := skill.LoadAll(l.dir)
+	skills, _ := l.cat.List()
 	if len(skills) == 0 {
 		return "", nil
 	}
@@ -55,12 +56,14 @@ func (l *listSkills) Execute(_ context.Context, _ map[string]any) (string, error
 }
 
 // NewReadSkill returns a `read_skill` tool that returns the full markdown body
-// of one skill by name. The agent follows the returned instructions in its
-// normal reasoning loop — there is no separate skill VM or active/inactive
-// state. The skill name is validated against path traversal by pkg/skill.
-func NewReadSkill(dir string) Tool { return &readSkill{dir: dir} }
+// of one skill by name, resolved through the Catalog (a user override wins over
+// the built-in of the same name). The agent follows the returned instructions
+// in its normal reasoning loop — there is no separate skill VM or
+// active/inactive state. The skill name is validated against path traversal by
+// pkg/skill.
+func NewReadSkill(cat *skill.Catalog) Tool { return &readSkill{cat: cat} }
 
-type readSkill struct{ dir string }
+type readSkill struct{ cat *skill.Catalog }
 
 func (r *readSkill) Name() string { return "read_skill" }
 
@@ -88,7 +91,7 @@ func (r *readSkill) Execute(_ context.Context, args map[string]any) (string, err
 	if strings.TrimSpace(name) == "" {
 		return "", errors.New("read_skill: name required")
 	}
-	s, err := skill.Load(r.dir, name)
+	s, err := r.cat.Load(name)
 	if err != nil {
 		return "", fmt.Errorf("read_skill: %w", err)
 	}

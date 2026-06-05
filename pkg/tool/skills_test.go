@@ -4,13 +4,21 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/redcarbon-dev/argus/pkg/skill"
 	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
+// userCatalog builds a Catalog whose only source is the user dir (the built-in
+// source is empty), so these tests exercise the tools' formatting and error
+// handling without depending on the shipped built-in skills.
+func userCatalog(dir string) *skill.Catalog {
+	return skill.NewCatalog(fstest.MapFS{}, dir)
+}
+
 func TestListSkills_EmptyWhenNoDir(t *testing.T) {
-	ls := tool.NewListSkills(t.TempDir() + "/missing")
+	ls := tool.NewListSkills(userCatalog(t.TempDir() + "/missing"))
 	out, err := ls.Execute(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -29,7 +37,7 @@ func TestListSkills_ListsNameDescriptionTagsSorted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := tool.NewListSkills(dir).Execute(context.Background(), map[string]any{})
+	out, err := tool.NewListSkills(userCatalog(dir)).Execute(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -50,7 +58,7 @@ func TestReadSkill_ReturnsBody(t *testing.T) {
 	if err := skill.Save(dir, &skill.Skill{Name: "demo", Description: "d", Content: "# Demo\nrun it"}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := tool.NewReadSkill(dir).Execute(context.Background(), map[string]any{"name": "demo"})
+	out, err := tool.NewReadSkill(userCatalog(dir)).Execute(context.Background(), map[string]any{"name": "demo"})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -60,13 +68,13 @@ func TestReadSkill_ReturnsBody(t *testing.T) {
 }
 
 func TestReadSkill_MissingNameErrors(t *testing.T) {
-	if _, err := tool.NewReadSkill(t.TempDir()).Execute(context.Background(), map[string]any{}); err == nil {
+	if _, err := tool.NewReadSkill(userCatalog(t.TempDir())).Execute(context.Background(), map[string]any{}); err == nil {
 		t.Error("expected error when name is missing")
 	}
 }
 
 func TestReadSkill_RejectsTraversalAndUnknown(t *testing.T) {
-	rs := tool.NewReadSkill(t.TempDir())
+	rs := tool.NewReadSkill(userCatalog(t.TempDir()))
 	for _, bad := range []string{"../etc/passwd", "a/b", "nope"} {
 		if _, err := rs.Execute(context.Background(), map[string]any{"name": bad}); err == nil {
 			t.Errorf("read_skill(%q) should error", bad)
