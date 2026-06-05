@@ -119,11 +119,14 @@ not. See ADR 0006.
 
 ### Skill
 
-A markdown document — frontmatter (`name`, `description`, optional
-`tags`) plus a free-form body — that describes a multi-step workflow the
-agent can follow. Skills are **content, not state**: the agent reads the
-body and follows the instructions. There is no active / inactive mode, no
-per-skill tool whitelist, no `finalize_skill`.
+A **directory bundle**: a `SKILL.md` (frontmatter — `name`, `description`,
+optional `tags` — plus a free-form body describing a multi-step workflow)
+together with optional supporting files (templates, examples) the body may
+reference. Skills are **content, not state**: the agent reads the body and
+follows the instructions. There is no active / inactive mode, no per-skill
+tool whitelist, no `finalize_skill`. Supporting files are discovered only
+by reading the body — there is no automatic file listing; the body names
+the files it wants, the agent pulls them on demand.
 
 - **User-curated** — files under `~/.argus/skills/<name>/SKILL.md` on the
   daemon host. This is the implemented surface (`pkg/skill`).
@@ -136,10 +139,17 @@ references a Tool that isn't registered, the agent simply doesn't have
 that capability and adapts. RBAC is enforced at the Tool layer, not in
 the skill: a skill cannot escalate the caller's permissions.
 
+Override is **whole-bundle**: a user-curated skill that owns a name wins the
+entire directory (body *and* supporting files) over the built-in of that
+name — never a per-file mix.
+
 LLM-facing surface:
 
 - `list_skills` — returns one `name — description [tags]` line per skill.
 - `read_skill(name)` — returns the full markdown body.
+- `read_skill_file(skill, path)` — returns a supporting file from a skill's
+  bundle, sandboxed within that skill's directory (built-in or user-curated,
+  transparent to the caller).
 
 User-explicit trigger: `/<name>` in chat. When the token is not a built-in
 client command, Argus loads that skill and dispatches its body directly to

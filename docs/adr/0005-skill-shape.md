@@ -1,8 +1,56 @@
 # ADR 0005 — Skill shape: stateless markdown content, no whitelist, no active state
 
-**Status:** Accepted — revised 2026-05-29
+**Status:** Accepted — revised 2026-06-05
 **Date:** 2026-05-16
 **Builds on:** [ADR 0002](0002-rbac-model.md)
+
+## Revision (2026-06-05) — a skill is a directory bundle, not a lone SKILL.md
+
+Building the built-in source (PLANNING stream F / issue #4) surfaced a gap:
+the original shape treats a skill as exactly one `SKILL.md`, but a real
+workflow often needs to carry supporting material — a STRIDE template, an
+example report, a checklist — that the body references. The reference skill
+conventions (Claude's own skills) ship these as files alongside `SKILL.md`.
+Nothing in Argus could read them: `read_file` is sandboxed to the Session's
+target repo, so a skill's own bundled files — whether built-in (`embed.FS`)
+or user-curated (`~/.argus/skills/<name>/`) — were unreachable.
+
+Deferring this would have meant changing the loading-and-discovery contract
+later — the exact move the Context section below warns against. So the
+contract is widened now, while the built-in source is first built:
+
+1. **A skill is a directory bundle.** It still must contain a `SKILL.md`
+   (the entry point: frontmatter + body), but may carry arbitrary
+   supporting files the body references. The built-in `embed.FS` embeds the
+   whole tree (`//go:embed all:builtin`), not just the `SKILL.md` files.
+2. **New LLM-facing tool `read_skill_file(skill, path)`** returns a
+   supporting file from a skill's bundle, sandboxed within that skill's
+   directory via `fs.FS` / `fs.ValidPath` (which reject `..`, absolute
+   paths, and malformed paths). It is gated behind the analyst role like
+   `list_skills` / `read_skill`.
+3. **No automatic file listing.** Supporting files are discovered only by
+   reading the `SKILL.md` body, which names the files it wants; the agent
+   pulls them on demand. The LLM surface stays three tools: `list_skills`,
+   `read_skill`, `read_skill_file`.
+4. **Override is whole-bundle.** A user-curated skill that owns a name wins
+   the entire directory — body *and* supporting files — over the built-in
+   of that name. `read_skill_file` always reads from the source that won;
+   bodies and files never mix across sources. Override is decided by
+   directory presence: a user `<name>/` claims the name even if its
+   `SKILL.md` fails to parse (the built-in does not silently resurface — a
+   broken override surfaces loudly in `argus skill ls`).
+
+Merge/override resolution is centralised in a `skill.Catalog` that wraps the
+built-in `fs.FS` and the user dir; `list_skills` / `read_skill` /
+`read_skill_file`, the `/<name>` resolver, and the `argus skill` CLI all
+read through it. The write path (`Save` / `Delete`) stays user-dir-only —
+built-in skills live in the binary and are immutable by construction, so
+`argus skill rm` of a pure built-in is a no-op with an explanatory message,
+not a deletion.
+
+Skills still reference only **already-implemented Tools** — the bundle is
+for content (templates, examples), never a back door to new capabilities.
+RBAC stays at the Tool layer.
 
 ## Revision (2026-05-29)
 
