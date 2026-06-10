@@ -38,6 +38,7 @@ type runtime struct {
 	ConvoPath    string
 	Provider     provider.Provider
 	Reports      *report.Writer // shared report writer (chat + review both use it)
+	Skills       *skill.Catalog // merged built-in + user-curated skill source
 }
 
 // runtimeOptions captures user-facing knobs that affect the runtime.
@@ -132,8 +133,10 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 	reg.Register(tool.NewStartReviewGitHub(sess, cloner))
 	reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(sess, security.ExecRunner{}))
-	reg.Register(tool.NewListSkills(filepath.Join(home, "skills")))
-	reg.Register(tool.NewReadSkill(filepath.Join(home, "skills")))
+	skills := skill.NewCatalog(skill.Builtin(), filepath.Join(home, "skills"))
+	reg.Register(tool.NewListSkills(skills))
+	reg.Register(tool.NewReadSkill(skills))
+	reg.Register(tool.NewReadSkillFile(skills))
 
 	return &runtime{
 		Home:         home,
@@ -148,17 +151,18 @@ func buildRuntime(ctx context.Context, opts runtimeOptions) (*runtime, error) {
 		ConvoPath:    convoPath,
 		Provider:     prov,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
+		Skills:       skills,
 	}, nil
 }
 
-// skillResolver returns a function that loads a user-curated skill by name and
-// formats its body as a one-shot prompt for the agent. It backs the TUI's
+// skillResolver returns a function that loads a skill by name through the
+// Catalog (built-in or user-curated, with user overrides winning) and formats
+// its body as a one-shot prompt for the agent. It backs the TUI's
 // "/<skill-name>" slash command. Unknown or malformed skills resolve to
 // ok=false, so the TUI reports them as unknown commands.
-func skillResolver(home string) func(string) (string, bool) {
-	dir := filepath.Join(home, "skills")
+func skillResolver(cat *skill.Catalog) func(string) (string, bool) {
 	return func(name string) (string, bool) {
-		s, err := skill.Load(dir, name)
+		s, err := cat.Load(name)
 		if err != nil {
 			return "", false
 		}

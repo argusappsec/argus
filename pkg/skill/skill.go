@@ -7,18 +7,26 @@
 // (a skill that references a Tool the caller cannot use simply fails on that
 // call — no escalation). This mirrors the shape used by WildGecu.
 //
-// A skill lives in its own directory under the skills root:
+// A skill is a directory bundle: a SKILL.md entry point plus optional
+// supporting files the body references. User-curated skills live under the
+// skills root on the daemon host:
 //
 //	~/.argus/skills/<name>/SKILL.md
 //
-// Built-in skills bundled into the binary via embed.FS are a planned addition
-// layered on top of this same loader; see PLANNING.md stream F.
+// Built-in skills are bundled into the binary via embed.FS (see builtin.go).
+// Both sources are merged by a Catalog (see catalog.go), which applies the
+// whole-bundle override rule: a user <name>/ directory wins over the built-in
+// of that name. The walk/parse path is unified over fs.FS so the two sources
+// share one implementation. Design: ADR-0005 (revision 2026-06-05).
 package skill
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -98,35 +106,80 @@ func Serialize(s *Skill) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// LoadAll loads every skill under dir. Each skill is a subdirectory holding a
-// SKILL.md. Directories without a SKILL.md are skipped silently; malformed
-// skills are collected into errs so one bad file never hides the good ones.
-// A missing dir is not an error — it just yields no skills.
-func LoadAll(dir string) ([]*Skill, []error) {
-	entries, err := os.ReadDir(dir)
+// walkEntry is one skill directory discovered while walking a source. A
+// malformed SKILL.md yields skill == nil and a non-nil err; the directory is
+// still recorded (its dir name claims the skill name) so an override decision
+// can be made without the body parsing successfully.
+type walkEntry struct {
+	dir   string
+	skill *Skill // nil when err != nil
+	err   error  // non-nil when SKILL.md failed to parse
+}
+
+// walkSkills enumerates skill directories in fsys, returning one walkEntry per
+// directory that contains a SKILL.md (parseable or not). Directories without a
+// SKILL.md are skipped silently — they are not skills and do not claim a name.
+// A missing source root is not an error; it just yields no entries. Entries are
+// returned sorted by directory name (fs.ReadDir guarantees the ordering).
+//
+// This is the single walk/parse path shared by the user directory
+// (os.DirFS) and the embedded built-in source, so both behave identically.
+func walkSkills(fsys fs.FS) ([]walkEntry, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // no skills dir yet = no skills, not an error
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil // no skills source yet = no skills, not an error
 		}
-		return nil, []error{fmt.Errorf("skill: list dir: %w", err)}
+		return nil, fmt.Errorf("skill: list dir: %w", err)
 	}
 
-	var skills []*Skill
-	var errs []error
+	var out []walkEntry
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name(), SkillFile))
+		data, err := fs.ReadFile(fsys, path.Join(e.Name(), SkillFile))
 		if err != nil {
 			continue // no SKILL.md in this dir — not a skill
 		}
 		s, err := Parse(data)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("skill %q: %w", e.Name(), err))
+			out = append(out, walkEntry{dir: e.Name(), err: fmt.Errorf("skill %q: %w", e.Name(), err)})
 			continue
 		}
-		skills = append(skills, s)
+		out = append(out, walkEntry{dir: e.Name(), skill: s})
+	}
+	return out, nil
+}
+
+// parseSkillAt reads and parses fsys/<name>/SKILL.md. name must already be
+// validated when it originates from an untrusted source (callers use
+// validateName); when it comes from walkSkills it is a real directory entry.
+func parseSkillAt(fsys fs.FS, name string) (*Skill, error) {
+	data, err := fs.ReadFile(fsys, path.Join(name, SkillFile))
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data)
+}
+
+// LoadAll loads every skill under dir. Each skill is a subdirectory holding a
+// SKILL.md. Directories without a SKILL.md are skipped silently; malformed
+// skills are collected into errs so one bad file never hides the good ones.
+// A missing dir is not an error — it just yields no skills.
+func LoadAll(dir string) ([]*Skill, []error) {
+	walks, err := walkSkills(os.DirFS(dir))
+	if err != nil {
+		return nil, []error{err}
+	}
+	var skills []*Skill
+	var errs []error
+	for _, w := range walks {
+		if w.err != nil {
+			errs = append(errs, w.err)
+			continue
+		}
+		skills = append(skills, w.skill)
 	}
 	return skills, errs
 }
@@ -136,11 +189,11 @@ func Load(dir, name string) (*Skill, error) {
 	if err := validateName(name); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(dir, name, SkillFile))
+	s, err := parseSkillAt(os.DirFS(dir), name)
 	if err != nil {
 		return nil, fmt.Errorf("skill: load %q: %w", name, err)
 	}
-	return Parse(data)
+	return s, nil
 }
 
 // Save writes s to dir/<name>/SKILL.md, creating directories as needed.

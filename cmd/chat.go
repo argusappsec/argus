@@ -56,7 +56,7 @@ func chatCmd() *cobra.Command {
 
 			model := tui.New(tui.Config{
 				Dispatch:     dispatch,
-				ResolveSkill: skillResolver(rt.Home),
+				ResolveSkill: skillResolver(rt.Skills),
 			})
 			program = tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
 			if _, err := program.Run(); err != nil {

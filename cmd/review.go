@@ -148,7 +148,7 @@ func runReviewInteractive(ctx context.Context, cmd *cobra.Command, rt *runtime, 
 		Dispatch:     dispatch,
 		Title:        "argus review " + target.Repo,
 		AutoSubmit:   seedPrompt,
-		ResolveSkill: skillResolver(rt.Home),
+		ResolveSkill: skillResolver(rt.Skills),
 	})
 	program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithContext(ctx))
 	if _, err := program.Run(); err != nil {
