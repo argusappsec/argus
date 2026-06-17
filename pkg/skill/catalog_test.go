@@ -321,7 +321,7 @@ func TestBuiltin_ThreatModelingShipsStrideTemplate(t *testing.T) {
 
 func TestBuiltin_ShipsExpectedSkills(t *testing.T) {
 	cat := skill.NewCatalog(skill.Builtin(), t.TempDir())
-	for _, want := range []string{"pr-quick-check", "secret-rotation-plan", "threat-modeling"} {
+	for _, want := range []string{"authz-audit", "pr-quick-check", "secret-rotation-plan", "threat-modeling"} {
 		s, err := cat.Load(want)
 		if err != nil {
 			t.Errorf("expected built-in %q to load: %v", want, err)
