@@ -319,6 +319,28 @@ func TestBuiltin_ThreatModelingShipsStrideTemplate(t *testing.T) {
 	}
 }
 
+func TestBuiltin_AuthzAuditShipsSelfTest(t *testing.T) {
+	cat := skill.NewCatalog(skill.Builtin(), t.TempDir())
+
+	s, err := cat.Load("authz-audit")
+	if err != nil {
+		t.Fatalf("load authz-audit: %v", err)
+	}
+	// The body must reference the self-test oracle by name so read_skill_file
+	// can resolve it, and must warn against loading it during a real audit.
+	if !strings.Contains(s.Content, "self-test-vampi.md") {
+		t.Error("authz-audit body should reference self-test-vampi.md")
+	}
+
+	data, err := cat.OpenFile("authz-audit", "self-test-vampi.md")
+	if err != nil {
+		t.Fatalf("open bundled VAmPI self-test: %v", err)
+	}
+	if !strings.Contains(string(data), "VAmPI") {
+		t.Errorf("bundled self-test should be the VAmPI oracle, got %q", data)
+	}
+}
+
 func TestBuiltin_ShipsExpectedSkills(t *testing.T) {
 	cat := skill.NewCatalog(skill.Builtin(), t.TempDir())
 	for _, want := range []string{"authz-audit", "pr-quick-check", "secret-rotation-plan", "threat-modeling"} {

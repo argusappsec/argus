@@ -86,9 +86,11 @@ no `finalize_skill`. See [`CONTEXT.md` → Skill](../../../CONTEXT.md).
   (`TestBuiltin_EveryEmbeddedSkillParses`). **No `tools:` whitelist** (RBAC is
   enforced at the Tool layer; a skill cannot escalate the caller's permissions).
   **No `when_to_use:`** field — the `description` *is* the when-to-use.
-  `authz-audit` currently ships as a single `SKILL.md`; its per-language signal
-  catalog / worked example could later be split into a supporting file read via
-  `read_skill_file` (as `threat-modeling` does with `stride-template.md`).
+  `authz-audit` ships as a bundle: `SKILL.md` plus `self-test-vampi.md`, a
+  maintainer validation oracle the body pulls via
+  `read_skill_file("authz-audit", "self-test-vampi.md")` — kept out of the body
+  so it never bloats a real run and never leaks answers into one (the same
+  bundle pattern `threat-modeling` uses for `stride-template.md`).
 - **ADR 0006 (no generic shell tool).** The skill **composes existing Tools
   only**. There is no `bash` / `exec` / generic shell escape to lean on. Route
   enumeration, id-tracing, and guard-resolution are all done with the Tools
@@ -199,6 +201,7 @@ struct like so:
 | `authz/bola-missing-owner-predicate` | BOLA, read | **high** | A read of sensitive owned data with no ownership predicate (and no post-fetch ownership comparison). |
 | `authz/bfla-missing-role-gate` | BFLA | **high** / **medium** | A privileged function (admin endpoint, role-restricted action) lacks the role-gate its sibling endpoints enforce. |
 | `authz/access-control-fail-open` | Access-control logic | **medium** / **high** | Fail-open default, client-trusted role claim, check-then-use mismatch, post-authz path normalization. |
+| `authz/bopla-mass-assignment-adjacent` | BOPLA / mass-assignment (adjacent, API3) | **info** | A request body binds a privileged/ownership property the caller must not set (self-grant `admin`, set `owner_id`), or a serializer over-exposes another principal's fields. Always `info`; deferred to a future `object-property-audit`. |
 
 Severity rubric (the closed enum is `critical|high|medium|low|info`):
 
@@ -222,28 +225,35 @@ the first target because its `vulnerable=1/0` toggle yields a **free labeled
 dataset**: every `if vuln: … else: …` is an aligned (vulnerable, secure) pair
 in source, so we measure recall and precision from the *same* code.
 
-### 6.0 Result (3 blind runs)
+### 6.0 Result — genuinely blind (3 runs)
 
-The skill's methodology was run **blind** against the real VAmPI source (the
-runner saw only the `SKILL.md` and the target code — not this README or any
-ground-truth doc), three independent times, then adjudicated against the source.
+> **Methodology note.** An initial validation embedded the VAmPI worked-example
+> *inside* `SKILL.md`, so the "blind" runners actually had the answers — the
+> 100% it reported was not trustworthy. The worked-example was moved to the
+> bundle's `self-test-vampi.md` oracle (runners are forbidden to read it) and
+> the validation re-run **genuinely blind**: each runner saw only the
+> methodology in `SKILL.md` plus the target source, and confirmed it never
+> opened the oracle or any ground-truth doc.
 
-| Run | Findings | True positives | False positives | Secure-`else` flagged |
+| Run | In-scope (BOLA) | Adjacent (`info`) | Canonical FPs | Secure-`else` flagged |
 |---|---|---|---|---|
-| 1 | 3 | 2 (+1 info adjacent) | 0 | no |
-| 2 | 3 | 2 (+1 info adjacent) | 0 | no |
-| 3 | 2 | 2 | 0 | no |
+| 1 | 2/2 | register self-grant (+1 soft lane-bleed) | 0 | no |
+| 2 | 2/2 | register self-grant | 0 | no |
+| 3 | 2/2 | — | 0 | no |
 
-**Recall 100%, precision 100%.** All three runs found both in-scope BOLA bugs at
-the exact sink line (`books.py:51` high, `users.py:187` critical) with the
-correct `rule_id` and severity, and **none** flagged a secure `else` branch. The
-two hardest near-misses were handled correctly every time: `update_email` (takes
-`{username}` but keys on `resp['sub']` in *both* branches → SAFE) and
-`delete_user` (admin role-gated → BFLA-secure). SQLi / weak-JWT / ReDoS / the
-`_debug` dump were all delegated out-of-lane, never reported as authz findings.
-The one inconsistency — the adjacent mass-assignment used a different `rule_id`
-across runs — is tracked as a follow-up (add an `authz/bopla-mass-assignment-adjacent`
-info slot).
+**Recall 100%, zero canonical false positives, no regression** from the
+contaminated run — proving the score comes from the *methodology*, not a
+memorized key. All three runs independently reconstructed the ground model from
+source (`Book.user_id` FK ownership, `resp['sub']` principal, the `vuln` toggle)
+and found both BOLA bugs at the exact sink (`books.py:51` high, `users.py:187`
+critical) with the correct `rule_id`/severity, while clearing both decoys —
+`update_email` (keys on `resp['sub']` in *both* branches) and `delete_user`
+(admin-gated, BFLA-secure). The register self-grant was emitted as
+`authz/bopla-mass-assignment-adjacent` `info`. **Only blemish:** Run 1 emitted
+the `_debug` excessive-data-exposure under that same `info` rule_id instead of
+leaving it out-of-lane; the skill's scope rule was then tightened to reserve
+that rule_id for *write* mass-assignment only (read over-serialization stays
+out-of-lane), matching the precision-perfect Runs 2 & 3.
 
 ### 6.1 Ground truth (authz-relevant)
 
@@ -383,21 +393,21 @@ org-aware, BOLA-specialized pass that lands findings in Argus's own
 
 ---
 
-## 9. Open decisions
+## 9. Decisions (resolved)
 
-These are tracked in [`docs/authz-skill-design.md` §8](../../authz-skill-design.md);
-resolve them with data, not ahead of it.
+Resolved by the genuinely-blind VAmPI validation (§6.0); full rationale in
+[`docs/authz-skill-design.md` §8](../../authz-skill-design.md).
 
-1. **Flat `Finding` vs adding `Confidence` (ADR).** Today confidence,
-   classification, and the id-source location live in `Description` prose.
-   *Recommendation:* stay flat; open an ADR to add a first-class `Confidence`
-   field (and maybe a second location) **only if** VAmPI validation shows a
-   measurable FP reduction from it. Don't add fields ahead of data.
-2. **Strict scope vs "authz+".** Strict BOLA/BFLA/access-control, or an "authz+"
-   skill that also reports mass-assignment privilege escalation (API3)?
-   *Recommendation:* strict — emit adjacent (BOPLA/mass-assignment) findings as
-   `info` pointing at a future `object-property-audit` skill.
-3. **Finding vs hypothesis.** Whether low-precision/absence-based classes enter
-   the report at all. *Recommendation:* BOLA/BFLA high-confidence → full
-   findings; everything low-precision → `info` hypotheses, candidates for a
-   dynamic prover. Ties to the FP-aversion already tracked in MEMORY.
+1. **Flat `Finding`, no `Confidence` field — RESOLVED.** Confidence,
+   classification, and the id-source stay in `Description` prose. The bar for a
+   first-class `Confidence` field was *a measurable FP reduction from it*;
+   validation hit **zero canonical false positives** without it, so the field
+   isn't warranted — precision comes from the PASS-0 ground model and the
+   verification gate, not a metadata column. No ADR.
+2. **Strict scope — RESOLVED.** BOLA/BFLA/access-control owned; *write*
+   mass-assignment emitted as `info` (`authz/bopla-mass-assignment-adjacent`) →
+   future `object-property-audit`; *read* excessive-data-exposure stays
+   out-of-lane (note only, no `authz/*` rule_id).
+3. **Finding vs hypothesis — RESOLVED.** BOLA/BFLA high-confidence → full
+   findings; low-precision/absence-based classes → `info` hypotheses for a
+   dynamic prover. Ties to the FP-aversion tracked in MEMORY.

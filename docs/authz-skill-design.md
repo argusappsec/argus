@@ -186,8 +186,8 @@ Design decisions:
   **id-source** location + the route are written into `Description`.
 - **`Snippet`** = the vulnerable data-access line (stable ID anchor; when the
   fix adds the owner predicate, the snippet changes → the finding auto-resolves).
-- **Confidence + classification** are encoded in `Description` until/unless we
-  decide they earn first-class fields (open decision §8.1).
+- **Confidence + classification** are encoded in `Description` (resolved: they
+  stay in `Description` — no first-class fields; see §8).
 - **`Severity`** rubric (closed enum): mutation/delete unscoped → `critical`;
   read of sensitive owned data → `high`; weak/partial check → `medium`;
   low-precision absence-based hypotheses → `info`.
@@ -280,22 +280,28 @@ endpoint.
 
 ---
 
-## 8. Open design decisions
+## 8. Design decisions (resolved by the VAmPI validation)
 
-1. **Report model.** Stay within the flat `Finding` struct (encode confidence /
-   classification / id-source in `Description`) — works today, pure content —
-   *or* open an ADR to add a `Confidence` field (and maybe a second location).
-   **Recommendation:** start flat; open the ADR only if VAmPI validation shows a
-   measurable FP-reduction from first-class confidence. Don't add fields ahead
-   of data.
-2. **Scope boundary.** Strict BOLA/BFLA/access-control vs an "authz+" skill that
-   also reports mass-assignment privilege escalation (API3).
-   **Recommendation:** strict; emit adjacent findings as `info` pointing at a
-   future `object-property-audit`.
-3. **Finding vs hypothesis.** Whether low-precision/absence-based classes enter
-   the report at all. **Recommendation:** BOLA/BFLA high-confidence → full
-   findings; everything low-precision → `info` hypotheses, candidates for
-   shannon. Ties to the FP-aversion already tracked in MEMORY.
+1. **Report model — RESOLVED: stay flat, no `Confidence` field.** Confidence,
+   classification (BOLA/BFLA, horizontal/vertical) and the id-source are encoded
+   in `Description`; `Line` points at the sink. The bar (§5.3) for adding a
+   first-class `Confidence` field was *"only if validation shows a measurable
+   FP-reduction from it."* The genuinely-blind VAmPI validation produced **zero
+   canonical false positives** with confidence-in-`Description` — precision comes
+   from the PASS-0 ground model and the verification gate, not from a metadata
+   column. So: **no `Confidence` field, no ADR.** Revisit only if a future target
+   produces FPs a structured confidence field would demonstrably cut.
+2. **Scope boundary — RESOLVED: strict.** BOLA/BFLA/access-control are owned;
+   *write* mass-assignment is emitted as `info`
+   (`authz/bopla-mass-assignment-adjacent`) pointing at a future
+   `object-property-audit`; *read* excessive-data-exposure stays out-of-lane
+   (note only, no `authz/*` rule_id). Validation confirmed this boundary is what
+   keeps precision clean (the one blemish was a `_debug` read leaking into the
+   adjacent slot; the rule was tightened to forbid it).
+3. **Finding vs hypothesis — RESOLVED.** High-confidence BOLA/BFLA → full
+   findings; low-precision/absence-based classes (race, rate-limit, business
+   flow) → `info` hypotheses, candidates for a dynamic prover (e.g. `shannon`).
+   Ties to the FP-aversion tracked in MEMORY.
 
 ---
 

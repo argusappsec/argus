@@ -37,11 +37,18 @@ output as a hybrid input. There is no shell. You emit findings with
 
 **Adjacent — emit as `info` only, do not own:**
 
-- **BOPLA / mass-assignment / excessive data exposure** (API3): e.g. a
-  registration body that lets the caller self-grant `admin`, or a serializer
-  that returns another user's private fields. Note it as an `info` hypothesis
-  and point at a future `object-property-audit` skill. You will *trip over*
-  these while tracing; record them, don't chase them.
+- **Mass-assignment** (API3 BOPLA, **write**): a request body binds a privileged
+  property the caller must not set — e.g. a registration body that self-grants
+  `admin`, or a payload that sets `owner_id`. You will *trip over* these while
+  tracing. **Emit each as a single `add_finding` with
+  `rule_id=authz/bopla-mass-assignment-adjacent` and `severity=info`** — do not
+  bury it in the final summary, and do not reuse a BOLA `rule_id` — then point
+  at a future `object-property-audit` skill.
+- **Excessive data exposure** (API3, **read**): a serializer over-returns
+  another principal's private fields (e.g. an endpoint that dumps `password`).
+  The access itself isn't bypassed — too much just comes back — so this is **out
+  of lane**: record it in your out-of-lane notes, do **not** give it an
+  `authz/*` `rule_id`. Record these, don't chase them.
 
 **Out of scope — delegate, do not rediscover:**
 
@@ -275,6 +282,16 @@ Field-by-field:
     role-gate its siblings enforce.
   - `authz/access-control-fail-open` — a guard exists but is ineffective
     (fail-open, wrong subject, client-trusted role, check-then-use mismatch).
+  - `authz/bopla-mass-assignment-adjacent` — **info-only, adjacent (API3, not
+    owned):** a request body binds a privileged/ownership **write** property the
+    caller must not set (self-granting `admin`, setting `owner_id`). **Always
+    `severity=info`.** Use THIS rule_id for every adjacent *write* mass-assignment
+    so the label is deterministic across runs; note it for a future
+    `object-property-audit` skill. **Scope guard:** reserve this rule_id strictly
+    for attacker-controlled privileged *writes*. Excessive-data-exposure (a READ
+    that over-serializes another principal's fields, e.g. dumping `password`) is
+    **not** this finding and gets **no** `authz/*` rule_id — record it only in
+    your out-of-lane notes.
 - **`severity`** (required) — closed enum, by this rubric:
   - `critical` — **unscoped mutation/delete** of another principal's object
     (e.g. change anyone's password, delete anyone's record).
@@ -282,9 +299,11 @@ Field-by-field:
   - `medium` — a **weak or partial** check (present but bypassable, or guards
     only some methods).
   - `info` — **low-precision hypotheses** (race/TOCTOU, rate-limit, business
-    flow) and **adjacent** BOPLA/mass-assignment observations.
+    flow) and **adjacent** BOPLA/mass-assignment observations (the latter
+    always with `rule_id=authz/bopla-mass-assignment-adjacent`).
 - **`file`** + **`line`** — point at the **data-access SINK** (the fix site),
-  not the route declaration. This is where a reviewer adds the owner predicate.
+  not the route declaration; use a **repo-relative path** (note the scan root
+  once in the summary). This is where a reviewer adds the owner predicate.
 - **`snippet`** (required) — the **vulnerable data-access line** verbatim (the
   stable-ID anchor). One line where possible.
 - **`title`** — short, e.g. `BOLA: book lookup not scoped to owner`.
@@ -303,48 +322,19 @@ enumerated, how many confirmed findings by class, what you could not resolve).
 
 ***
 
-## Self-test / worked example (VAmPI ground truth)
+## Self-test (maintainer validation)
 
-Use this to validate the skill against a known target: `erev0s/vampi`
-(Flask + Connexion). Its `vulnerable=1/0` toggle gives an aligned
-secure/vulnerable pair per endpoint, so it tests both **recall** (find the bugs)
-and **precision** (mark the secure branches SAFE). Expected behavior when you run
-the passes:
+A worked example with full ground truth against `erev0s/vampi` (Flask +
+Connexion) ships in this bundle as `self-test-vampi.md`. It is a **validation
+oracle for maintainers**, not analysis input.
 
-- **PASS 0 ground model.** Router = `openapi_specs/openapi3.yml` (Connexion: the
-  spec is the router, **no route decorators**). Principal accessor =
-  `resp = token_validator(request.headers.get('Authorization'))` →
-  identity is `resp['sub']`. There is **no centralized authz helper** — only
-  authn — so raise the BOLA prior. Ownership lives on the `User`/`Book` models.
+- Load it with `read_skill_file("authz-audit", "self-test-vampi.md")` **only**
+  when deliberately validating this skill against VAmPI.
+- **Do NOT load it during a real audit.** It contains the answers; reading it
+  would contaminate a genuine review (and any blind self-test). The skill must
+  find bugs from the methodology above, not from a cheat sheet.
 
-- **Recall — must find these two:**
-  - `GET /books/v1/{book_title}` → `books.get_by_title`. Vulnerable branch:
-    `Book.query.filter_by(book_title=book_title).first()` — no owner predicate,
-    returns another user's `secret_content`. Emit
-    `rule_id=authz/bola-missing-owner-predicate`, `severity=high`,
-    snippet = the `filter_by(book_title=...)` line, description notes
-    `BOLA, horizontal, read; route GET /books/v1/{book_title}; id-source path`.
-  - `PUT /users/v1/{username}/password` → `users.update_password`. Vulnerable
-    branch: `User.query.filter_by(username=username)` using the **URL
-    parameter**, not `resp['sub']` — changes any user's password. Emit
-    `rule_id=authz/bola-mutation-unscoped`, `severity=critical`, snippet = the
-    vulnerable `filter_by(username=username)` mutation line.
-
-- **Precision — must NOT flag:** the secure `else:` branches that scope on the
-  principal — `Book.query.filter_by(user=user, book_title=book_title)` and the
-  password update keyed on `resp['sub']`. Flagging a correctly scoped branch is
-  the canonical false positive. The verification gate question 4 exists to catch
-  exactly this.
-
-- **Adjacent — emit as `info`:** `POST /users/v1/register` →
-  `users.register_user` self-grants `admin` because the schema lacks
-  `additionalProperties: false`. That is mass-assignment (API3), not BOLA —
-  `severity=info`, note it for a future `object-property-audit`.
-
-- **Stay out of lane:** `users.get_user` builds SQL with an f-string in
-  `text(...)`. That is SQLi — **not your finding.** Note "out of scope,
-  run_semgrep" and do not emit it.
-
-A maintainer validates the skill by checking: both BOLA endpoints found
-(recall), both secure `else` branches left unflagged (precision), the register
-self-grant emitted as `info`, and the SQLi left to the tools.
+A maintainer validates by running the passes on VAmPI and confirming: both BOLA
+endpoints found (recall), both secure branches left unflagged (precision), the
+register self-grant emitted as `info`
+(`authz/bopla-mass-assignment-adjacent`), and the SQLi left to `run_semgrep`.

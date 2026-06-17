@@ -197,9 +197,8 @@ confidence e una classificazione BOLA/BFLA). Decisioni di design:
 - **`Snippet`** = la riga vulnerabile di data-access (ancora dell'ID stabile;
   quando il fix aggiunge il predicato di owner, lo snippet cambia → il finding
   si auto-risolve).
-- **Confidence + classificazione** sono codificate in `Description`
-  finché/se non decidiamo che meritano campi di prima classe (decisione aperta
-  §8.1).
+- **Confidence + classificazione** sono codificate in `Description` (risolto:
+  restano in `Description` — nessun campo di prima classe; vedi §8).
 - Rubrica di **`Severity`** (enum chiuso): mutation/delete non scopata →
   `critical`; lettura di dato sensibile posseduto → `high`; controllo
   debole/parziale → `medium`; ipotesi absence-based a bassa precisione → `info`.
@@ -297,23 +296,30 @@ su ogni endpoint.
 
 ---
 
-## 8. Decisioni di design aperte
+## 8. Decisioni di design (risolte dalla validazione su VAmPI)
 
-1. **Modello di report.** Restare nella struct `Finding` piatta (codificando
-   confidence / classificazione / id-source in `Description`) — funziona oggi,
-   puro contenuto — *oppure* aprire un ADR per aggiungere un campo `Confidence`
-   (ed eventualmente una seconda posizione). **Raccomandazione:** partire
-   piatti; aprire l'ADR solo se la validazione su VAmPI mostra una riduzione di
-   FP misurabile grazie a una confidence di prima classe. Non aggiungere campi
-   prima del dato.
-2. **Confine di scope.** BOLA/BFLA/access-control stretto vs una skill "authz+"
-   che riporta anche il privilege escalation da mass-assignment (API3).
-   **Raccomandazione:** stretto; emettere i finding adiacenti come `info` che
-   rimandano a una futura `object-property-audit`.
-3. **Finding vs ipotesi.** Se le classi a bassa precisione/absence-based debbano
-   entrare nel report. **Raccomandazione:** BOLA/BFLA ad alta confidence →
-   finding pieni; tutto ciò che è a bassa precisione → ipotesi `info`, candidate
-   per shannon. Si lega all'avversione ai FP già tracciata in MEMORY.
+1. **Modello di report — RISOLTA: resta flat, niente campo `Confidence`.**
+   Confidence, classificazione (BOLA/BFLA, orizzontale/verticale) e id-source
+   stanno in `Description`; `Line` punta al sink. Lo standard (§5.3) per
+   aggiungere un campo `Confidence` di prima classe era *"solo se la validazione
+   mostra una riduzione di FP misurabile grazie ad esso."* La validazione
+   genuinamente cieca su VAmPI ha prodotto **zero falsi positivi canonici** con
+   la confidence in `Description` — la precision viene dal ground-model del PASS
+   0 e dal verification gate, non da una colonna di metadati. Quindi: **niente
+   campo `Confidence`, niente ADR.** Da rivedere solo se un target futuro produce
+   FP che un campo confidence strutturato taglierebbe in modo dimostrabile.
+2. **Confine di scope — RISOLTA: stretto.** BOLA/BFLA/access-control sono di
+   competenza; la mass-assignment in *scrittura* è emessa come `info`
+   (`authz/bopla-mass-assignment-adjacent`) con rimando a una futura
+   `object-property-audit`; l'excessive-data-exposure in *lettura* resta
+   out-of-lane (solo nota, nessun `authz/*` rule_id). La validazione conferma
+   che è questo confine a tenere pulita la precision (l'unica sbavatura era una
+   lettura `_debug` finita nello slot adiacente; la regola è stata stretta per
+   vietarlo).
+3. **Finding vs ipotesi — RISOLTA.** BOLA/BFLA ad alta confidence → finding
+   pieni; le classi a bassa precisione/absence-based (race, rate-limit, business
+   flow) → ipotesi `info`, candidate a un confermatore dinamico (es. `shannon`).
+   Si lega all'avversione ai FP tracciata in MEMORY.
 
 ---
 
