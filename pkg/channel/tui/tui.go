@@ -62,6 +62,23 @@ type Config struct {
 	// loads that skill and runs it through the agent. Nil disables skill slash
 	// commands (an unknown slash command is then simply rejected).
 	ResolveSkill func(name string) (prompt string, ok bool)
+
+	// ForwardSlash, when true, dispatches non-built-in slash lines raw
+	// (e.g. "/secret-rotation-plan focus on infra") instead of rejecting
+	// them. This is the daemon-client mode: skills are resolved server-side
+	// against the organization's catalog, not the client's filesystem.
+	// Checked only when ResolveSkill is nil or doesn't know the name.
+	ForwardSlash bool
+
+	// Cancel, if non-nil, is invoked by the /cancel command so the client
+	// can abort the in-flight run at its source (the daemon) instead of
+	// merely clearing the local busy flag.
+	Cancel func()
+
+	// StartBusy marks the model busy from the first frame. Used by
+	// `argus review`, where the run is started by the command itself
+	// (structured review target) rather than by a typed message.
+	StartBusy bool
 }
 
 // --- tea.Msg types emitted by the dispatcher ---
@@ -135,6 +152,7 @@ func New(cfg Config) Model {
 		styles:  newStyles(),
 		input:   ti,
 		spinner: sp,
+		busy:    cfg.StartBusy,
 	}
 }
 

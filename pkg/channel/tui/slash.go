@@ -47,10 +47,12 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 		return m, nil
 
 	case "/cancel":
-		// Best-effort: clear the busy flag so the user can type again. The
-		// in-flight goroutine is not actually killed yet (that requires the
-		// dispatcher to honor a context cancellation — wired in cmd/chat.go).
+		// Tell the source to abort (the daemon cancels the run's context),
+		// then clear the local busy flag so the user can type again.
 		if m.busy {
+			if m.cfg.Cancel != nil {
+				m.cfg.Cancel()
+			}
 			m.busy = false
 			m.messages = append(m.messages, Message{Role: "system", Content: "cancelled"})
 		}
@@ -66,24 +68,14 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 		name := strings.TrimPrefix(cmd, "/")
 		if m.cfg.ResolveSkill != nil {
 			if prompt, ok := m.cfg.ResolveSkill(name); ok {
-				if m.busy {
-					m.messages = append(m.messages, Message{
-						Role:    "system",
-						Content: "agent is busy — wait for the current turn to finish, then retry",
-					})
-					return m, nil
-				}
-				m.messages = append(m.messages, Message{
-					Role:    "system",
-					Content: fmt.Sprintf("invoking skill: %s", name),
-				})
-				m.busy = true
-				cmds := []tea.Cmd{m.spinner.Tick}
-				if m.cfg.Dispatch != nil {
-					cmds = append(cmds, m.cfg.Dispatch(prompt))
-				}
-				return m, tea.Batch(cmds...)
+				return m.dispatchSkill(name, prompt)
 			}
+		}
+		// Daemon-client mode: the catalog lives on the daemon host, so the
+		// raw line travels and the daemon resolves it (unknown skills come
+		// back as an error frame).
+		if m.cfg.ForwardSlash {
+			return m.dispatchSkill(name, line)
 		}
 		m.messages = append(m.messages, Message{
 			Role:    "system",
@@ -91,6 +83,28 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 		})
 		return m, nil
 	}
+}
+
+// dispatchSkill sends a skill invocation through the regular Dispatch flow,
+// guarding the single-run-at-a-time invariant.
+func (m Model) dispatchSkill(name, prompt string) (Model, tea.Cmd) {
+	if m.busy {
+		m.messages = append(m.messages, Message{
+			Role:    "system",
+			Content: "agent is busy — wait for the current turn to finish, then retry",
+		})
+		return m, nil
+	}
+	m.messages = append(m.messages, Message{
+		Role:    "system",
+		Content: fmt.Sprintf("invoking skill: %s", name),
+	})
+	m.busy = true
+	cmds := []tea.Cmd{m.spinner.Tick}
+	if m.cfg.Dispatch != nil {
+		cmds = append(cmds, m.cfg.Dispatch(prompt))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func helpText() string {

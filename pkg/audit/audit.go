@@ -22,7 +22,17 @@ type Event struct {
 }
 
 // Logger appends Events to a file, chaining hashes for tamper-evidence.
+// Derived loggers created via With share the same file and hash chain but
+// stamp extra attribution fields (session_id, channel, principal) into the
+// Data of every event they log.
 type Logger struct {
+	core   *core
+	fields map[string]any
+}
+
+// core is the shared write end: one per file, guarded by one mutex so the
+// hash chain stays linear no matter how many derived Loggers write to it.
+type core struct {
 	mu       sync.Mutex
 	f        *os.File
 	prevHash string
@@ -43,17 +53,43 @@ func NewLogger(path string) (*Logger, error) {
 		f.Close()
 		return nil, err
 	}
-	return &Logger{f: f, prevHash: prev}, nil
+	return &Logger{core: &core{f: f, prevHash: prev}}, nil
+}
+
+// With returns a derived Logger that adds fields to every event's Data.
+// The derived Logger writes to the same file and continues the same hash
+// chain as its parent. Explicit Data keys set by the caller win over the
+// derived fields on collision.
+func (l *Logger) With(fields map[string]any) *Logger {
+	merged := make(map[string]any, len(l.fields)+len(fields))
+	for k, v := range l.fields {
+		merged[k] = v
+	}
+	for k, v := range fields {
+		merged[k] = v
+	}
+	return &Logger{core: l.core, fields: merged}
 }
 
 // Log appends an event. Caller need not fill Timestamp/PrevHash/Hash.
 func (l *Logger) Log(evt Event) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if len(l.fields) > 0 {
+		data := make(map[string]any, len(l.fields)+len(evt.Data))
+		for k, v := range l.fields {
+			data[k] = v
+		}
+		for k, v := range evt.Data {
+			data[k] = v
+		}
+		evt.Data = data
+	}
+
+	l.core.mu.Lock()
+	defer l.core.mu.Unlock()
 	if evt.Timestamp.IsZero() {
 		evt.Timestamp = time.Now().UTC()
 	}
-	evt.PrevHash = l.prevHash
+	evt.PrevHash = l.core.prevHash
 	evt.Hash = "" // exclude from hashing
 
 	payload, err := json.Marshal(evt)
@@ -67,19 +103,20 @@ func (l *Logger) Log(evt Event) error {
 	if err != nil {
 		return fmt.Errorf("marshal audit event: %w", err)
 	}
-	if _, err := l.f.Write(append(line, '\n')); err != nil {
+	if _, err := l.core.f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("write audit event: %w", err)
 	}
-	l.prevHash = evt.Hash
+	l.core.prevHash = evt.Hash
 	return nil
 }
 
-// Close flushes and closes the underlying file.
+// Close flushes and closes the underlying file. Closing any derived Logger
+// closes the shared file for all of them.
 func (l *Logger) Close() error {
-	if l.f == nil {
+	if l.core.f == nil {
 		return nil
 	}
-	return l.f.Close()
+	return l.core.f.Close()
 }
 
 func ensureDir(path string) error {

@@ -1,28 +1,22 @@
 package cmd
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/redcarbon-dev/argus/pkg/agent"
-	"github.com/redcarbon-dev/argus/pkg/budget"
 	"github.com/redcarbon-dev/argus/pkg/channel/tui"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
-	"github.com/redcarbon-dev/argus/pkg/memory"
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/redcarbon-dev/argus/pkg/channel/uds"
 )
 
-// chatCmd is the interactive entry point. Each user submission becomes one
-// agent.Run with the input as a SeedMessage; messages from the agent are
-// streamed back to the TUI via OnMessage → tea.Program.Send.
-//
-// The dispatcher closure captures the *tea.Program so that the agent
-// goroutine — which runs outside bubbletea's normal Cmd flow — can post
-// AgentMessageMsg / AgentUsageMsg / AgentDoneMsg / AgentErrorMsg events.
+// chatCmd is the interactive entry point. The TUI is a pure UDS client: it
+// connects to a running argusd, or to an in-process daemon spawned on a
+// private socket when none is listening (connectOrSpawn). Either way the
+// dispatch path is identical — auth, SessionManager, agent — and skills
+// resolve on the daemon against the organization's catalog.
 func chatCmd() *cobra.Command {
 	var (
 		model    string
@@ -33,111 +27,82 @@ func chatCmd() *cobra.Command {
 		Use:   "chat",
 		Short: "Open an interactive chat with the Argus agent.",
 		Long: "Open an interactive terminal chat with the Argus agent.\n" +
-			"Type natural language to drive a review; slash commands (/help, /clear, /cost, /cancel, /quit) " +
-			"are intercepted client-side and never reach the LLM.",
+			"Type natural language to drive a review; client commands (/help, /clear, /cost, /cancel, /quit) " +
+			"never leave the client, while /<skill-name> travels to the daemon and runs the org's skill.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-
-			rt, err := buildRuntime(ctx, runtimeOptions{HomeOverride: homeDir, Model: model})
+			cs, err := connectOrSpawn(homeDir, uds.HelloOptions{Model: model, MaxTurns: maxTurns})
 			if err != nil {
 				return err
 			}
-			defer rt.Close()
+			defer cs.Close()
 
-			fmt.Fprintf(cmd.OutOrStdout(), "session %s — conversation log at %s\n", rt.Session.ID(), rt.ConvoPath)
+			if cs.InProcess {
+				fmt.Fprintln(cmd.OutOrStdout(), "argus: no daemon on the socket — running one in-process")
+			}
+			convoPath := filepath.Join(cs.Home, "conversations", cs.Client.SessionID()+".jsonl")
+			fmt.Fprintf(cmd.OutOrStdout(), "session %s — conversation log at %s\n", cs.Client.SessionID(), convoPath)
 
-			// Forward declared: dispatcher closes over the program created below.
 			var program *tea.Program
 
 			dispatch := func(userInput string) tea.Cmd {
-				go runChatAgent(ctx, rt, userInput, maxTurns, program)
+				go func() {
+					if err := cs.Client.SendMessage(userInput); err != nil {
+						program.Send(tui.AgentErrorMsg{Err: err})
+					}
+				}()
 				return nil
 			}
 
 			model := tui.New(tui.Config{
 				Dispatch:     dispatch,
-				ResolveSkill: skillResolver(rt.Skills),
+				ForwardSlash: true,
+				Cancel:       func() { _ = cs.Client.Cancel() },
 			})
-			program = tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+			program = tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(cmd.Context()))
+
+			go receiveLoop(cs.Client, program)
+
 			if _, err := program.Run(); err != nil {
 				return fmt.Errorf("tui: %w", err)
 			}
-
-			// On clean exit, curate memory if there was any interaction worth
-			// remembering. A failure here is non-fatal — the user already
-			// has the conversation log on disk.
-			fmt.Fprintln(cmd.OutOrStdout(), "→ curating memory")
-			if err := memory.Curate(context.Background(), memory.Options{
-				ConversationPath: rt.ConvoPath,
-				MemoryPath:       filepath.Join(rt.Home, "MEMORY.md"),
-				Provider:         rt.Provider,
-			}); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "  warning: memory curation skipped: %v\n", err)
-			}
+			// Memory curation happens on the daemon when the Session is
+			// released (the connection drop, a few microseconds from now).
 			return nil
 		},
 	}
-	c.Flags().StringVar(&model, "model", "", "Override the default model from argus.yaml (e.g. gemini-2.5-pro)")
+	c.Flags().StringVar(&model, "model", "", "Override the daemon's default model for this session (must be configured on the daemon)")
 	c.Flags().IntVar(&maxTurns, "max-turns", 50, "Safety-net cap per turn of the agent loop")
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")
 	return c
 }
 
-// runChatAgent executes one agent run for a single user input and streams its
-// progress to the TUI program. Called in its own goroutine by the dispatcher.
-//
-// Multi-turn context is preserved across runs by re-seeding the agent with
-// every persisted message from the conversation log. The agent no longer
-// emits the seed messages back through OnMessage/persistMessage, so we are
-// responsible for persisting the new user message directly here.
-func runChatAgent(ctx context.Context, rt *runtime, userInput string, maxTurns int, program *tea.Program) {
-	prev, err := conversation.ReadAll(rt.ConvoPath)
-	if err != nil {
-		program.Send(tui.AgentErrorMsg{Err: fmt.Errorf("read history: %w", err)})
-		return
-	}
-	seed := make([]provider.Message, 0, len(prev)+1)
-	for _, r := range prev {
-		seed = append(seed, r.Message)
-	}
-	userMsg := provider.Message{Role: "user", Content: userInput}
-	seed = append(seed, userMsg)
-
-	// Persist the new user input ourselves (the agent skips persistence of
-	// caller-provided SeedMessages).
-	if err := rt.Conversation.Append(conversation.Record{Message: userMsg}); err != nil {
-		program.Send(tui.AgentErrorMsg{Err: fmt.Errorf("persist user message: %w", err)})
-		return
-	}
-
-	pricing := defaultPricing()
-
-	ag := agent.New(agent.Options{
-		Provider:     rt.Provider,
-		Audit:        rt.Audit,
-		Reports:      rt.Reports,
-		Tools:        rt.Registry,
-		Conversation: rt.Conversation,
-		Soul:         rt.Soul,
-		Memory:       rt.Memory,
-		MaxTurns:     maxTurns,
-		SeedMessages: seed,
-
-		OnMessage: func(m provider.Message) {
-			program.Send(tui.AgentMessageMsg{Message: m})
-		},
-		OnUsage: func(u provider.Usage) {
+// receiveLoop pumps server frames into the TUI until the connection closes.
+// Terminal frames (done/error) close one run; the loop itself lives as long
+// as the connection.
+func receiveLoop(c *uds.Client, program *tea.Program) {
+	for {
+		f, err := c.Recv()
+		if err != nil {
+			if !errors.Is(err, uds.ErrConnClosed) {
+				program.Send(tui.AgentErrorMsg{Err: err})
+			}
+			return
+		}
+		switch f.Type {
+		case uds.TypeAgentMessage:
+			if f.Message != nil {
+				program.Send(tui.AgentMessageMsg{Message: *f.Message})
+			}
+		case uds.TypeUsage:
 			program.Send(tui.AgentUsageMsg{
-				InputTokens:  u.InputTokens,
-				OutputTokens: u.OutputTokens,
-				CostUSD:      budget.CostFor(pricing, rt.ModelID, u.InputTokens, u.OutputTokens),
+				InputTokens:  f.InputTokens,
+				OutputTokens: f.OutputTokens,
+				CostUSD:      f.CostUSD,
 			})
-		},
-	})
-
-	if _, err := ag.Run(ctx, agent.Target{}); err != nil {
-		program.Send(tui.AgentErrorMsg{Err: err})
-		return
+		case uds.TypeDone:
+			program.Send(tui.AgentDoneMsg{})
+		case uds.TypeError:
+			program.Send(tui.AgentErrorMsg{Err: errors.New(f.Reason)})
+		}
 	}
-	program.Send(tui.AgentDoneMsg{})
 }

@@ -68,6 +68,13 @@ resolve to a Person or Service entry is rejected with a polite
 "contact your administrator" message. There is no implicit / guest /
 anonymous access. This is not a Role: it's the absence of one.
 
+Single exception: the **local TUI channel**. Possession of the Unix
+socket implies ownership of the daemon host — the same trust that lets
+an admin read the audit log off disk — so a `local:$USER` identity that
+does not resolve becomes an implicit admin instead of being rejected.
+When it *does* resolve, actions are attributed to that Person with their
+Role. Remote channels (Slack, MCP, Webhook) have no such exception.
+
 ---
 
 ## Knowledge
@@ -151,8 +158,11 @@ LLM-facing surface:
   bundle, sandboxed within that skill's directory (built-in or user-curated,
   transparent to the caller).
 
-User-explicit trigger: `/<name>` in chat. When the token is not a built-in
-client command, Argus loads that skill and dispatches its body directly to
+User-explicit trigger: `/<name>` in chat. Client-side commands (`/help`,
+`/quit`, …) never leave the client; any other `/<name>` travels raw and
+is resolved **on the daemon**, against the organization's catalog — the
+same on every Channel. When the token is not a built-in client command,
+Argus loads that skill and dispatches its body directly to
 the agent as one turn — deterministic, with no dependence on the model
 choosing to call `read_skill`. The body enters the conversation, so it
 stays in context for follow-up turns.
@@ -182,8 +192,15 @@ Each implementation:
 1. Listens on its own transport (Slack WS, HTTP, Unix socket).
 2. Extracts an Identity from the inbound event.
 3. Resolves it to a Principal via `auth.Resolve` — rejects strangers.
+   The Resolver is strict and policy-free; any trust policy (e.g. the
+   local socket's implicit admin) belongs to the Channel that owns the
+   transport, because only the transport justifies it.
 4. Allocates or retrieves a Session via `SessionManager`.
-5. Dispatches to `agent.Run` with the right Options.
+5. Dispatches to `agent.Run` with the right Options. Dispatch accepts
+   either a conversational user message or a **structured review
+   target** (repo + ref): starting a review is deterministic, never
+   dependent on the model choosing to call a tool. The webhook channel
+   relies on this; `argus review` exercises it.
 6. Streams responses back through its own transport.
 
 ### Channels in scope
@@ -208,6 +225,9 @@ log file, and a budget counter. A Session may produce multiple agent runs
 in sequence (one per user message).
 
 Key shapes:
+- A TUI connection is **one Session**: created at connect, destroyed at
+  disconnect. An in-flight agent run dies with its connection. Resuming
+  a previous Session is a future capability, not a current one.
 - A Slack thread is **one long-lived Session**: subsequent replies in the
   thread re-attach to the same Session, the agent keeps context.
 - A webhook event is **one one-shot Session**: created on the inbound,
@@ -218,8 +238,10 @@ Key shapes:
 
 Daemon-internal component that allocates Sessions, keys them by
 `session-id = hash(channel, conversation-key)`, and enforces the
-`max_concurrent_sessions` soft cap configured in `argus.yaml`. Above
-the cap, new requests are queued or politely rejected.
+`max_concurrent_sessions` cap configured in `argus.yaml`. Above the
+cap, new Sessions are politely rejected — never queued. If queueing
+ever becomes necessary it belongs to the Channel that needs it (e.g.
+webhook dedup), not to the SessionManager.
 
 When a Channel needs a Session for an inbound event it calls
 `SessionManager.GetOrCreate(channel, conversation-key, principal)`.

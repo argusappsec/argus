@@ -37,6 +37,43 @@ type Config struct {
 	// Form: a plain model id (e.g. "gemini-2.5-flash"). The provider that
 	// implements it is the one whose name matches the model's family.
 	DefaultModel string `yaml:"default_model,omitempty"`
+
+	// Daemon configures the long-running argusd process. Loaded once at
+	// daemon start; changing it requires a restart (by design — see the
+	// hot-reload policy: users.yaml/SOUL/MEMORY are re-read at use, the
+	// process-level config is not).
+	Daemon DaemonConfig `yaml:"daemon,omitempty"`
+}
+
+// DaemonConfig is the daemon: section of argus.yaml.
+type DaemonConfig struct {
+	// Socket overrides the Unix-domain-socket path the local channel
+	// listens on. Empty means "<home>/argusd.sock".
+	Socket string `yaml:"socket,omitempty"`
+
+	// MaxConcurrentSessions caps in-flight Sessions across all channels.
+	// Above the cap new Sessions are politely rejected, never queued
+	// (ADR 0004). Zero means the default of 4.
+	MaxConcurrentSessions int `yaml:"max_concurrent_sessions,omitempty"`
+}
+
+// DefaultMaxConcurrentSessions is used when the config leaves the cap unset.
+const DefaultMaxConcurrentSessions = 4
+
+// SocketPath returns the configured socket path, or the default under home.
+func (d DaemonConfig) SocketPath(home string) string {
+	if d.Socket != "" {
+		return d.Socket
+	}
+	return filepath.Join(home, "argusd.sock")
+}
+
+// SessionCap returns the configured cap, or the default when unset.
+func (d DaemonConfig) SessionCap() int {
+	if d.MaxConcurrentSessions > 0 {
+		return d.MaxConcurrentSessions
+	}
+	return DefaultMaxConcurrentSessions
 }
 
 // ProviderConfig captures one provider's connection info. Today only `type`

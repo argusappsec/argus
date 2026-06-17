@@ -76,6 +76,14 @@ func (w *Writer) Write(rep Report) (string, error) {
 	return path, nil
 }
 
+// PathFor returns the path Write would produce for a report on target@sha,
+// without writing anything. Callers that need to reference the report file
+// after an agent run (which writes via finalize_report internally) use this
+// instead of re-deriving the layout.
+func (w *Writer) PathFor(target, sha string) string {
+	return filepath.Join(w.root, slugify(target), sha+".md")
+}
+
 // ComputeFindingID returns a content-stable ID for a finding. The ID survives
 // whitespace changes and line movements; it changes only when rule_id or the
 // substantive snippet content changes.
