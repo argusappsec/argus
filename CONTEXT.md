@@ -96,6 +96,15 @@ accepted false positives, recent decisions) flows forward. Distinct from
 SOUL: MEMORY is fast-moving session continuity, SOUL is slow-moving
 identity.
 
+Accepted false positives recorded here are **advisory, not a global mute**:
+the agent reads them as context and re-judges per situation, so the same
+finding ID (rule + snippet) in a genuinely vulnerable context elsewhere can
+still be flagged. This is deliberate — a content-stable ID matching is not
+sufficient grounds to silently drop a finding. Deterministic suppression
+("ignore this, it's a false positive") applies only to the **current** PR
+review where it was requested; cross-PR/-repo carryover is the soft,
+re-judged kind.
+
 ### CONTEXT
 
 `~/.argus/context/*.md`. Topical knowledge base documents the agent
@@ -212,10 +221,28 @@ Each implementation:
   Slack events.
 - **MCP** — HTTP server exposing Resources + Tools per the Model Context
   Protocol. Identity = `mcp:<token-hash>` from the bearer token.
-- **Webhook** — HTTP endpoint receiving signed GitHub events. The
-  webhook secret resolves to a Service Principal; the Person who
-  authored the triggering PR is recorded as metadata in the audit
-  event, not as the actor.
+- **GitHub** — a GitHub App (installation) receiving signed events for the
+  repos it is installed on. One transport, two event paths:
+  - **`pull_request` opened/synchronize** → an automatic review. The
+    triggering principal is a **Service** representing the App
+    installation (one webhook secret for the whole App, not per-repo); the
+    Person who authored the PR is recorded as metadata, not as the actor.
+    Which installed repos get reviewed is gated by the `github.auto_enroll`
+    policy in `argus.yaml` (see ADR 0008).
+  - **comment events** (`issue_comment`, `pull_request_review_comment`)
+    that contain the mention token `@argus` → a conversational turn. The
+    actor is the **Person** resolved from the commenter's
+    `github:<login>` Identity. The App receives every comment event for
+    installed repos and parses the body itself — it does not depend on
+    GitHub's native mention resolution. Argus replies as the `argus[bot]`
+    account.
+
+  Channel-specific trust policy (overrides the global "reject with a
+  message" rule, the same way the local socket has its own): a comment
+  whose `github:<login>` does **not** resolve to a Person, or that omits
+  the `@argus` mention, is **silently ignored** — no reply. Replying
+  "contact your administrator" to every passer-by on a public PR would be
+  noise and an abuse surface.
 
 ## Session
 
@@ -230,8 +257,14 @@ Key shapes:
   a previous Session is a future capability, not a current one.
 - A Slack thread is **one long-lived Session**: subsequent replies in the
   thread re-attach to the same Session, the agent keeps context.
-- A webhook event is **one one-shot Session**: created on the inbound,
-  destroyed when `agent.Run` returns.
+- A GitHub PR is **one Session with a stable identity but one-shot
+  execution**: the session-id is keyed by `(github, repo + PR number)`,
+  so the automatic review (on `pull_request`) and every later `@argus`
+  comment map to the same Session. The live object is re-hydrated from
+  the conversation log on each event, runs one `agent.Run`, and is
+  released when the run returns — it does **not** hold a slot between
+  events. Continuity comes from the on-disk log, not from a resident
+  in-memory session.
 - An MCP connection is **one Session for the duration of the connection**.
 
 ## SessionManager
@@ -246,3 +279,63 @@ webhook dedup), not to the SessionManager.
 When a Channel needs a Session for an inbound event it calls
 `SessionManager.GetOrCreate(channel, conversation-key, principal)`.
 This is the single point where session identity is decided.
+
+---
+
+## Review
+
+### Review
+
+One agent-driven security analysis of a code target, producing a Report.
+The word alone is ambiguous, so we always qualify the target:
+
+- **Repo review** — the whole checkout at a single SHA. The `argus review`
+  CLI and the existing `agent.Target{Repo, SHA, Path}` shape. No notion of
+  a diff.
+- **PR review** — a diff-aware review of a Pull Request (see below). Same
+  scanners, run over the whole tree at the PR head for context, but the
+  findings are filtered to those relevant to the PR.
+
+_Avoid_ using bare "review" when the target matters.
+
+### Pull Request (PR)
+
+The review target on the GitHub channel: a `base…head` proposed change on
+a GitHub repository. A PR keys exactly one GitHub Session (by repo + PR
+number) and is the unit the automatic review and all `@argus` comment
+turns attach to. Argus learns its changed files and patch hunks from the
+GitHub API (`pulls/{n}/files`), not from a local diff.
+
+### PR-relevant finding
+
+A Finding that Argus surfaces on a PR. Relevance is **judged by the
+agent**, not by a mechanical line filter: a finding qualifies when it sits
+on a changed line, **or** when it is causally tied to the change (the diff
+calls an insecure function defined elsewhere, bumps a dependency to a
+version with a CVE, etc.). Findings on changed lines become inline review
+comments; causal off-diff findings go in the summary body, since GitHub
+inline comments can only attach to the diff.
+
+### CodeHost
+
+The platform hosting the code under review. A small Go interface
+(`pkg/codehost`) over the few operations the GitHub channel and agent
+need — parse a repo/PR URL, clone with auth, fetch a PR's changed files
+and patch hunks, post a review and inline comments, resolve a commenter's
+Identity. **GitHub** is the only implementation today; the interface
+exists so a second host (GitLab, …) can slot in later without rewriting
+the channel. _Avoid_: "codesource", "provider" (that word is taken by the
+LLM Provider). Note the vocabulary gap a second host will expose: GitLab's
+equivalent of a PR is a **Merge Request**, and it authenticates with a
+token rather than an App. See ADR 0010.
+
+### GitHub App
+
+The installation-based GitHub identity Argus runs as on the GitHub
+channel. It receives signed webhook events, clones private repos and calls
+the API with an installation token, and posts back as the `argus[bot]`
+account. Required permissions: `contents: read` (clone), `pull_requests:
+write` (read changed files, post the review + inline comments), and the
+mandatory `metadata: read`. Chosen over a bare webhook receiver (cannot
+write back) and a personal access token (not per-install, not scoped to an
+org's repos). See ADR 0008.

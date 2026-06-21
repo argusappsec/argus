@@ -19,3 +19,5 @@ vendor/
 .env.local
 .argus/
 coverage.txt
+
+.worktrees/ralph/**
