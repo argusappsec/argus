@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	ghchannel "github.com/redcarbon-dev/argus/pkg/channel/github"
+	"github.com/redcarbon-dev/argus/pkg/config"
 	"github.com/redcarbon-dev/argus/pkg/doctor"
 	"github.com/redcarbon-dev/argus/pkg/security"
 	"github.com/redcarbon-dev/argus/pkg/session"
@@ -35,10 +39,13 @@ func doctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ghCfg, ghMint := githubDoctorOptions(home)
 			checks := doctor.Run(doctor.Options{
 				Home:          home,
 				Registry:      doctorRegistry(),
 				ExtraBinaries: extraBinaries(),
+				GitHub:        ghCfg,
+				GitHubMint:    ghMint,
 			})
 			renderChecks(cmd.OutOrStdout(), checks)
 			summary := doctor.Summarize(checks)
@@ -141,6 +148,34 @@ func doctorRegistry() *tool.Registry {
 	// Future: trivy, trufflehog, govulncheck — adding them in
 	// pkg/security and registering them here is the only change needed.
 	return reg
+}
+
+// githubDoctorOptions loads argus.yaml's github: section and, when it is
+// configured, returns it plus a mint closure that proves a token can be
+// minted (the network call lives here, not in the pure doctor package). When
+// the section is absent, both are nil and doctor skips the check.
+func githubDoctorOptions(home string) (*config.GitHubConfig, func(context.Context) error) {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil || !cfg.GitHub.Configured() {
+		if err == nil && cfg != nil {
+			return &cfg.GitHub, nil // present but unconfigured → Info row
+		}
+		return nil, nil
+	}
+	// Load .env so env() references in the github: section resolve.
+	if e, lerr := config.LoadEnv(filepath.Join(home, ".env")); lerr == nil {
+		e.ApplyToProcess()
+	}
+	gh := cfg.GitHub
+	mint := func(ctx context.Context) error {
+		m, err := ghchannel.MintFromConfig(gh)
+		if err != nil {
+			return err
+		}
+		_, err = m.Token(ctx)
+		return err
+	}
+	return &gh, mint
 }
 
 // extraBinaries lists binary deps that aren't owned by any Tool (because

@@ -14,6 +14,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -99,9 +100,21 @@ type mcpToken struct {
 }
 
 type serviceEntry struct {
-	ID           string    `yaml:"id"`
-	Role         Role      `yaml:"role"`
-	Repo         string    `yaml:"repo,omitempty"`
+	ID   string `yaml:"id"`
+	Role Role   `yaml:"role"`
+
+	// Kind discriminates service shapes. "github-app" is the App installation
+	// (ADR 0008): one webhook-secret hash covering many repos. Empty is the
+	// legacy per-repo ci-trigger (ADR 0003) bound to Repo.
+	Kind string `yaml:"kind,omitempty"`
+
+	// Repo is the single repo a legacy ci-trigger is bound to. A github-app
+	// Service leaves it empty — its repo set is the installation's, read from
+	// the GitHub API and gated by auto_enroll.
+	Repo string `yaml:"repo,omitempty"`
+
+	// SecretSHA256 is the hex SHA-256 of the shared secret: a per-repo CI
+	// secret, or — for a github-app Service — the App's webhook secret.
 	SecretSHA256 string    `yaml:"secret_sha256,omitempty"`
 	CreatedAt    time.Time `yaml:"created_at,omitempty"`
 }
@@ -139,6 +152,34 @@ func (r *Resolver) Resolve(identity string) (Principal, error) {
 		}
 	}
 	return Principal{}, fmt.Errorf("%w: %s", ErrUnknownIdentity, identity)
+}
+
+// ResolveService maps a service's shared-secret hash to its Principal. It is
+// how a channel that authenticated a Service by a shared secret (e.g. the
+// GitHub App webhook secret, ADR 0008) attributes the trigger: the channel
+// verifies the secret on the wire, then hands its hex SHA-256 here.
+//
+// The comparison is constant-time so a registered hash cannot be discovered
+// by timing. An unmatched hash returns ErrUnknownIdentity, like Resolve.
+func (r *Resolver) ResolveService(secretSHA256 string) (Principal, error) {
+	uf, err := r.load()
+	if err != nil {
+		return Principal{}, err
+	}
+	for _, s := range uf.Services {
+		if s.SecretSHA256 == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(s.SecretSHA256), []byte(secretSHA256)) == 1 {
+			return Principal{
+				ID:       s.ID,
+				Kind:     KindService,
+				Role:     s.Role,
+				Identity: "service:" + s.ID,
+			}, nil
+		}
+	}
+	return Principal{}, fmt.Errorf("%w: service secret", ErrUnknownIdentity)
 }
 
 // load re-reads the user table from disk. A missing file yields an empty
