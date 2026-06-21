@@ -136,7 +136,6 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 	if err != nil {
 		return nil, "", fmt.Errorf("daemon: clone: %w", err)
 	}
-	s.toolState.SetRoot(co.Path)
 
 	seedPrompt := fmt.Sprintf(
 		"Please run a thorough security review of %s at commit %s. "+
@@ -146,6 +145,51 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 			"If something is genuinely ambiguous, ask me; otherwise proceed autonomously.",
 		u.FullName, co.SHA,
 	)
+	return s.runReview(ctx, co.Path, u.FullName, co.SHA, seedPrompt, cb)
+}
+
+// PRReviewTarget describes an automatic pull-request review. The channel
+// clones at the PR head with the installation token (so private repos work)
+// and hands the checkout to the Session — unlike HandleReview, which clones
+// anonymously on the daemon host. The Session pins the checkout, seeds a
+// prompt that signals "PR review", and runs. Diff-awareness arrives in a later
+// slice; this reviews the whole head checkout.
+type PRReviewTarget struct {
+	Repo   string // canonical "github.com/<owner>/<name>"
+	Number int    // PR number
+	Path   string // local checkout at the head SHA (cloned by the channel)
+	SHA    string // resolved head commit SHA
+}
+
+// HandlePRReview runs one automatic PR review against an already-cloned head
+// checkout: pin the Session root, seed the PR-review prompt, run. Returns the
+// report and the path of the report file when one was written.
+func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb RunCallbacks) (*report.Report, string, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, "", err
+	}
+	defer s.endRun()
+
+	seedPrompt := fmt.Sprintf(
+		"You are running an automated security review of pull request #%d of %s. "+
+			"The repository is already checked out locally at the PR head commit %s — use "+
+			"list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner freely "+
+			"over the whole tree. Record each issue you confirm via add_finding, then call "+
+			"finalize_report with a concise summary suitable for posting on the pull request. "+
+			"Proceed autonomously.",
+		target.Number, target.Repo, target.SHA,
+	)
+	return s.runReview(ctx, target.Path, target.Repo, target.SHA, seedPrompt, cb)
+}
+
+// runReview is the shared review spine for HandleReview and HandlePRReview:
+// pin the checkout as the tool root, seed and persist the prompt, run one
+// agent loop, and resolve the report file path the run may have written. The
+// callers differ only in where the checkout comes from (anonymous daemon clone
+// vs. the channel's installation-token clone) and in the seed prompt.
+func (s *Session) runReview(ctx context.Context, root, repo, sha, seedPrompt string, cb RunCallbacks) (*report.Report, string, error) {
+	s.toolState.SetRoot(root)
+
 	seed, userMsg, err := s.seedWith(seedPrompt)
 	if err != nil {
 		return nil, "", err
@@ -155,12 +199,12 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 	}
 	s.countUserMessage()
 
-	rep, err := s.run(ctx, seed, agent.Target{Repo: u.FullName, SHA: co.SHA, Path: co.Path}, cb)
+	rep, err := s.run(ctx, seed, agent.Target{Repo: repo, SHA: sha, Path: root}, cb)
 	if err != nil {
 		return nil, "", err
 	}
 
-	reportPath := s.dc.Reports.PathFor(u.FullName, co.SHA)
+	reportPath := s.dc.Reports.PathFor(repo, sha)
 	if _, statErr := os.Stat(reportPath); statErr != nil {
 		reportPath = "" // run ended without finalize_report writing a file
 	}
