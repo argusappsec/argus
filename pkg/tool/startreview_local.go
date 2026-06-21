@@ -29,7 +29,7 @@ func (t *startReviewLocal) Description() string {
 	return "Start a security review on a local directory already present on disk. " +
 		"Use when the user provides a filesystem path (e.g. '/Users/.../my-project'). " +
 		"For GitHub URLs use start_review_github instead. " +
-		"After this tool succeeds, the file-scoped tools (list_files, read_file, grep, run_semgrep, run_gitleaks) " +
+		"After this tool succeeds, the file-scoped tools (list_files, read_file, grep, run_semgrep, run_gitleaks, run_osv_scanner) " +
 		"will operate on the given path."
 }
 
@@ -65,5 +65,5 @@ func (t *startReviewLocal) Execute(_ context.Context, args map[string]any) (stri
 	}
 
 	t.sess.SetRoot(abs)
-	return fmt.Sprintf("Local review target set to %s. Proceed with list_files / read_file / grep / run_semgrep / run_gitleaks.", abs), nil
+	return fmt.Sprintf("Local review target set to %s. Proceed with list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner.", abs), nil
 }

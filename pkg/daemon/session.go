@@ -141,7 +141,7 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 	seedPrompt := fmt.Sprintf(
 		"Please run a thorough security review of %s at commit %s. "+
 			"The repository is already checked out locally — use list_files / read_file / "+
-			"grep / run_semgrep / run_gitleaks freely. Record each issue you confirm via "+
+			"grep / run_semgrep / run_gitleaks / run_osv_scanner freely. Record each issue you confirm via "+
 			"add_finding, then call finalize_report with a concise summary when you are done. "+
 			"If something is genuinely ambiguous, ask me; otherwise proceed autonomously.",
 		u.FullName, co.SHA,
@@ -285,6 +285,7 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.Cloner))
 	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))
+	reg.Register(security.NewOSVScanner(toolState, security.ExecRunner{}))
 	reg.Register(tool.NewListSkills(dc.Skills))
 	reg.Register(tool.NewReadSkill(dc.Skills))
 	reg.Register(tool.NewReadSkillFile(dc.Skills))

@@ -24,7 +24,7 @@ func doctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check that Argus's dependencies and configuration are ready.",
 		Long: "Run a pre-flight check on:\n" +
-			"  • CLI binaries Argus shells out to (git, semgrep, gitleaks, …)\n" +
+			"  • CLI binaries Argus shells out to (git, semgrep, gitleaks, osv-scanner, …)\n" +
 			"  • argus.yaml (provider configured? default model set?)\n" +
 			"  • GEMINI_API_KEY (in .env or shell)\n" +
 			"  • SOUL.md (present? populated?)\n" +
@@ -137,7 +137,8 @@ func doctorRegistry() *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(security.NewSemgrep(sess, runner))
 	reg.Register(security.NewGitleaks(sess, runner))
-	// Future: trivy, trufflehog, govulncheck, osv-scanner — adding them in
+	reg.Register(security.NewOSVScanner(sess, runner))
+	// Future: trivy, trufflehog, govulncheck — adding them in
 	// pkg/security and registering them here is the only change needed.
 	return reg
 }
