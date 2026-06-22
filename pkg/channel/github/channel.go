@@ -10,12 +10,14 @@ import (
 	"maps"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
 	"github.com/redcarbon-dev/argus/pkg/auth"
 	"github.com/redcarbon-dev/argus/pkg/codehost"
 	"github.com/redcarbon-dev/argus/pkg/daemon"
+	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/report"
 )
 
@@ -119,10 +121,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 // dispatch routes a verified event. An opened or synchronized PR runs an
 // automatic diff-aware review; a synchronize replaces the bot's prior review
-// rather than stacking a new one (ADR 0009). Comment events are accepted but
-// not yet acted on — conversational @argus arrives in a later slice.
+// rather than stacking a new one (ADR 0009). A comment carrying the @argus
+// mention from a resolved Person becomes a conversational turn in the thread.
 func (s *Server) dispatch(ctx context.Context, evt Event) error {
-	if evt.Kind != KindPullRequest || (evt.Action != "opened" && evt.Action != "synchronize") {
+	switch evt.Kind {
+	case KindPullRequest:
+		return s.dispatchPullRequest(ctx, evt)
+	case KindComment:
+		return s.dispatchComment(ctx, evt)
+	default:
+		return nil
+	}
+}
+
+// dispatchPullRequest handles an opened/synchronize PR: attribute the trigger
+// to the App-installation Service, gate on the enabled-repo policy, then run
+// the automatic review.
+func (s *Server) dispatchPullRequest(ctx context.Context, evt Event) error {
+	if evt.Action != "opened" && evt.Action != "synchronize" {
 		return nil
 	}
 
@@ -153,6 +169,71 @@ func (s *Server) dispatch(ctx context.Context, evt Event) error {
 	}
 
 	return s.reviewPR(ctx, evt, principal)
+}
+
+// dispatchComment handles a PR/issue comment as a conversational turn (ADR
+// 0008, slice 5). The channel parses the @argus mention itself and resolves
+// the commenter's github:<login> to a Person; a comment without the mention,
+// or from a login that resolves to no Person, is silently ignored — no reply,
+// no leak that Argus exists. A resolved Person's turn re-hydrates the PR's
+// Session from its on-disk conversation log (continuity via the log, not a
+// resident in-memory session), runs one agent turn attributed to that Person
+// with their Role, and posts the agent's answer back in the thread.
+func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
+	request, ok := parseMention(evt.Body)
+	if !ok {
+		return nil // not addressed to Argus — silently ignored (ADR 0008)
+	}
+
+	identity := "github:" + evt.Commenter
+	principal, err := s.dc.Auth.Resolve(identity)
+	if err != nil {
+		// An unregistered commenter is silently ignored on the wire; the audit
+		// log still records the ignore for the operator.
+		s.audit("github_comment_ignored", evt, map[string]any{
+			"reason": "unresolved login",
+			"login":  evt.Commenter,
+		})
+		return nil
+	}
+
+	// One stable Session identity per (repo, PR): the same key the automatic
+	// review used, so the turn re-hydrates that review's context from the log.
+	sess, _, err := s.dc.Sessions.GetOrCreate(ctx, s.Name(), prConversationKey(evt), principal, daemon.SessionOptions{})
+	if err != nil {
+		return fmt.Errorf("github: session: %w", err)
+	}
+	defer s.dc.Sessions.Release(sess)
+
+	// The mention-stripped request is what the agent acts on; fall back to the
+	// raw body for a bare "@argus" so the user message is never empty.
+	text := request
+	if text == "" {
+		text = evt.Body
+	}
+
+	var reply replyCapture
+	if _, err := sess.HandleMessage(ctx, text, daemon.RunCallbacks{OnMessage: reply.onMessage}); err != nil {
+		return fmt.Errorf("github: comment turn: %w", err)
+	}
+
+	repo := codehost.Repo{
+		Host:     "github.com",
+		Owner:    evt.Owner,
+		Name:     evt.Name,
+		FullName: evt.Repo,
+	}
+	if err := s.host.PostComment(ctx, repo, evt.Number, reply.body()); err != nil {
+		return fmt.Errorf("github: post reply: %w", err)
+	}
+
+	s.audit("github_comment_replied", evt, map[string]any{
+		"principal": principal.ID,
+		"identity":  principal.Identity,
+		"role":      string(principal.Role),
+		"commenter": evt.Commenter,
+	})
+	return nil
 }
 
 // reviewPR runs an automatic diff-aware PR review for an enabled repo. A
@@ -329,6 +410,39 @@ func location(f report.Finding) string {
 		return fmt.Sprintf("%s:%d", f.File, f.Line)
 	}
 	return f.File
+}
+
+// replyCapture accumulates the agent's text turns during a conversational
+// HandleMessage run so the channel can post them back as one threaded reply.
+// Tool-call turns carry no prose (empty Content) and are skipped; the agent's
+// answer is the model-role text it emits.
+type replyCapture struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+// onMessage is the daemon.RunCallbacks.OnMessage hook: it keeps every non-empty
+// model-role message in order.
+func (r *replyCapture) onMessage(m provider.Message) {
+	if m.Role != "model" {
+		return
+	}
+	if c := strings.TrimSpace(m.Content); c != "" {
+		r.mu.Lock()
+		r.msgs = append(r.msgs, c)
+		r.mu.Unlock()
+	}
+}
+
+// body renders the captured turns as the comment body, falling back to a short
+// notice when the run produced no prose (e.g. it only called tools).
+func (r *replyCapture) body() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.msgs) == 0 {
+		return "_Argus has nothing to add._"
+	}
+	return strings.Join(r.msgs, "\n\n")
 }
 
 // audit records a channel event attributed to the GitHub channel.

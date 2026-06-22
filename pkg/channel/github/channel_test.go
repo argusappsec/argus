@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -152,7 +153,8 @@ func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, a
 	t.Helper()
 	home := t.TempDir()
 	sum := sha256.Sum256([]byte(testSecret))
-	users := "services:\n  - id: github-app\n    role: ci-trigger\n    kind: github-app\n    secret_sha256: " + hex.EncodeToString(sum[:]) + "\n"
+	users := "services:\n  - id: github-app\n    role: ci-trigger\n    kind: github-app\n    secret_sha256: " + hex.EncodeToString(sum[:]) + "\n" +
+		"persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n"
 	usersPath := filepath.Join(home, "users.yaml")
 	if err := os.WriteFile(usersPath, []byte(users), 0o600); err != nil {
 		t.Fatal(err)
@@ -423,16 +425,122 @@ func TestChannel_AutoEnrollFalseActsOnEnabledRepo(t *testing.T) {
 	}
 }
 
-func TestChannel_CommentNotActedOnYet(t *testing.T) {
-	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
-	s, _, _ := testChannel(t, host, reviewScript(), true, nil)
+// replyScript drives a conversational turn: the agent emits one text reply
+// (no tool calls), which the channel posts back in the thread.
+func replyScript(text string) *scriptedProvider {
+	return &scriptedProvider{responses: []provider.Response{
+		{Text: text, Usage: provider.Usage{InputTokens: 20, OutputTokens: 10}},
+	}}
+}
 
-	body := []byte(issueComment)
+// commentOn builds an issue_comment delivery body for the given PR number,
+// commenter login, and comment text.
+func commentOn(number int, login, text string) string {
+	return `{
+  "action": "created",
+  "issue": {"number": ` + strconv.Itoa(number) + `},
+  "comment": {"body": ` + strconv.Quote(text) + `, "user": {"login": ` + strconv.Quote(login) + `}},
+  "repository": {"full_name": "redcarbon-dev/argus", "name": "argus", "owner": {"login": "redcarbon-dev"}}
+}`
+}
+
+func TestChannel_MentionFromResolvedPersonGetsThreadedReply(t *testing.T) {
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	s, _, auditPath := testChannel(t, host, replyScript("The hardcoded key should move to an env var."), true, nil)
+
+	body := []byte(commentOn(42, "bob", "@argus explain this"))
+	code := postEvent(t, s, "issue_comment", "c1", body, sign(body, testSecret))
+	if code != 200 {
+		t.Fatalf("status = %d, want 200", code)
+	}
+
+	// The agent's answer is posted back as a threaded comment on the PR.
+	if len(host.comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(host.comments))
+	}
+	c := host.comments[0]
+	if c.number != 42 || c.repo != installedRepo {
+		t.Errorf("reply target = %s#%d, want %s#42", c.repo, c.number, installedRepo)
+	}
+	if !strings.Contains(c.body, "move to an env var") {
+		t.Errorf("reply body missing agent answer:\n%s", c.body)
+	}
+
+	// The turn is attributed to the resolved Person with their Role.
+	ev := findEvent(auditEvents(t, auditPath), "github_comment_replied")
+	if ev == nil {
+		t.Fatal("no github_comment_replied audit event")
+	}
+	if ev.Data["principal"] != "bob" || ev.Data["role"] != "analyst" {
+		t.Errorf("attribution = principal %v / role %v, want bob / analyst", ev.Data["principal"], ev.Data["role"])
+	}
+}
+
+func TestChannel_CommentWithoutMentionSilentlyIgnored(t *testing.T) {
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	s, _, _ := testChannel(t, host, replyScript("should not run"), true, nil)
+
+	body := []byte(commentOn(42, "bob", "looks good to me, merging"))
 	code := postEvent(t, s, "issue_comment", "c1", body, sign(body, testSecret))
 	if code != 200 {
 		t.Errorf("status = %d, want 200", code)
 	}
-	if len(host.reviews) != 0 {
-		t.Errorf("comment events are not acted on until the conversational slice")
+	if len(host.comments) != 0 {
+		t.Errorf("a comment without @argus must not get a reply, got %d", len(host.comments))
+	}
+}
+
+func TestChannel_MentionFromUnresolvedLoginSilentlyIgnored(t *testing.T) {
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	s, _, auditPath := testChannel(t, host, replyScript("should not run"), true, nil)
+
+	// "stranger" has no Person entry: @argus or not, the comment is ignored.
+	body := []byte(commentOn(42, "stranger", "@argus explain this"))
+	code := postEvent(t, s, "issue_comment", "c1", body, sign(body, testSecret))
+	if code != 200 {
+		t.Errorf("status = %d, want 200", code)
+	}
+	if len(host.comments) != 0 {
+		t.Errorf("an unresolved commenter must not get a reply, got %d", len(host.comments))
+	}
+	if findEvent(auditEvents(t, auditPath), "github_comment_ignored") == nil {
+		t.Error("expected a github_comment_ignored audit event for the unresolved login")
+	}
+}
+
+func TestChannel_CommentSharesPRSessionIdentityAndContext(t *testing.T) {
+	// A PR review runs first, then a @argus comment on the same PR. The comment
+	// turn must re-attach to the review's Session (keyed by repo + PR number)
+	// and see the review context via the on-disk conversation log.
+	prov := &scriptedProvider{responses: []provider.Response{
+		reviewScript().responses[0], // add_finding
+		reviewScript().responses[1], // finalize_report
+		{Text: "That config.py finding is a real hardcoded secret.", Usage: provider.Usage{InputTokens: 20, OutputTokens: 10}},
+	}}
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir(), cloneSHA: "headsha111", diff: diffCovering("config.py", 40, 5)}
+	s, dc, _ := testChannel(t, host, prov, true, nil)
+
+	review := []byte(openedPR)
+	postEvent(t, s, "pull_request", "d1", review, sign(review, testSecret))
+
+	comment := []byte(commentOn(42, "bob", "@argus explain the config.py finding"))
+	postEvent(t, s, "issue_comment", "c1", comment, sign(comment, testSecret))
+
+	if len(host.comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(host.comments))
+	}
+
+	// Both the review seed and the comment request live in ONE conversation log,
+	// keyed by the PR's stable session identity — that is the shared continuity.
+	id := daemon.SessionID("github", "github.com/redcarbon-dev/argus#42")
+	log, err := os.ReadFile(filepath.Join(dc.Home, "conversations", id+".jsonl"))
+	if err != nil {
+		t.Fatalf("read conversation log: %v", err)
+	}
+	if !strings.Contains(string(log), "automated security review of pull request #42") {
+		t.Error("comment turn's session is missing the review seed (no shared identity/context)")
+	}
+	if !strings.Contains(string(log), "explain the config.py finding") {
+		t.Error("comment request was not appended to the PR's conversation log")
 	}
 }
