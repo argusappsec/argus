@@ -84,6 +84,12 @@ type Session struct {
 // ID returns the session identifier (hash of channel + conversation key).
 func (s *Session) ID() string { return s.id }
 
+// SetToolRoot points the Session's file-scoped tools (list_files, read_file,
+// grep, run_semgrep, …) at path. The review paths set it from their checkout;
+// the GitHub channel's rescope action sets it after cloning the PR head so the
+// in-thread focused pass can read the tree.
+func (s *Session) SetToolRoot(path string) { s.toolState.SetRoot(path) }
+
 // Principal returns the resolved actor that owns this Session.
 func (s *Session) Principal() auth.Principal { return s.principal }
 
@@ -94,6 +100,21 @@ func (s *Session) ConversationPath() string { return s.convoPath }
 // lines (against the daemon's catalog — the same on every channel), history
 // re-seed from the conversation log, then one agent run.
 func (s *Session) HandleMessage(ctx context.Context, text string, cb RunCallbacks) (*report.Report, error) {
+	return s.handleMessage(ctx, text, s.registry, cb)
+}
+
+// HandleComment is HandleMessage with extra, request-scoped tools available only
+// to this turn. The tools are layered onto a per-run copy of the registry, never
+// the shared one, so their per-turn dependencies and authorization (e.g. the
+// GitHub channel's suppress_finding / rescope_review, bound to the commenter's
+// Role) cannot race or leak into another concurrent turn on the same Session.
+func (s *Session) HandleComment(ctx context.Context, text string, extraTools []tool.Tool, cb RunCallbacks) (*report.Report, error) {
+	return s.handleMessage(ctx, text, s.registry.With(extraTools...), cb)
+}
+
+// handleMessage is the shared body of HandleMessage / HandleComment: it runs one
+// turn against the given tool registry.
+func (s *Session) handleMessage(ctx context.Context, text string, registry *tool.Registry, cb RunCallbacks) (*report.Report, error) {
 	if err := s.beginRun(); err != nil {
 		return nil, err
 	}
@@ -117,7 +138,7 @@ func (s *Session) HandleMessage(ctx context.Context, text string, cb RunCallback
 	}
 	s.countUserMessage()
 
-	return s.run(ctx, seed, agent.Target{}, cb)
+	return s.run(ctx, seed, agent.Target{}, registry, cb)
 }
 
 // HandleReview deterministically starts a review: clone on the daemon host,
@@ -157,11 +178,11 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 // review", and runs. The scanners cover the whole head checkout for accuracy;
 // the agent judges PR-relevance from the diff (ADR 0009).
 type PRReviewTarget struct {
-	Repo    string         // canonical "github.com/<owner>/<name>"
-	Number  int            // PR number
-	Path    string         // local checkout at the head SHA (cloned by the channel)
-	SHA     string         // resolved head commit SHA
-	BaseSHA string         // PR base commit SHA
+	Repo    string          // canonical "github.com/<owner>/<name>"
+	Number  int             // PR number
+	Path    string          // local checkout at the head SHA (cloned by the channel)
+	SHA     string          // resolved head commit SHA
+	BaseSHA string          // PR base commit SHA
 	Diff    codehost.PRDiff // changed files + hunks, pre-fetched by the channel
 }
 
@@ -218,7 +239,7 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 	}
 	s.countUserMessage()
 
-	rep, err := s.run(ctx, seed, target, cb)
+	rep, err := s.run(ctx, seed, target, s.registry, cb)
 	if err != nil {
 		return nil, "", err
 	}
@@ -232,12 +253,12 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 
 // run executes one agent run with this Session's snapshots and streams it
 // through cb.
-func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, cb RunCallbacks) (*report.Report, error) {
+func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, cb RunCallbacks) (*report.Report, error) {
 	ag := agent.New(agent.Options{
 		Provider:     s.provider,
 		Audit:        s.audit,
 		Reports:      s.dc.Reports,
-		Tools:        s.registry,
+		Tools:        registry,
 		Conversation: s.convo,
 		Soul:         s.soul,
 		Memory:       s.memory,

@@ -19,6 +19,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/daemon"
 	"github.com/redcarbon-dev/argus/pkg/provider"
 	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/redcarbon-dev/argus/pkg/tool"
 )
 
 // maxBodyBytes bounds the webhook payload we read into memory.
@@ -42,6 +43,7 @@ type Server struct {
 
 	secretSHA string
 	dedup     *deliveryCache
+	reviews   *prReviewStore
 }
 
 // NewServer builds the channel. host is the authenticated CodeHost the ack is
@@ -54,6 +56,7 @@ func NewServer(dc *daemon.Context, host codehost.CodeHost, opts Options) *Server
 		opts:      opts,
 		secretSHA: hex.EncodeToString(sum[:]),
 		dedup:     newDeliveryCache(2048),
+		reviews:   newPRReviewStore(dc.Home),
 	}
 }
 
@@ -205,6 +208,33 @@ func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
 	}
 	defer s.dc.Sessions.Release(sess)
 
+	repo := repoFromEvent(evt)
+
+	// The PR comment-action tools for this turn. They carry the channel's
+	// CodeHost and per-PR review state, and enforce RBAC themselves (ADR 0008 /
+	// slice 6): an analyst+ can suppress a finding or re-scope the analysis; a
+	// viewer's call is refused at the tool layer, keeping them explain-only. They
+	// are bound to this commenter's Role and passed per-turn (not registered on
+	// the shared Session) so a concurrent turn cannot run with the wrong actor.
+	actionTools := []tool.Tool{
+		&suppressFinding{
+			role:           principal.Role,
+			store:          s.reviews,
+			host:           s.host,
+			repo:           repo,
+			number:         evt.Number,
+			recordAdvisory: s.dc.Sessions.AppendMemory,
+		},
+		&rescopeReview{
+			role:    principal.Role,
+			store:   s.reviews,
+			host:    s.host,
+			repo:    repo,
+			number:  evt.Number,
+			setRoot: sess.SetToolRoot,
+		},
+	}
+
 	// The mention-stripped request is what the agent acts on; fall back to the
 	// raw body for a bare "@argus" so the user message is never empty.
 	text := request
@@ -213,16 +243,10 @@ func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
 	}
 
 	var reply replyCapture
-	if _, err := sess.HandleMessage(ctx, text, daemon.RunCallbacks{OnMessage: reply.onMessage}); err != nil {
+	if _, err := sess.HandleComment(ctx, text, actionTools, daemon.RunCallbacks{OnMessage: reply.onMessage}); err != nil {
 		return fmt.Errorf("github: comment turn: %w", err)
 	}
 
-	repo := codehost.Repo{
-		Host:     "github.com",
-		Owner:    evt.Owner,
-		Name:     evt.Name,
-		FullName: evt.Repo,
-	}
 	if err := s.host.PostComment(ctx, repo, evt.Number, reply.body()); err != nil {
 		return fmt.Errorf("github: post reply: %w", err)
 	}
@@ -246,12 +270,7 @@ func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
 // is attributed to the App-installation Service with the PR author kept as
 // metadata; the agent persists the Report via finalize_report.
 func (s *Server) reviewPR(ctx context.Context, evt Event, principal auth.Principal) error {
-	repo := codehost.Repo{
-		Host:     "github.com",
-		Owner:    evt.Owner,
-		Name:     evt.Name,
-		FullName: evt.Repo,
-	}
+	repo := repoFromEvent(evt)
 
 	co, err := s.host.Clone(ctx, repo, evt.HeadSHA)
 	if err != nil {
@@ -283,43 +302,62 @@ func (s *Server) reviewPR(ctx context.Context, evt Event, principal auth.Princip
 		return fmt.Errorf("github: PR review: %w", err)
 	}
 
-	// Split findings by diff placement: on a changed line → inline comment,
-	// otherwise (causal / off-diff) → the summary body. A synchronize replaces
-	// the bot's prior review instead of stacking a new one.
-	inline, offDiff := splitFindings(rep, diff)
-	review := codehost.Review{
-		HeadSHA: co.SHA,
-		Summary: summaryComment(rep, offDiff),
-		Inline:  inline,
+	// Persist the review as this PR's state (keyed by repo + PR number, findable
+	// from a later comment turn), preserving any findings a teammate already
+	// suppressed on this PR so the suppression survives this re-review (slice 6).
+	state, err := s.reviews.Load(evt.Repo, evt.Number)
+	if err != nil {
+		return err
 	}
+	// rep is non-nil here: HandlePRReview returns a nil report only with an
+	// error, which is handled above.
+	state.HeadSHA = co.SHA
+	state.Summary = rep.Summary
+	state.Findings = rep.Findings
+	if err := s.reviews.Save(evt.Repo, evt.Number, state); err != nil {
+		return err
+	}
+
+	// Render and post the live findings (everything minus the PR-local hard
+	// suppressions). A synchronize replaces the bot's prior review instead of
+	// stacking a new one.
+	live := state.LiveFindings()
+	review := renderReview(co.SHA, state.Summary, live, diff)
 	if err := s.host.PostReview(ctx, repo, evt.Number, review, evt.Action == "synchronize"); err != nil {
 		return fmt.Errorf("github: post review: %w", err)
 	}
 
-	findings := 0
-	if rep != nil {
-		findings = len(rep.Findings)
-	}
 	s.audit("github_pr_reviewed", evt, map[string]any{
-		"principal": principal.ID, // the App-installation Service (trigger)
-		"pr_author": evt.Author,   // the PR author, as metadata
-		"identity":  principal.Identity,
-		"head_sha":  co.SHA,
-		"action":    evt.Action,
-		"findings":  findings,
-		"inline":    len(inline),
+		"principal":  principal.ID, // the App-installation Service (trigger)
+		"pr_author":  evt.Author,   // the PR author, as metadata
+		"identity":   principal.Identity,
+		"head_sha":   co.SHA,
+		"action":     evt.Action,
+		"findings":   len(state.Findings),
+		"suppressed": len(state.Suppressed),
+		"inline":     len(review.Inline),
 	})
 	return nil
+}
+
+// renderReview assembles the GitHub review argus[bot] posts from a head SHA, the
+// agent's summary, and the findings to post (already minus any PR-local
+// suppressions). Findings on a changed line become inline comments; causal
+// off-diff findings go in the summary body GitHub cannot attach inline.
+func renderReview(headSHA, summary string, findings []report.Finding, diff codehost.PRDiff) codehost.Review {
+	inline, offDiff := splitFindings(findings, diff)
+	return codehost.Review{
+		HeadSHA: headSHA,
+		Summary: summaryComment(summary, len(findings), offDiff),
+		Inline:  inline,
+	}
 }
 
 // splitFindings partitions a report's findings by diff placement: those on a
 // changed line become inline review comments; the rest (causal off-diff
 // findings GitHub cannot attach inline) are returned for the summary body.
-func splitFindings(rep *report.Report, diff codehost.PRDiff) (inline []codehost.InlineComment, offDiff []report.Finding) {
-	if rep == nil {
-		return nil, nil
-	}
-	for _, f := range rep.Findings {
+func splitFindings(findings []report.Finding, diff codehost.PRDiff) (inline []codehost.InlineComment, offDiff []report.Finding) {
+	for _, f := range findings {
 		if diff.IsChangedLine(f.File, f.Line) {
 			inline = append(inline, codehost.InlineComment{
 				Path: f.File,
@@ -360,25 +398,29 @@ func prConversationKey(evt Event) string {
 	return fmt.Sprintf("%s#%d", evt.Repo, evt.Number)
 }
 
+// repoFromEvent builds the CodeHost Repo a delivery refers to.
+func repoFromEvent(evt Event) codehost.Repo {
+	return codehost.Repo{
+		Host:     "github.com",
+		Owner:    evt.Owner,
+		Name:     evt.Name,
+		FullName: evt.Repo,
+	}
+}
+
 // summaryComment renders the body of the single summary comment argus[bot]
 // posts on the PR. Findings on changed lines are posted as inline comments
 // instead (passed separately to PostReview); the summary body carries the
 // agent's narrative, a pointer to the inline comments, and the causal off-diff
 // findings GitHub cannot attach inline (ADR 0009).
-func summaryComment(rep *report.Report, offDiff []report.Finding) string {
+func summaryComment(summary string, total int, offDiff []report.Finding) string {
 	var b strings.Builder
 	b.WriteString("## 🛡️ Argus security review\n\n")
 
-	if rep != nil {
-		if sum := strings.TrimSpace(rep.Summary); sum != "" {
-			b.WriteString(sum + "\n\n")
-		}
+	if sum := strings.TrimSpace(summary); sum != "" {
+		b.WriteString(sum + "\n\n")
 	}
 
-	total := 0
-	if rep != nil {
-		total = len(rep.Findings)
-	}
 	if total == 0 {
 		b.WriteString("No security findings.\n")
 		return b.String()

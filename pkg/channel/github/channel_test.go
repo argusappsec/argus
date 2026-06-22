@@ -154,7 +154,8 @@ func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, a
 	home := t.TempDir()
 	sum := sha256.Sum256([]byte(testSecret))
 	users := "services:\n  - id: github-app\n    role: ci-trigger\n    kind: github-app\n    secret_sha256: " + hex.EncodeToString(sum[:]) + "\n" +
-		"persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n"
+		"persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n" +
+		"  - id: carol\n    role: viewer\n    identities:\n      - github:carol\n"
 	usersPath := filepath.Join(home, "users.yaml")
 	if err := os.WriteFile(usersPath, []byte(users), 0o600); err != nil {
 		t.Fatal(err)

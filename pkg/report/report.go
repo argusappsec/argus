@@ -63,7 +63,7 @@ func NewWriter(dir string) *Writer {
 
 // Write serializes rep to disk and returns the path of the written file.
 func (w *Writer) Write(rep Report) (string, error) {
-	slug := slugify(rep.Target)
+	slug := Slugify(rep.Target)
 	dir := filepath.Join(w.root, slug)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir report dir: %w", err)
@@ -81,7 +81,7 @@ func (w *Writer) Write(rep Report) (string, error) {
 // after an agent run (which writes via finalize_report internally) use this
 // instead of re-deriving the layout.
 func (w *Writer) PathFor(target, sha string) string {
-	return filepath.Join(w.root, slugify(target), sha+".md")
+	return filepath.Join(w.root, Slugify(target), sha+".md")
 }
 
 // ComputeFindingID returns a content-stable ID for a finding. The ID survives
@@ -112,7 +112,11 @@ func normalizeSnippet(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func slugify(s string) string {
+// Slugify turns a target/repo name into a single safe path segment by replacing
+// path separators (and spaces). Exported so other on-disk stores keyed by the
+// same repo name (e.g. the GitHub channel's per-PR review state) produce
+// identical, collision-free slugs instead of maintaining a second copy.
+func Slugify(s string) string {
 	// Replace path separators so the result is a single directory name.
 	r := strings.NewReplacer("/", "_", "\\", "_", ":", "_", " ", "_")
 	return r.Replace(s)
