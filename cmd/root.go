@@ -25,6 +25,8 @@ func init() {
 	rootCmd.AddCommand(doctorCmd())
 	rootCmd.AddCommand(skillCmd())
 	rootCmd.AddCommand(daemonCmd())
+	rootCmd.AddCommand(userCmd())
+	rootCmd.AddCommand(serviceCmd())
 
 	// `argus` with no arguments opens the interactive chat — the primary UX.
 	// Explicit subcommands (review, chat, init, doctor, future ones) still

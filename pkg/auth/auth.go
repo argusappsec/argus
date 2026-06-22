@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -140,15 +141,13 @@ func (r *Resolver) Resolve(identity string) (Principal, error) {
 		return Principal{}, err
 	}
 	for _, p := range uf.Persons {
-		for _, id := range p.Identities {
-			if id == identity {
-				return Principal{
-					ID:       p.ID,
-					Kind:     KindPerson,
-					Role:     p.Role,
-					Identity: identity,
-				}, nil
-			}
+		if slices.Contains(p.Identities, identity) {
+			return Principal{
+				ID:       p.ID,
+				Kind:     KindPerson,
+				Role:     p.Role,
+				Identity: identity,
+			}, nil
 		}
 	}
 	return Principal{}, fmt.Errorf("%w: %s", ErrUnknownIdentity, identity)
@@ -184,17 +183,22 @@ func (r *Resolver) ResolveService(secretSHA256 string) (Principal, error) {
 
 // load re-reads the user table from disk. A missing file yields an empty
 // table, not an error.
-func (r *Resolver) load() (*usersFile, error) {
-	b, err := os.ReadFile(r.path)
+func (r *Resolver) load() (*usersFile, error) { return loadUsers(r.path) }
+
+// loadUsers reads and parses a users.yaml. A missing file yields an empty
+// table, not an error — the correct state for a fresh install. Shared by the
+// read-only Resolver and the read-modify-write Store.
+func loadUsers(path string) (*usersFile, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &usersFile{}, nil
 		}
-		return nil, fmt.Errorf("auth: read %s: %w", r.path, err)
+		return nil, fmt.Errorf("auth: read %s: %w", path, err)
 	}
 	var uf usersFile
 	if err := yaml.Unmarshal(b, &uf); err != nil {
-		return nil, fmt.Errorf("auth: parse %s: %w", r.path, err)
+		return nil, fmt.Errorf("auth: parse %s: %w", path, err)
 	}
 	return &uf, nil
 }
