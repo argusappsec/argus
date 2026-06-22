@@ -117,12 +117,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// dispatch routes a verified event. Slice 2 runs an automatic review on an
-// opened PR; other kinds (synchronize, comments) are accepted but not yet
-// acted on — diff-aware synchronize and conversational comments arrive in
-// later slices.
+// dispatch routes a verified event. An opened or synchronized PR runs an
+// automatic diff-aware review; a synchronize replaces the bot's prior review
+// rather than stacking a new one (ADR 0009). Comment events are accepted but
+// not yet acted on — conversational @argus arrives in a later slice.
 func (s *Server) dispatch(ctx context.Context, evt Event) error {
-	if evt.Kind != KindPullRequest || evt.Action != "opened" {
+	if evt.Kind != KindPullRequest || (evt.Action != "opened" && evt.Action != "synchronize") {
 		return nil
 	}
 
@@ -155,11 +155,14 @@ func (s *Server) dispatch(ctx context.Context, evt Event) error {
 	return s.reviewPR(ctx, evt, principal)
 }
 
-// reviewPR runs an automatic PR review for an enabled repo. A Session keyed by
-// (github, repo + PR number) clones at the PR head with the installation token
-// (private repos work), drives the scanner-backed agent loop, and posts the
-// findings as a single summary review comment by argus[bot]. The review is
-// attributed to the App-installation Service with the PR author kept as
+// reviewPR runs an automatic diff-aware PR review for an enabled repo. A
+// Session keyed by (github, repo + PR number) clones at the PR head with the
+// installation token (private repos work), fetches the PR diff (so the agent
+// can judge relevance via the pr_diff tool — ADR 0009), drives the
+// scanner-backed agent loop, then posts the findings as argus[bot]: each
+// finding on a changed line as an inline comment, causal off-diff findings in
+// the summary body. A synchronize replaces the bot's prior review. The review
+// is attributed to the App-installation Service with the PR author kept as
 // metadata; the agent persists the Report via finalize_report.
 func (s *Server) reviewPR(ctx context.Context, evt Event, principal auth.Principal) error {
 	repo := codehost.Repo{
@@ -174,6 +177,11 @@ func (s *Server) reviewPR(ctx context.Context, evt Event, principal auth.Princip
 		return fmt.Errorf("github: clone PR head: %w", err)
 	}
 
+	diff, err := s.host.FetchPRDiff(ctx, repo, evt.Number)
+	if err != nil {
+		return fmt.Errorf("github: fetch PR diff: %w", err)
+	}
+
 	// One stable session identity per (repo, PR) so later comment turns
 	// re-attach to this same review context (ADR 0008 / slice 5).
 	sess, _, err := s.dc.Sessions.GetOrCreate(ctx, s.Name(), prConversationKey(evt), principal, daemon.SessionOptions{})
@@ -183,16 +191,27 @@ func (s *Server) reviewPR(ctx context.Context, evt Event, principal auth.Princip
 	defer s.dc.Sessions.Release(sess)
 
 	rep, _, err := sess.HandlePRReview(ctx, daemon.PRReviewTarget{
-		Repo:   evt.Repo,
-		Number: evt.Number,
-		Path:   co.Path,
-		SHA:    co.SHA,
+		Repo:    evt.Repo,
+		Number:  evt.Number,
+		Path:    co.Path,
+		SHA:     co.SHA,
+		BaseSHA: evt.BaseSHA,
+		Diff:    diff,
 	}, daemon.RunCallbacks{})
 	if err != nil {
 		return fmt.Errorf("github: PR review: %w", err)
 	}
 
-	if err := s.host.PostComment(ctx, repo, evt.Number, summaryComment(rep)); err != nil {
+	// Split findings by diff placement: on a changed line → inline comment,
+	// otherwise (causal / off-diff) → the summary body. A synchronize replaces
+	// the bot's prior review instead of stacking a new one.
+	inline, offDiff := splitFindings(rep, diff)
+	review := codehost.Review{
+		HeadSHA: co.SHA,
+		Summary: summaryComment(rep, offDiff),
+		Inline:  inline,
+	}
+	if err := s.host.PostReview(ctx, repo, evt.Number, review, evt.Action == "synchronize"); err != nil {
 		return fmt.Errorf("github: post review: %w", err)
 	}
 
@@ -201,13 +220,57 @@ func (s *Server) reviewPR(ctx context.Context, evt Event, principal auth.Princip
 		findings = len(rep.Findings)
 	}
 	s.audit("github_pr_reviewed", evt, map[string]any{
-		"principal": principal.ID,    // the App-installation Service (trigger)
-		"pr_author": evt.Author,      // the PR author, as metadata
+		"principal": principal.ID, // the App-installation Service (trigger)
+		"pr_author": evt.Author,   // the PR author, as metadata
 		"identity":  principal.Identity,
 		"head_sha":  co.SHA,
+		"action":    evt.Action,
 		"findings":  findings,
+		"inline":    len(inline),
 	})
 	return nil
+}
+
+// splitFindings partitions a report's findings by diff placement: those on a
+// changed line become inline review comments; the rest (causal off-diff
+// findings GitHub cannot attach inline) are returned for the summary body.
+func splitFindings(rep *report.Report, diff codehost.PRDiff) (inline []codehost.InlineComment, offDiff []report.Finding) {
+	if rep == nil {
+		return nil, nil
+	}
+	for _, f := range rep.Findings {
+		if diff.IsChangedLine(f.File, f.Line) {
+			inline = append(inline, codehost.InlineComment{
+				Path: f.File,
+				Line: f.Line,
+				Body: inlineBody(f),
+			})
+			continue
+		}
+		offDiff = append(offDiff, f)
+	}
+	return inline, offDiff
+}
+
+// inlineBody renders one finding as the body of an inline review comment.
+func inlineBody(f report.Finding) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**[%s] %s**", strings.ToUpper(f.Severity), findingTitle(f))
+	if f.Description != "" {
+		fmt.Fprintf(&b, "\n\n%s", f.Description)
+	}
+	if f.Remediation != "" {
+		fmt.Fprintf(&b, "\n\n**Remediation:** %s", f.Remediation)
+	}
+	return b.String()
+}
+
+// findingTitle is the finding's title, falling back to its rule id.
+func findingTitle(f report.Finding) string {
+	if f.Title != "" {
+		return f.Title
+	}
+	return f.RuleID
 }
 
 // prConversationKey is the stable session key for a PR: repo + PR number, so
@@ -216,10 +279,12 @@ func prConversationKey(evt Event) string {
 	return fmt.Sprintf("%s#%d", evt.Repo, evt.Number)
 }
 
-// summaryComment renders the review Report as the body of the single summary
-// comment argus[bot] posts on the PR. Slice 2 lists every finding in the body;
-// inline placement on changed lines arrives in the next slice.
-func summaryComment(rep *report.Report) string {
+// summaryComment renders the body of the single summary comment argus[bot]
+// posts on the PR. Findings on changed lines are posted as inline comments
+// instead (passed separately to PostReview); the summary body carries the
+// agent's narrative, a pointer to the inline comments, and the causal off-diff
+// findings GitHub cannot attach inline (ADR 0009).
+func summaryComment(rep *report.Report, offDiff []report.Finding) string {
 	var b strings.Builder
 	b.WriteString("## 🛡️ Argus security review\n\n")
 
@@ -229,18 +294,28 @@ func summaryComment(rep *report.Report) string {
 		}
 	}
 
-	if rep == nil || len(rep.Findings) == 0 {
+	total := 0
+	if rep != nil {
+		total = len(rep.Findings)
+	}
+	if total == 0 {
 		b.WriteString("No security findings.\n")
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "**%d finding(s):**\n\n", len(rep.Findings))
-	for _, f := range rep.Findings {
-		fmt.Fprintf(&b, "- **[%s]** %s", strings.ToUpper(f.Severity), f.Title)
-		if loc := location(f); loc != "" {
-			fmt.Fprintf(&b, " — `%s`", loc)
+	if inline := total - len(offDiff); inline > 0 {
+		fmt.Fprintf(&b, "**%d finding(s) on changed lines** — see the inline comments below.\n\n", inline)
+	}
+
+	if len(offDiff) > 0 {
+		b.WriteString("**Issues related to this change, but not on a changed line:**\n\n")
+		for _, f := range offDiff {
+			fmt.Fprintf(&b, "- **[%s]** %s", strings.ToUpper(f.Severity), findingTitle(f))
+			if loc := location(f); loc != "" {
+				fmt.Fprintf(&b, " — `%s`", loc)
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 	return b.String()
 }

@@ -87,6 +87,130 @@ func (h *CodeHost) PostComment(ctx context.Context, repo codehost.Repo, number i
 	return nil
 }
 
+// reviewMarker is an invisible HTML marker embedded in every comment
+// argus[bot] posts through PostReview. On a synchronize replace it lets us find
+// and remove the bot's prior summary and inline comments without depending on
+// the bot login being known.
+const reviewMarker = "<!-- argus-review -->"
+
+// FetchPRDiff implements codehost.CodeHost: GET /repos/{o}/{r}/pulls/{n}/files,
+// following pagination so no changed file is silently dropped. The GitHub patch
+// string is parsed into head-side hunks for inline placement.
+func (h *CodeHost) FetchPRDiff(ctx context.Context, repo codehost.Repo, number int) (codehost.PRDiff, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/files?per_page=100", h.apiBase, repo.Owner, repo.Name, number)
+	var diff codehost.PRDiff
+	for url != "" {
+		resp, body, err := h.doAuthed(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return codehost.PRDiff{}, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return codehost.PRDiff{}, fmt.Errorf("github: fetch PR diff: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var files []struct {
+			Filename string `json:"filename"`
+			Status   string `json:"status"`
+			Patch    string `json:"patch"`
+		}
+		if err := json.Unmarshal(body, &files); err != nil {
+			return codehost.PRDiff{}, fmt.Errorf("github: parse PR files: %w", err)
+		}
+		for _, f := range files {
+			diff.Files = append(diff.Files, codehost.ChangedFile{
+				Path:   f.Filename,
+				Status: f.Status,
+				Patch:  f.Patch,
+				Hunks:  parseHunks(f.Patch),
+			})
+		}
+		url = nextPageURL(resp.Header.Get("Link"))
+	}
+	return diff, nil
+}
+
+// PostReview implements codehost.CodeHost. The summary is an issue comment and
+// each on-diff finding is an individual PR review comment; both carry
+// reviewMarker. On replace (synchronize) the bot's prior marked comments are
+// deleted first, so a new push refreshes the review in place. Both surfaces are
+// independently deletable — unlike a submitted GitHub review object, which
+// cannot be removed — so nothing stacks across pushes.
+func (h *CodeHost) PostReview(ctx context.Context, repo codehost.Repo, number int, review codehost.Review, replace bool) error {
+	if replace {
+		if err := h.deletePriorReview(ctx, repo, number); err != nil {
+			return err
+		}
+	}
+	for _, c := range review.Inline {
+		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments", h.apiBase, repo.Owner, repo.Name, number)
+		payload, err := json.Marshal(map[string]any{
+			"body":      c.Body + "\n" + reviewMarker,
+			"commit_id": review.HeadSHA,
+			"path":      c.Path,
+			"line":      c.Line,
+			"side":      "RIGHT",
+		})
+		if err != nil {
+			return err
+		}
+		resp, respBody, err := h.doAuthed(ctx, http.MethodPost, url, payload)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("github: post inline comment: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+	}
+	return h.PostComment(ctx, repo, number, review.Summary+"\n"+reviewMarker)
+}
+
+// deletePriorReview removes the bot's previously posted summary issue comment
+// and inline review comments (those carrying reviewMarker).
+func (h *CodeHost) deletePriorReview(ctx context.Context, repo codehost.Repo, number int) error {
+	inlineList := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments?per_page=100", h.apiBase, repo.Owner, repo.Name, number)
+	if err := h.deleteMarkedComments(ctx, inlineList, "%s/repos/%s/%s/pulls/comments/%d", repo); err != nil {
+		return err
+	}
+	issueList := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100", h.apiBase, repo.Owner, repo.Name, number)
+	return h.deleteMarkedComments(ctx, issueList, "%s/repos/%s/%s/issues/comments/%d", repo)
+}
+
+// deleteMarkedComments pages through listURL, and for every comment whose body
+// carries reviewMarker issues a DELETE built from deleteFmt (apiBase, owner,
+// name, id).
+func (h *CodeHost) deleteMarkedComments(ctx context.Context, listURL, deleteFmt string, repo codehost.Repo) error {
+	for listURL != "" {
+		resp, body, err := h.doAuthed(ctx, http.MethodGet, listURL, nil)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("github: list prior comments: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var comments []struct {
+			ID   int64  `json:"id"`
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(body, &comments); err != nil {
+			return fmt.Errorf("github: parse prior comments: %w", err)
+		}
+		for _, c := range comments {
+			if !strings.Contains(c.Body, reviewMarker) {
+				continue
+			}
+			delURL := fmt.Sprintf(deleteFmt, h.apiBase, repo.Owner, repo.Name, c.ID)
+			delResp, delBody, err := h.doAuthed(ctx, http.MethodDelete, delURL, nil)
+			if err != nil {
+				return err
+			}
+			if delResp.StatusCode != http.StatusNoContent && delResp.StatusCode != http.StatusOK {
+				return fmt.Errorf("github: delete prior comment: status %d: %s", delResp.StatusCode, strings.TrimSpace(string(delBody)))
+			}
+		}
+		listURL = nextPageURL(resp.Header.Get("Link"))
+	}
+	return nil
+}
+
 // InstallationRepos implements codehost.CodeHost: the canonical names of the
 // repositories the installation can access. Pagination is followed so the
 // full set is returned (gating must not silently truncate — ADR 0008).

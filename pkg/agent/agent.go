@@ -28,6 +28,13 @@ type Target struct {
 	Repo string // canonical repo name e.g. "github.com/foo/bar"
 	SHA  string // commit being reviewed
 	Path string // local checkout (may be empty in tests that don't read code)
+
+	// PRNumber and BaseSHA are set for a pull-request review (ADR 0009): the PR
+	// number and its base commit. Zero/empty for a plain repo review. They make
+	// the run PR-aware for audit and seed context; the changed lines themselves
+	// reach the agent through the pr_diff tool.
+	PRNumber int
+	BaseSHA  string
 }
 
 // Options bundles the dependencies of an agent run.
@@ -90,7 +97,12 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 		Timestamp: time.Now().UTC(),
 	}
 
-	if err := a.audit("session_start", map[string]any{"repo": t.Repo, "sha": t.SHA}); err != nil {
+	startData := map[string]any{"repo": t.Repo, "sha": t.SHA}
+	if t.PRNumber > 0 {
+		startData["pr_number"] = t.PRNumber
+		startData["base_sha"] = t.BaseSHA
+	}
+	if err := a.audit("session_start", startData); err != nil {
 		return nil, err
 	}
 

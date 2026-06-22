@@ -26,10 +26,14 @@ import (
 
 const installedRepo = "github.com/redcarbon-dev/argus"
 
-// fakeHost records writes and clones, and returns a fixed installation repo set.
+// fakeHost records writes and clones, returns a fixed installation repo set,
+// and serves a configurable PR diff so the channel's inline-vs-summary
+// placement can be exercised without a live GitHub API.
 type fakeHost struct {
 	repos     []string
 	comments  []postedComment
+	reviews   []postedReview
+	diff      codehost.PRDiff
 	postErr   error
 	clonePath string
 	cloneSHA  string
@@ -40,6 +44,14 @@ type postedComment struct {
 	repo   string
 	number int
 	body   string
+}
+
+// postedReview captures one PostReview call for assertions.
+type postedReview struct {
+	repo    string
+	number  int
+	review  codehost.Review
+	replace bool
 }
 
 type cloneCall struct {
@@ -63,7 +75,26 @@ func (f *fakeHost) PostComment(_ context.Context, repo codehost.Repo, number int
 	f.comments = append(f.comments, postedComment{repo.FullName, number, body})
 	return nil
 }
+func (f *fakeHost) FetchPRDiff(context.Context, codehost.Repo, int) (codehost.PRDiff, error) {
+	return f.diff, nil
+}
+func (f *fakeHost) PostReview(_ context.Context, repo codehost.Repo, number int, review codehost.Review, replace bool) error {
+	if f.postErr != nil {
+		return f.postErr
+	}
+	f.reviews = append(f.reviews, postedReview{repo.FullName, number, review, replace})
+	return nil
+}
 func (f *fakeHost) InstallationRepos(context.Context) ([]string, error) { return f.repos, nil }
+
+// diffCovering builds a PRDiff whose single file's hunk covers [start, start+n).
+func diffCovering(path string, start, n int) codehost.PRDiff {
+	return codehost.PRDiff{Files: []codehost.ChangedFile{{
+		Path:   path,
+		Status: "modified",
+		Hunks:  []codehost.Hunk{{NewStart: start, NewLines: n}},
+	}}}
+}
 
 // scriptedProvider returns canned responses in order; the last response is
 // repeated once the script runs out (so the async memory curator terminates).
@@ -199,8 +230,15 @@ func findEvent(events []audit.Event, typ string) *audit.Event {
 	return nil
 }
 
-func TestChannel_OpenedPRRunsReviewAndPostsSummary(t *testing.T) {
-	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir(), cloneSHA: "headsha111"}
+func TestChannel_OpenedPRPostsInlineCommentOnChangedLine(t *testing.T) {
+	// The finding at config.py:42 falls inside the PR's changed hunk, so it is
+	// placed as an inline review comment, not in the summary body.
+	host := &fakeHost{
+		repos:     []string{installedRepo},
+		clonePath: t.TempDir(),
+		cloneSHA:  "headsha111",
+		diff:      diffCovering("config.py", 40, 5),
+	}
 	s, dc, auditPath := testChannel(t, host, reviewScript(), true, nil)
 
 	body := []byte(openedPR)
@@ -214,19 +252,37 @@ func TestChannel_OpenedPRRunsReviewAndPostsSummary(t *testing.T) {
 		t.Fatalf("clones = %+v, want one clone of %s at headsha111", host.clones, installedRepo)
 	}
 
-	// A single summary review comment is posted, carrying the agent's findings.
-	if len(host.comments) != 1 {
-		t.Fatalf("comments = %d, want 1", len(host.comments))
+	// One review is posted (not a synchronize replace).
+	if len(host.reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(host.reviews))
 	}
-	c := host.comments[0]
-	if c.number != 42 || c.repo != installedRepo {
-		t.Errorf("comment target = %+v", c)
+	rv := host.reviews[0]
+	if rv.number != 42 || rv.repo != installedRepo || rv.replace {
+		t.Errorf("review target = %+v (replace=%v)", rv, rv.replace)
 	}
-	if !strings.Contains(c.body, "Hardcoded API key") || !strings.Contains(c.body, "config.py:42") {
-		t.Errorf("summary body missing finding details:\n%s", c.body)
+	if rv.review.HeadSHA != "headsha111" {
+		t.Errorf("review head sha = %q, want headsha111", rv.review.HeadSHA)
 	}
-	if !strings.Contains(c.body, "One high-severity issue found.") {
-		t.Errorf("summary body missing report summary:\n%s", c.body)
+
+	// The finding on the changed line is an inline comment on config.py:42.
+	if len(rv.review.Inline) != 1 {
+		t.Fatalf("inline comments = %d, want 1", len(rv.review.Inline))
+	}
+	ic := rv.review.Inline[0]
+	if ic.Path != "config.py" || ic.Line != 42 {
+		t.Errorf("inline location = %s:%d, want config.py:42", ic.Path, ic.Line)
+	}
+	if !strings.Contains(ic.Body, "Hardcoded API key") {
+		t.Errorf("inline body missing finding title:\n%s", ic.Body)
+	}
+
+	// The summary body carries the agent narrative and points to the inline
+	// comment, but does not re-list the on-diff finding's location.
+	if !strings.Contains(rv.review.Summary, "One high-severity issue found.") {
+		t.Errorf("summary missing report summary:\n%s", rv.review.Summary)
+	}
+	if strings.Contains(rv.review.Summary, "config.py:42") {
+		t.Errorf("summary must not re-list the inline finding location:\n%s", rv.review.Summary)
 	}
 
 	// The review is attributed to the App-installation Service, PR author metadata.
@@ -248,8 +304,35 @@ func TestChannel_OpenedPRRunsReviewAndPostsSummary(t *testing.T) {
 	}
 }
 
+func TestChannel_OffDiffFindingGoesToSummaryNotInline(t *testing.T) {
+	// The finding at config.py:42 is causally related but NOT on a changed line
+	// (the diff touches a different file), so it lands in the summary body —
+	// GitHub inline comments can only attach to the diff.
+	host := &fakeHost{
+		repos:     []string{installedRepo},
+		clonePath: t.TempDir(),
+		cloneSHA:  "headsha111",
+		diff:      diffCovering("other.py", 1, 3),
+	}
+	s, _, _ := testChannel(t, host, reviewScript(), true, nil)
+
+	body := []byte(openedPR)
+	postEvent(t, s, "pull_request", "d1", body, sign(body, testSecret))
+
+	if len(host.reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(host.reviews))
+	}
+	rv := host.reviews[0]
+	if len(rv.review.Inline) != 0 {
+		t.Errorf("off-diff finding must not be an inline comment, got %d", len(rv.review.Inline))
+	}
+	if !strings.Contains(rv.review.Summary, "Hardcoded API key") || !strings.Contains(rv.review.Summary, "config.py:42") {
+		t.Errorf("summary must carry the off-diff finding:\n%s", rv.review.Summary)
+	}
+}
+
 func TestChannel_CleanReviewPostsNoFindings(t *testing.T) {
-	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir(), diff: diffCovering("config.py", 40, 5)}
 	clean := &scriptedProvider{responses: []provider.Response{{
 		ToolCalls: []provider.ToolCall{{ID: "c1", Name: "finalize_report", Args: map[string]any{"summary": "Nothing to flag."}}},
 		Usage:     provider.Usage{InputTokens: 10, OutputTokens: 5},
@@ -258,24 +341,43 @@ func TestChannel_CleanReviewPostsNoFindings(t *testing.T) {
 
 	body := []byte(openedPR)
 	postEvent(t, s, "pull_request", "d1", body, sign(body, testSecret))
-	if len(host.comments) != 1 {
-		t.Fatalf("comments = %d, want 1", len(host.comments))
+	if len(host.reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(host.reviews))
 	}
-	if !strings.Contains(host.comments[0].body, "No security findings") {
-		t.Errorf("clean review body:\n%s", host.comments[0].body)
+	rv := host.reviews[0]
+	if len(rv.review.Inline) != 0 {
+		t.Errorf("clean review must have no inline comments, got %d", len(rv.review.Inline))
+	}
+	if !strings.Contains(rv.review.Summary, "No security findings") {
+		t.Errorf("clean review summary:\n%s", rv.review.Summary)
+	}
+}
+
+func TestChannel_SynchronizeReplacesPriorReview(t *testing.T) {
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir(), cloneSHA: "headsha111", diff: diffCovering("config.py", 40, 5)}
+	s, _, _ := testChannel(t, host, reviewScript(), true, nil)
+
+	body := []byte(strings.Replace(openedPR, `"action": "opened"`, `"action": "synchronize"`, 1))
+	postEvent(t, s, "pull_request", "sync", body, sign(body, testSecret))
+
+	if len(host.reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(host.reviews))
+	}
+	if !host.reviews[0].replace {
+		t.Error("a synchronize event must replace the bot's prior review (replace=true)")
 	}
 }
 
 func TestChannel_DuplicateDeliveryDeduped(t *testing.T) {
-	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir(), diff: diffCovering("config.py", 40, 5)}
 	s, _, _ := testChannel(t, host, reviewScript(), true, nil)
 
 	body := []byte(openedPR)
 	sig := sign(body, testSecret)
 	postEvent(t, s, "pull_request", "dup", body, sig)
 	postEvent(t, s, "pull_request", "dup", body, sig)
-	if len(host.comments) != 1 {
-		t.Errorf("comments = %d, want 1 (duplicate delivery must not re-review)", len(host.comments))
+	if len(host.reviews) != 1 {
+		t.Errorf("reviews = %d, want 1 (duplicate delivery must not re-review)", len(host.reviews))
 	}
 }
 
@@ -288,8 +390,8 @@ func TestChannel_TamperedSignatureRejected(t *testing.T) {
 	if code != 401 {
 		t.Errorf("status = %d, want 401", code)
 	}
-	if len(host.comments) != 0 {
-		t.Errorf("a forged delivery must not post a comment")
+	if len(host.reviews) != 0 {
+		t.Errorf("a forged delivery must not post a review")
 	}
 }
 
@@ -299,7 +401,7 @@ func TestChannel_AutoEnrollFalseIgnoresUnenabledRepo(t *testing.T) {
 
 	body := []byte(openedPR)
 	postEvent(t, s, "pull_request", "ne", body, sign(body, testSecret))
-	if len(host.comments) != 0 {
+	if len(host.reviews) != 0 {
 		t.Errorf("auto_enroll: false on an unenabled repo must not review")
 	}
 	if len(host.clones) != 0 {
@@ -311,12 +413,12 @@ func TestChannel_AutoEnrollFalseIgnoresUnenabledRepo(t *testing.T) {
 }
 
 func TestChannel_AutoEnrollFalseActsOnEnabledRepo(t *testing.T) {
-	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir(), diff: diffCovering("config.py", 40, 5)}
 	s, _, _ := testChannel(t, host, reviewScript(), false, []string{installedRepo})
 
 	body := []byte(openedPR)
 	postEvent(t, s, "pull_request", "en", body, sign(body, testSecret))
-	if len(host.comments) != 1 {
+	if len(host.reviews) != 1 {
 		t.Errorf("an explicitly enabled repo must be reviewed even with auto_enroll: false")
 	}
 }
@@ -330,18 +432,7 @@ func TestChannel_CommentNotActedOnYet(t *testing.T) {
 	if code != 200 {
 		t.Errorf("status = %d, want 200", code)
 	}
-	if len(host.comments) != 0 {
+	if len(host.reviews) != 0 {
 		t.Errorf("comment events are not acted on until the conversational slice")
-	}
-}
-
-func TestChannel_SynchronizeNotActedOnYet(t *testing.T) {
-	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
-	s, _, _ := testChannel(t, host, reviewScript(), true, nil)
-
-	body := []byte(strings.Replace(openedPR, `"action": "opened"`, `"action": "synchronize"`, 1))
-	postEvent(t, s, "pull_request", "sync", body, sign(body, testSecret))
-	if len(host.comments) != 0 {
-		t.Errorf("synchronize is handled in the diff-aware slice, not slice 2")
 	}
 }

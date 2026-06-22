@@ -13,6 +13,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/audit"
 	"github.com/redcarbon-dev/argus/pkg/auth"
 	"github.com/redcarbon-dev/argus/pkg/budget"
+	"github.com/redcarbon-dev/argus/pkg/codehost"
 	"github.com/redcarbon-dev/argus/pkg/codehost/github"
 	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/provider"
@@ -145,20 +146,23 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 			"If something is genuinely ambiguous, ask me; otherwise proceed autonomously.",
 		u.FullName, co.SHA,
 	)
-	return s.runReview(ctx, co.Path, u.FullName, co.SHA, seedPrompt, cb)
+	return s.runReviewTarget(ctx, agent.Target{Repo: u.FullName, SHA: co.SHA, Path: co.Path}, seedPrompt, cb)
 }
 
 // PRReviewTarget describes an automatic pull-request review. The channel
 // clones at the PR head with the installation token (so private repos work)
 // and hands the checkout to the Session — unlike HandleReview, which clones
-// anonymously on the daemon host. The Session pins the checkout, seeds a
-// prompt that signals "PR review", and runs. Diff-awareness arrives in a later
-// slice; this reviews the whole head checkout.
+// anonymously on the daemon host. The Session pins the checkout, stashes the
+// pre-fetched PR diff for the pr_diff tool, seeds a prompt that signals "PR
+// review", and runs. The scanners cover the whole head checkout for accuracy;
+// the agent judges PR-relevance from the diff (ADR 0009).
 type PRReviewTarget struct {
-	Repo   string // canonical "github.com/<owner>/<name>"
-	Number int    // PR number
-	Path   string // local checkout at the head SHA (cloned by the channel)
-	SHA    string // resolved head commit SHA
+	Repo    string         // canonical "github.com/<owner>/<name>"
+	Number  int            // PR number
+	Path    string         // local checkout at the head SHA (cloned by the channel)
+	SHA     string         // resolved head commit SHA
+	BaseSHA string         // PR base commit SHA
+	Diff    codehost.PRDiff // changed files + hunks, pre-fetched by the channel
 }
 
 // HandlePRReview runs one automatic PR review against an already-cloned head
@@ -170,25 +174,40 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 	}
 	defer s.endRun()
 
+	// Stash the pre-fetched diff so the pr_diff tool can hand the changed files
+	// and hunks to the agent for the relevance judgement (ADR 0009).
+	s.toolState.SetPRDiff(target.Diff)
+
 	seedPrompt := fmt.Sprintf(
 		"You are running an automated security review of pull request #%d of %s. "+
 			"The repository is already checked out locally at the PR head commit %s — use "+
 			"list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner freely "+
-			"over the whole tree. Record each issue you confirm via add_finding, then call "+
-			"finalize_report with a concise summary suitable for posting on the pull request. "+
-			"Proceed autonomously.",
+			"over the WHOLE tree for accuracy. Then call pr_diff to see which files and lines this "+
+			"pull request changed, and report a finding ONLY when it is on a changed line OR is "+
+			"causally tied to the change (the diff calls an insecure function defined elsewhere, "+
+			"bumps a dependency to a vulnerable version, etc.). Do NOT report the repository's "+
+			"pre-existing issues unrelated to this change. Record each relevant issue via add_finding "+
+			"(set file and line so it can be placed inline), then call finalize_report with a concise "+
+			"summary suitable for posting on the pull request. Proceed autonomously.",
 		target.Number, target.Repo, target.SHA,
 	)
-	return s.runReview(ctx, target.Path, target.Repo, target.SHA, seedPrompt, cb)
+	return s.runReviewTarget(ctx, agent.Target{
+		Repo:     target.Repo,
+		SHA:      target.SHA,
+		Path:     target.Path,
+		PRNumber: target.Number,
+		BaseSHA:  target.BaseSHA,
+	}, seedPrompt, cb)
 }
 
-// runReview is the shared review spine for HandleReview and HandlePRReview:
-// pin the checkout as the tool root, seed and persist the prompt, run one
-// agent loop, and resolve the report file path the run may have written. The
-// callers differ only in where the checkout comes from (anonymous daemon clone
-// vs. the channel's installation-token clone) and in the seed prompt.
-func (s *Session) runReview(ctx context.Context, root, repo, sha, seedPrompt string, cb RunCallbacks) (*report.Report, string, error) {
-	s.toolState.SetRoot(root)
+// runReviewTarget is the shared review spine for HandleReview and
+// HandlePRReview: pin the checkout as the tool root, seed and persist the
+// prompt, run one agent loop, and resolve the report file path the run may have
+// written. The callers differ only in where the checkout comes from (anonymous
+// daemon clone vs. the channel's installation-token clone), the PR-awareness of
+// the Target, and the seed prompt.
+func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seedPrompt string, cb RunCallbacks) (*report.Report, string, error) {
+	s.toolState.SetRoot(target.Path)
 
 	seed, userMsg, err := s.seedWith(seedPrompt)
 	if err != nil {
@@ -199,12 +218,12 @@ func (s *Session) runReview(ctx context.Context, root, repo, sha, seedPrompt str
 	}
 	s.countUserMessage()
 
-	rep, err := s.run(ctx, seed, agent.Target{Repo: repo, SHA: sha, Path: root}, cb)
+	rep, err := s.run(ctx, seed, target, cb)
 	if err != nil {
 		return nil, "", err
 	}
 
-	reportPath := s.dc.Reports.PathFor(repo, sha)
+	reportPath := s.dc.Reports.PathFor(target.Repo, target.SHA)
 	if _, statErr := os.Stat(reportPath); statErr != nil {
 		reportPath = "" // run ended without finalize_report writing a file
 	}
@@ -327,6 +346,7 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(tool.NewWriteContext(contextDir(dc)))
 	reg.Register(tool.NewStartReviewLocal(toolState))
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.Cloner))
+	reg.Register(tool.NewPRDiff(toolState))
 	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))
 	reg.Register(security.NewOSVScanner(toolState, security.ExecRunner{}))
