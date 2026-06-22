@@ -43,6 +43,75 @@ type Config struct {
 	// hot-reload policy: users.yaml/SOUL/MEMORY are re-read at use, the
 	// process-level config is not).
 	Daemon DaemonConfig `yaml:"daemon,omitempty"`
+
+	// GitHub configures the GitHub App channel (ADR 0008). Absent or
+	// unconfigured means the channel does not start.
+	GitHub GitHubConfig `yaml:"github,omitempty"`
+}
+
+// GitHubConfig is the github: section of argus.yaml — the GitHub App channel
+// (ADR 0008). The App's secrets stay out of the YAML: webhook_secret is an
+// env() reference resolved from .env, and private_key_path points to the
+// PEM file on the daemon host.
+type GitHubConfig struct {
+	// Addr is the HTTP listen address for webhook deliveries (e.g. ":8080").
+	Addr string `yaml:"addr,omitempty"`
+
+	// AppID is the numeric GitHub App id. Literal or env() reference.
+	AppID string `yaml:"app_id,omitempty"`
+
+	// InstallationID is the App installation id whose token is minted.
+	// Literal or env() reference.
+	InstallationID string `yaml:"installation_id,omitempty"`
+
+	// PrivateKeyPath is the filesystem path to the App's PEM private key on
+	// the daemon host (used to mint the App JWT).
+	PrivateKeyPath string `yaml:"private_key_path,omitempty"`
+
+	// WebhookSecret is the App's webhook secret. env() reference (→ .env);
+	// its SHA-256 must match the github-app Service entry in users.yaml.
+	WebhookSecret string `yaml:"webhook_secret,omitempty"`
+
+	// AutoEnroll governs whether an installed repo is reviewed automatically
+	// (ADR 0008). Unset means true (the single-owner default). When false, a
+	// repo acts only if it also appears in EnabledRepos.
+	AutoEnroll *bool `yaml:"auto_enroll,omitempty"`
+
+	// EnabledRepos is the explicit allow-list consulted when AutoEnroll is
+	// false. Entries are canonical names like "github.com/<owner>/<repo>".
+	EnabledRepos []string `yaml:"enabled_repos,omitempty"`
+}
+
+// AutoEnrollEnabled reports the effective auto_enroll policy. Unset → true.
+func (g GitHubConfig) AutoEnrollEnabled() bool {
+	return g.AutoEnroll == nil || *g.AutoEnroll
+}
+
+// Configured reports whether the github: section carries enough to start the
+// channel: an App id, a private key path, and a webhook secret reference.
+func (g GitHubConfig) Configured() bool {
+	return g.AppID != "" && g.PrivateKeyPath != "" && g.WebhookSecret != ""
+}
+
+// ListenAddr returns the configured webhook listen address, defaulting to
+// ":8080" when unset.
+func (g GitHubConfig) ListenAddr() string {
+	if g.Addr != "" {
+		return g.Addr
+	}
+	return ":8080"
+}
+
+// ResolveAppID / ResolveInstallationID / ResolveWebhookSecret apply the
+// env() reference syntax (see ResolveValue) so credentials can live in .env.
+func (g GitHubConfig) ResolveAppID() (string, error) { return ResolveValue(g.AppID) }
+
+func (g GitHubConfig) ResolveInstallationID() (string, error) {
+	return ResolveValue(g.InstallationID)
+}
+
+func (g GitHubConfig) ResolveWebhookSecret() (string, error) {
+	return ResolveValue(g.WebhookSecret)
 }
 
 // DaemonConfig is the daemon: section of argus.yaml.

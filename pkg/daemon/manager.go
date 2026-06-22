@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -195,6 +197,31 @@ func (m *SessionManager) Release(s *Session) {
 		}
 		_ = s.audit.Log(auditEvent("memory_curated", nil))
 	}()
+}
+
+// AppendMemory appends one advisory line to MEMORY.md under the same lock that
+// serializes the memory curator, so a channel-driven note — e.g. a false
+// positive a teammate accepted on a PR (ADR 0008 / slice 6) — cannot be lost to
+// a concurrent curator rewrite. The curator owns MEMORY.md's full-file rewrites;
+// this is the one sanctioned out-of-band writer, and it shares the curator's
+// lock rather than racing it. A trailing newline is ensured.
+func (m *SessionManager) AppendMemory(line string) error {
+	m.curationMu.Lock()
+	defer m.curationMu.Unlock()
+
+	if !strings.HasSuffix(line, "\n") {
+		line += "\n"
+	}
+	path := filepath.Join(m.dc.Home, "MEMORY.md")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("daemon: open MEMORY: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(line); err != nil {
+		return fmt.Errorf("daemon: append MEMORY: %w", err)
+	}
+	return nil
 }
 
 // Drain blocks until pending curations finish or the timeout elapses.

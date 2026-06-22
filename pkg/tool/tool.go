@@ -8,6 +8,7 @@ package tool
 
 import (
 	"context"
+	"maps"
 	"sort"
 
 	"github.com/redcarbon-dev/argus/pkg/provider"
@@ -40,6 +41,20 @@ func (r *Registry) Register(t Tool) {
 func (r *Registry) Get(name string) (Tool, bool) {
 	t, ok := r.tools[name]
 	return t, ok
+}
+
+// With returns a new Registry holding this one's tools plus extra (replacing by
+// name). The receiver is left unchanged, so a caller can assemble a per-run tool
+// set — e.g. a channel injecting request-scoped tools whose dependencies or
+// authorization differ per turn — without mutating a registry shared across
+// concurrent runs.
+func (r *Registry) With(extra ...Tool) *Registry {
+	nr := &Registry{tools: make(map[string]Tool, len(r.tools)+len(extra))}
+	maps.Copy(nr.tools, r.tools)
+	for _, t := range extra {
+		nr.tools[t.Name()] = t
+	}
+	return nr
 }
 
 // Decls returns the provider-facing declarations for all registered tools,

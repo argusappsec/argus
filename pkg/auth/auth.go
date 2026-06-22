@@ -14,10 +14,12 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -99,9 +101,21 @@ type mcpToken struct {
 }
 
 type serviceEntry struct {
-	ID           string    `yaml:"id"`
-	Role         Role      `yaml:"role"`
-	Repo         string    `yaml:"repo,omitempty"`
+	ID   string `yaml:"id"`
+	Role Role   `yaml:"role"`
+
+	// Kind discriminates service shapes. "github-app" is the App installation
+	// (ADR 0008): one webhook-secret hash covering many repos. Empty is the
+	// legacy per-repo ci-trigger (ADR 0003) bound to Repo.
+	Kind string `yaml:"kind,omitempty"`
+
+	// Repo is the single repo a legacy ci-trigger is bound to. A github-app
+	// Service leaves it empty — its repo set is the installation's, read from
+	// the GitHub API and gated by auto_enroll.
+	Repo string `yaml:"repo,omitempty"`
+
+	// SecretSHA256 is the hex SHA-256 of the shared secret: a per-repo CI
+	// secret, or — for a github-app Service — the App's webhook secret.
 	SecretSHA256 string    `yaml:"secret_sha256,omitempty"`
 	CreatedAt    time.Time `yaml:"created_at,omitempty"`
 }
@@ -127,33 +141,64 @@ func (r *Resolver) Resolve(identity string) (Principal, error) {
 		return Principal{}, err
 	}
 	for _, p := range uf.Persons {
-		for _, id := range p.Identities {
-			if id == identity {
-				return Principal{
-					ID:       p.ID,
-					Kind:     KindPerson,
-					Role:     p.Role,
-					Identity: identity,
-				}, nil
-			}
+		if slices.Contains(p.Identities, identity) {
+			return Principal{
+				ID:       p.ID,
+				Kind:     KindPerson,
+				Role:     p.Role,
+				Identity: identity,
+			}, nil
 		}
 	}
 	return Principal{}, fmt.Errorf("%w: %s", ErrUnknownIdentity, identity)
 }
 
+// ResolveService maps a service's shared-secret hash to its Principal. It is
+// how a channel that authenticated a Service by a shared secret (e.g. the
+// GitHub App webhook secret, ADR 0008) attributes the trigger: the channel
+// verifies the secret on the wire, then hands its hex SHA-256 here.
+//
+// The comparison is constant-time so a registered hash cannot be discovered
+// by timing. An unmatched hash returns ErrUnknownIdentity, like Resolve.
+func (r *Resolver) ResolveService(secretSHA256 string) (Principal, error) {
+	uf, err := r.load()
+	if err != nil {
+		return Principal{}, err
+	}
+	for _, s := range uf.Services {
+		if s.SecretSHA256 == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(s.SecretSHA256), []byte(secretSHA256)) == 1 {
+			return Principal{
+				ID:       s.ID,
+				Kind:     KindService,
+				Role:     s.Role,
+				Identity: "service:" + s.ID,
+			}, nil
+		}
+	}
+	return Principal{}, fmt.Errorf("%w: service secret", ErrUnknownIdentity)
+}
+
 // load re-reads the user table from disk. A missing file yields an empty
 // table, not an error.
-func (r *Resolver) load() (*usersFile, error) {
-	b, err := os.ReadFile(r.path)
+func (r *Resolver) load() (*usersFile, error) { return loadUsers(r.path) }
+
+// loadUsers reads and parses a users.yaml. A missing file yields an empty
+// table, not an error — the correct state for a fresh install. Shared by the
+// read-only Resolver and the read-modify-write Store.
+func loadUsers(path string) (*usersFile, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &usersFile{}, nil
 		}
-		return nil, fmt.Errorf("auth: read %s: %w", r.path, err)
+		return nil, fmt.Errorf("auth: read %s: %w", path, err)
 	}
 	var uf usersFile
 	if err := yaml.Unmarshal(b, &uf); err != nil {
-		return nil, fmt.Errorf("auth: parse %s: %w", r.path, err)
+		return nil, fmt.Errorf("auth: parse %s: %w", path, err)
 	}
 	return &uf, nil
 }

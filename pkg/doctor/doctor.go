@@ -8,6 +8,7 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,6 +69,16 @@ type Options struct {
 	// ExtraBinaries are binary deps the caller knows about but aren't owned
 	// by any tool (e.g. git).
 	ExtraBinaries []ExtraBinary
+
+	// GitHub, when non-nil, adds a check of the GitHub App channel (ADR 0008):
+	// that the App credentials are present and a token can be minted.
+	GitHub *config.GitHubConfig
+
+	// GitHubMint mints an installation token to prove the credentials work.
+	// It is injected (the network call lives in the caller, keeping the
+	// doctor package itself pure). Nil means the mint is not attempted —
+	// only credential presence is checked.
+	GitHubMint func(ctx context.Context) error
 }
 
 // Run executes all checks and returns the results in display order.
@@ -77,7 +88,55 @@ func Run(opts Options) []Check {
 	out = append(out, configChecks(opts.Home)...)
 	out = append(out, soulCheck(opts.Home))
 	out = append(out, contextCheck(opts.Home))
+	if opts.GitHub != nil {
+		out = append(out, githubCheck(*opts.GitHub, opts.GitHubMint))
+	}
 	return out
+}
+
+// githubCheck verifies the GitHub App channel is ready: credentials present
+// (env() references resolve, private key file exists) and — when a mint
+// function is supplied — that an installation token can be minted.
+func githubCheck(cfg config.GitHubConfig, mint func(ctx context.Context) error) Check {
+	c := Check{Name: "github", Severity: SeverityOptional}
+	if !cfg.Configured() {
+		c.Status = Info
+		c.Severity = SeverityInfo
+		c.Message = "channel not configured (no github: section) — skipping"
+		return c
+	}
+	for _, f := range []struct {
+		name    string
+		resolve func() (string, error)
+	}{
+		{"app_id", cfg.ResolveAppID},
+		{"installation_id", cfg.ResolveInstallationID},
+		{"webhook_secret", cfg.ResolveWebhookSecret},
+	} {
+		if _, err := f.resolve(); err != nil {
+			c.Status = Fail
+			c.Hint = fmt.Sprintf("github.%s: %v", f.name, err)
+			return c
+		}
+	}
+	if _, err := os.Stat(cfg.PrivateKeyPath); err != nil {
+		c.Status = Fail
+		c.Hint = "private key not readable at " + cfg.PrivateKeyPath
+		return c
+	}
+	if mint == nil {
+		c.Status = Pass
+		c.Message = "App credentials present (token mint not attempted)"
+		return c
+	}
+	if err := mint(context.Background()); err != nil {
+		c.Status = Fail
+		c.Hint = "could not mint installation token: " + err.Error()
+		return c
+	}
+	c.Status = Pass
+	c.Message = "App credentials present, installation token minted"
+	return c
 }
 
 // binaryChecks composes two sources: (a) ExtraBinaries from the caller and

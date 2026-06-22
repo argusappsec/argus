@@ -72,6 +72,11 @@ type Runner interface {
 type Cloner struct {
 	root   string
 	runner Runner
+
+	// auth, when set, yields a short-lived installation token embedded into
+	// the clone/ls-remote URL so private repos the App can access succeed
+	// (ADR 0008). Nil means anonymous HTTPS (public repos only).
+	auth func(ctx context.Context) (string, error)
 }
 
 // NewCloner returns a Cloner that uses the system `git` binary.
@@ -82,6 +87,27 @@ func NewCloner(root string) *Cloner {
 // NewClonerWithRunner returns a Cloner using a custom Runner (tests).
 func NewClonerWithRunner(root string, r Runner) *Cloner {
 	return &Cloner{root: root, runner: r}
+}
+
+// WithAuth returns a Cloner that authenticates git operations with the token
+// produced by auth (an installation token). The receiver is not mutated.
+func (c *Cloner) WithAuth(auth func(ctx context.Context) (string, error)) *Cloner {
+	clone := *c
+	clone.auth = auth
+	return &clone
+}
+
+// remoteURL builds the https remote for u, embedding an installation token as
+// the x-access-token basic-auth user when this Cloner is authenticated.
+func (c *Cloner) remoteURL(ctx context.Context, u URL) (string, error) {
+	if c.auth == nil {
+		return "https://github.com/" + u.Owner + "/" + u.Name + ".git", nil
+	}
+	token, err := c.auth(ctx)
+	if err != nil {
+		return "", fmt.Errorf("github: installation token: %w", err)
+	}
+	return "https://x-access-token:" + token + "@github.com/" + u.Owner + "/" + u.Name + ".git", nil
 }
 
 // Checkout is the local result of a successful Clone.
@@ -121,11 +147,15 @@ func (c *Cloner) Clone(ctx context.Context, u URL, ref string) (Checkout, error)
 	}
 	defer os.RemoveAll(stagingDir)
 
+	remote, err := c.remoteURL(ctx, u)
+	if err != nil {
+		return Checkout{}, err
+	}
 	cloneArgs := []string{"clone", "--depth=1"}
 	if ref != "" && !looksLikeSHA(ref) {
 		cloneArgs = append(cloneArgs, "--branch", ref)
 	}
-	cloneArgs = append(cloneArgs, "https://github.com/"+u.Owner+"/"+u.Name+".git", stagingDir)
+	cloneArgs = append(cloneArgs, remote, stagingDir)
 	if _, err := c.runner.Run(ctx, repoDir, cloneArgs...); err != nil {
 		return Checkout{}, fmt.Errorf("git clone: %w", err)
 	}
@@ -147,7 +177,11 @@ func (c *Cloner) resolveSHA(ctx context.Context, u URL, ref string) (string, err
 	if ref != "" {
 		remoteRef = ref
 	}
-	out, err := c.runner.Run(ctx, c.root, "ls-remote", "https://github.com/"+u.Owner+"/"+u.Name+".git", remoteRef)
+	remote, err := c.remoteURL(ctx, u)
+	if err != nil {
+		return "", err
+	}
+	out, err := c.runner.Run(ctx, c.root, "ls-remote", remote, remoteRef)
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote: %w", err)
 	}

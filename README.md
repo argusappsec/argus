@@ -14,7 +14,8 @@ model, one audit log, and one knowledge base.
 - **Conversational reviews.** Open an interactive chat or fire a one-shot
   review against a GitHub repo and get findings explained, not just dumped.
 - **Real scanners, no shell escape.** Argus wraps tools like
-  [`semgrep`](https://semgrep.dev) and [`gitleaks`](https://github.com/gitleaks/gitleaks)
+  [`semgrep`](https://semgrep.dev), [`gitleaks`](https://github.com/gitleaks/gitleaks)
+  and [`osv-scanner`](https://github.com/google/osv-scanner)
   as structured, code-reviewed Go tools. There is deliberately no generic
   `bash`/`exec` tool exposed to the model (see [ADR 0006](docs/adr/0006-no-generic-shell-tool.md)).
 - **Organization identity (SOUL).** Company profile, stack, compliance posture,
@@ -49,7 +50,7 @@ are recorded as ADRs under [docs/adr/](docs/adr/).
 - **Go 1.26+**
 - A supported LLM provider API key (currently **Google Gemini** via
   `google.golang.org/genai`)
-- Optional scanner binaries on the daemon host: `semgrep`, `gitleaks`
+- Optional scanner binaries on the daemon host: `semgrep`, `gitleaks`, `osv-scanner`
   (run `argus doctor` to check what's installed)
 
 This repo uses [mise](https://mise.jdx.dev) to pin toolchain versions
@@ -133,7 +134,7 @@ pkg/
   config/           # argus.yaml + env handling
   daemon/           # daemon, session manager, channel runner
   provider/         # LLM provider abstraction
-  security/         # semgrep, gitleaks tool wrappers
+  security/         # semgrep, gitleaks, osv-scanner tool wrappers
   skill/            # skill catalog (user-curated + built-in via embed.FS)
   soul/             # SOUL.md loading
   memory/           # MEMORY.md curation

@@ -15,6 +15,8 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/redcarbon-dev/argus/pkg/codehost"
 )
 
 // Session carries the per-run state used by tools. It is safe for concurrent
@@ -23,8 +25,9 @@ type Session struct {
 	id        string
 	createdAt time.Time
 
-	mu   sync.RWMutex
-	root string
+	mu     sync.RWMutex
+	root   string
+	prDiff *codehost.PRDiff // set for a PR review; nil otherwise
 }
 
 // New creates a Session with a fresh random id and no target set.
@@ -55,6 +58,27 @@ func (s *Session) SetRoot(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.root = path
+}
+
+// PRDiff returns the pull-request diff set for this Session, and whether one
+// was set. A PR review pre-fetches the diff and stashes it here so the pr_diff
+// tool can expose the changed files/hunks to the agent without a live API call
+// mid-loop (ADR 0009). A non-PR review (e.g. `argus review`) never sets it.
+func (s *Session) PRDiff() (codehost.PRDiff, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.prDiff == nil {
+		return codehost.PRDiff{}, false
+	}
+	return *s.prDiff, true
+}
+
+// SetPRDiff stashes the pull-request diff for this Session. The pr_diff tool
+// reads it on its next invocation.
+func (s *Session) SetPRDiff(d codehost.PRDiff) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prDiff = &d
 }
 
 // newID returns a 12-hex-char identifier. Short enough to be human-typeable

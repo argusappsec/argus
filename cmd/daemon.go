@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	ghchannel "github.com/redcarbon-dev/argus/pkg/channel/github"
 	"github.com/redcarbon-dev/argus/pkg/channel/uds"
 	"github.com/redcarbon-dev/argus/pkg/config"
 	"github.com/redcarbon-dev/argus/pkg/daemon"
@@ -55,7 +56,19 @@ func daemonCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: home %s\n", home)
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: listening on %s\n", dc.SocketPath)
 
-			daemon.RunChannels(ctx, dc, uds.NewServer(dc))
+			channels := []daemon.Channel{uds.NewServer(dc)}
+			// The GitHub App channel starts only when configured (ADR 0008):
+			// an unconfigured github: section leaves the daemon socket-only.
+			if cfg.GitHub.Configured() {
+				gh, err := ghchannel.Build(dc, cfg.GitHub)
+				if err != nil {
+					return fmt.Errorf("argusd: github channel: %w", err)
+				}
+				channels = append(channels, gh)
+				fmt.Fprintf(cmd.OutOrStdout(), "argusd: github webhook on %s\n", cfg.GitHub.ListenAddr())
+			}
+
+			daemon.RunChannels(ctx, dc, channels...)
 
 			// Graceful shutdown: connections are gone (their runs died with
 			// them); wait for pending memory curations before exiting.

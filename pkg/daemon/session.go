@@ -13,6 +13,7 @@ import (
 	"github.com/redcarbon-dev/argus/pkg/audit"
 	"github.com/redcarbon-dev/argus/pkg/auth"
 	"github.com/redcarbon-dev/argus/pkg/budget"
+	"github.com/redcarbon-dev/argus/pkg/codehost"
 	"github.com/redcarbon-dev/argus/pkg/codehost/github"
 	"github.com/redcarbon-dev/argus/pkg/conversation"
 	"github.com/redcarbon-dev/argus/pkg/provider"
@@ -83,6 +84,12 @@ type Session struct {
 // ID returns the session identifier (hash of channel + conversation key).
 func (s *Session) ID() string { return s.id }
 
+// SetToolRoot points the Session's file-scoped tools (list_files, read_file,
+// grep, run_semgrep, …) at path. The review paths set it from their checkout;
+// the GitHub channel's rescope action sets it after cloning the PR head so the
+// in-thread focused pass can read the tree.
+func (s *Session) SetToolRoot(path string) { s.toolState.SetRoot(path) }
+
 // Principal returns the resolved actor that owns this Session.
 func (s *Session) Principal() auth.Principal { return s.principal }
 
@@ -93,6 +100,21 @@ func (s *Session) ConversationPath() string { return s.convoPath }
 // lines (against the daemon's catalog — the same on every channel), history
 // re-seed from the conversation log, then one agent run.
 func (s *Session) HandleMessage(ctx context.Context, text string, cb RunCallbacks) (*report.Report, error) {
+	return s.handleMessage(ctx, text, s.registry, cb)
+}
+
+// HandleComment is HandleMessage with extra, request-scoped tools available only
+// to this turn. The tools are layered onto a per-run copy of the registry, never
+// the shared one, so their per-turn dependencies and authorization (e.g. the
+// GitHub channel's suppress_finding / rescope_review, bound to the commenter's
+// Role) cannot race or leak into another concurrent turn on the same Session.
+func (s *Session) HandleComment(ctx context.Context, text string, extraTools []tool.Tool, cb RunCallbacks) (*report.Report, error) {
+	return s.handleMessage(ctx, text, s.registry.With(extraTools...), cb)
+}
+
+// handleMessage is the shared body of HandleMessage / HandleComment: it runs one
+// turn against the given tool registry.
+func (s *Session) handleMessage(ctx context.Context, text string, registry *tool.Registry, cb RunCallbacks) (*report.Report, error) {
 	if err := s.beginRun(); err != nil {
 		return nil, err
 	}
@@ -116,7 +138,7 @@ func (s *Session) HandleMessage(ctx context.Context, text string, cb RunCallback
 	}
 	s.countUserMessage()
 
-	return s.run(ctx, seed, agent.Target{}, cb)
+	return s.run(ctx, seed, agent.Target{}, registry, cb)
 }
 
 // HandleReview deterministically starts a review: clone on the daemon host,
@@ -136,16 +158,78 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 	if err != nil {
 		return nil, "", fmt.Errorf("daemon: clone: %w", err)
 	}
-	s.toolState.SetRoot(co.Path)
 
 	seedPrompt := fmt.Sprintf(
 		"Please run a thorough security review of %s at commit %s. "+
 			"The repository is already checked out locally — use list_files / read_file / "+
-			"grep / run_semgrep / run_gitleaks freely. Record each issue you confirm via "+
+			"grep / run_semgrep / run_gitleaks / run_osv_scanner freely. Record each issue you confirm via "+
 			"add_finding, then call finalize_report with a concise summary when you are done. "+
 			"If something is genuinely ambiguous, ask me; otherwise proceed autonomously.",
 		u.FullName, co.SHA,
 	)
+	return s.runReviewTarget(ctx, agent.Target{Repo: u.FullName, SHA: co.SHA, Path: co.Path}, seedPrompt, cb)
+}
+
+// PRReviewTarget describes an automatic pull-request review. The channel
+// clones at the PR head with the installation token (so private repos work)
+// and hands the checkout to the Session — unlike HandleReview, which clones
+// anonymously on the daemon host. The Session pins the checkout, stashes the
+// pre-fetched PR diff for the pr_diff tool, seeds a prompt that signals "PR
+// review", and runs. The scanners cover the whole head checkout for accuracy;
+// the agent judges PR-relevance from the diff (ADR 0009).
+type PRReviewTarget struct {
+	Repo    string          // canonical "github.com/<owner>/<name>"
+	Number  int             // PR number
+	Path    string          // local checkout at the head SHA (cloned by the channel)
+	SHA     string          // resolved head commit SHA
+	BaseSHA string          // PR base commit SHA
+	Diff    codehost.PRDiff // changed files + hunks, pre-fetched by the channel
+}
+
+// HandlePRReview runs one automatic PR review against an already-cloned head
+// checkout: pin the Session root, seed the PR-review prompt, run. Returns the
+// report and the path of the report file when one was written.
+func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb RunCallbacks) (*report.Report, string, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, "", err
+	}
+	defer s.endRun()
+
+	// Stash the pre-fetched diff so the pr_diff tool can hand the changed files
+	// and hunks to the agent for the relevance judgement (ADR 0009).
+	s.toolState.SetPRDiff(target.Diff)
+
+	seedPrompt := fmt.Sprintf(
+		"You are running an automated security review of pull request #%d of %s. "+
+			"The repository is already checked out locally at the PR head commit %s — use "+
+			"list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner freely "+
+			"over the WHOLE tree for accuracy. Then call pr_diff to see which files and lines this "+
+			"pull request changed, and report a finding ONLY when it is on a changed line OR is "+
+			"causally tied to the change (the diff calls an insecure function defined elsewhere, "+
+			"bumps a dependency to a vulnerable version, etc.). Do NOT report the repository's "+
+			"pre-existing issues unrelated to this change. Record each relevant issue via add_finding "+
+			"(set file and line so it can be placed inline), then call finalize_report with a concise "+
+			"summary suitable for posting on the pull request. Proceed autonomously.",
+		target.Number, target.Repo, target.SHA,
+	)
+	return s.runReviewTarget(ctx, agent.Target{
+		Repo:     target.Repo,
+		SHA:      target.SHA,
+		Path:     target.Path,
+		PRNumber: target.Number,
+		BaseSHA:  target.BaseSHA,
+	}, seedPrompt, cb)
+}
+
+// runReviewTarget is the shared review spine for HandleReview and
+// HandlePRReview: pin the checkout as the tool root, seed and persist the
+// prompt, run one agent loop, and resolve the report file path the run may have
+// written. The callers differ only in where the checkout comes from (anonymous
+// daemon clone vs. the channel's installation-token clone), the PR-awareness of
+// the Target, and the seed prompt.
+func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seedPrompt string, cb RunCallbacks) (*report.Report, string, error) {
+	s.toolState.SetRoot(target.Path)
+
 	seed, userMsg, err := s.seedWith(seedPrompt)
 	if err != nil {
 		return nil, "", err
@@ -155,12 +239,12 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 	}
 	s.countUserMessage()
 
-	rep, err := s.run(ctx, seed, agent.Target{Repo: u.FullName, SHA: co.SHA, Path: co.Path}, cb)
+	rep, err := s.run(ctx, seed, target, s.registry, cb)
 	if err != nil {
 		return nil, "", err
 	}
 
-	reportPath := s.dc.Reports.PathFor(u.FullName, co.SHA)
+	reportPath := s.dc.Reports.PathFor(target.Repo, target.SHA)
 	if _, statErr := os.Stat(reportPath); statErr != nil {
 		reportPath = "" // run ended without finalize_report writing a file
 	}
@@ -169,12 +253,12 @@ func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunC
 
 // run executes one agent run with this Session's snapshots and streams it
 // through cb.
-func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, cb RunCallbacks) (*report.Report, error) {
+func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, cb RunCallbacks) (*report.Report, error) {
 	ag := agent.New(agent.Options{
 		Provider:     s.provider,
 		Audit:        s.audit,
 		Reports:      s.dc.Reports,
-		Tools:        s.registry,
+		Tools:        registry,
 		Conversation: s.convo,
 		Soul:         s.soul,
 		Memory:       s.memory,
@@ -283,8 +367,10 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(tool.NewWriteContext(contextDir(dc)))
 	reg.Register(tool.NewStartReviewLocal(toolState))
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.Cloner))
+	reg.Register(tool.NewPRDiff(toolState))
 	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))
+	reg.Register(security.NewOSVScanner(toolState, security.ExecRunner{}))
 	reg.Register(tool.NewListSkills(dc.Skills))
 	reg.Register(tool.NewReadSkill(dc.Skills))
 	reg.Register(tool.NewReadSkillFile(dc.Skills))
