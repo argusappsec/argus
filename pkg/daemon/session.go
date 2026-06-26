@@ -249,7 +249,14 @@ func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string,
 		"materialized locally — use list_files / read_file / grep / run_semgrep / run_gitleaks / " +
 		"run_osv_scanner freely over the workspace. Judge the code through THIS organization's lens " +
 		"(its stack, conventions, risk tolerance, and the false positives already accepted in SOUL/MEMORY), " +
-		"not a generic checklist. Record each issue you confirm via add_finding (set file and line), then " +
+		"not a generic checklist. " +
+		"IMPORTANT — reach for the call chain: when deciding whether a handler is safe depends on code you " +
+		"were not given (a helper, middleware, base repository, policy, or a dependency manifest like go.mod / " +
+		"package.json), do NOT assume it is correct. Try to read it with read_file using its repo-relative path " +
+		"(e.g. internal/guard/guard.go). A path the snapshot does not hold is not an error — it is recorded and " +
+		"returned to the developer as a files_needed request, who will supply it so you can finish. Never " +
+		"approve an authorization/ownership guard you have not actually read. " +
+		"Record each issue you confirm via add_finding (set file and line), then " +
 		"call finalize_report with a concise summary. Proceed autonomously."
 
 	seed, userMsg, err := s.seedWith(seedPrompt)
