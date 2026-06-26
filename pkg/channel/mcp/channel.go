@@ -61,7 +61,11 @@ func (s *Server) Name() string { return "mcp" }
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(endpointPath, s.handle)
-	srv := &http.Server{Addr: s.opts.Addr, Handler: mux}
+	// ReadHeaderTimeout bounds slow-header clients without capping the request
+	// body or the response: a Snapshot review is a long synchronous run, so a
+	// WriteTimeout would cut it off — deliberately left unset (long reviews
+	// stream over SSE instead, see serveToolCallSSE).
+	srv := &http.Server{Addr: s.opts.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	go func() {
 		<-ctx.Done()
@@ -114,6 +118,16 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := r.Header.Get(sessionHeader)
+
+	// A tool call (review/consult) is a long synchronous agent run. When the
+	// client accepts an SSE stream, serve it as one: periodic keep-alives hold
+	// the connection open past client/proxy idle timeouts, then the JSON-RPC
+	// response arrives as the final SSE message.
+	if req.Method == "tools/call" && !req.isNotification() && acceptsSSE(r) {
+		s.serveToolCallSSE(r.Context(), w, principal, sessionID, req)
+		return
+	}
+
 	resp, respond, newSession := s.dispatch(r.Context(), principal, sessionID, req)
 	// initialize mints a session; hand its id back so the client echoes it on
 	// later requests and its Snapshot workspace accumulates across calls.
