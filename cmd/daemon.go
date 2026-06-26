@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	ghchannel "github.com/redcarbon-dev/argus/pkg/channel/github"
+	mcpchannel "github.com/redcarbon-dev/argus/pkg/channel/mcp"
 	"github.com/redcarbon-dev/argus/pkg/channel/uds"
 	"github.com/redcarbon-dev/argus/pkg/config"
 	"github.com/redcarbon-dev/argus/pkg/daemon"
@@ -66,6 +67,12 @@ func daemonCmd() *cobra.Command {
 				}
 				channels = append(channels, gh)
 				fmt.Fprintf(cmd.OutOrStdout(), "argusd: github webhook on %s\n", cfg.GitHub.ListenAddr())
+			}
+			// The MCP channel starts only when configured (ADR 0011): an
+			// unconfigured mcp: section leaves the daemon socket-only.
+			if cfg.MCP.Configured() {
+				channels = append(channels, mcpchannel.Build(dc, cfg.MCP))
+				fmt.Fprintf(cmd.OutOrStdout(), "argusd: mcp on %s\n", cfg.MCP.ListenAddr())
 			}
 
 			daemon.RunChannels(ctx, dc, channels...)

@@ -47,6 +47,33 @@ type Config struct {
 	// GitHub configures the GitHub App channel (ADR 0008). Absent or
 	// unconfigured means the channel does not start.
 	GitHub GitHubConfig `yaml:"github,omitempty"`
+
+	// MCP configures the MCP channel (ADR 0011): the HTTP server an external AI
+	// consults Argus through. Absent or unconfigured means the channel does not
+	// start (parity with GitHub: an unconfigured daemon stays socket-only).
+	MCP MCPConfig `yaml:"mcp,omitempty"`
+}
+
+// MCPConfig is the mcp: section of argus.yaml — the MCP channel (ADR 0011).
+// Auth is per-Person bearer tokens provisioned with `argus user mcp-token`, so
+// the only thing the section configures is where to listen; its mere presence
+// (a listen address) is what turns the channel on.
+type MCPConfig struct {
+	// Addr is the HTTP listen address for MCP requests (e.g. ":8090").
+	Addr string `yaml:"addr,omitempty"`
+}
+
+// Configured reports whether the mcp: section carries enough to start the
+// channel: a listen address. Bearer tokens live in users.yaml, not here.
+func (m MCPConfig) Configured() bool { return m.Addr != "" }
+
+// ListenAddr returns the configured MCP listen address, defaulting to ":8090"
+// when unset.
+func (m MCPConfig) ListenAddr() string {
+	if m.Addr != "" {
+		return m.Addr
+	}
+	return ":8090"
 }
 
 // GitHubConfig is the github: section of argus.yaml — the GitHub App channel
