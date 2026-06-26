@@ -140,6 +140,44 @@ func Write(path string, s *Soul) error {
 // SystemPrompt returns the text to inject as the LLM's system instruction.
 // It combines the identity metadata (in a "facts about you" block) with the
 // human-authored persona body.
+// riskToleranceGuidance turns the bare risk-tolerance label into an explicit
+// severity-reporting instruction. Without this the model reads "high" as "they
+// accept risk → only flag criticals" and silently under-reports.
+func riskToleranceGuidance(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return "Risk tolerance is LOW: be thorough — report findings down to Low severity and do not silently drop minor issues."
+	case "medium":
+		return "Risk tolerance is MEDIUM: report Medium severity and above; surface Low only when it sits on a sensitive path or a trust boundary."
+	case "high":
+		return "Risk tolerance is HIGH: prioritize High and Critical findings; lower-severity issues may be noted briefly or deferred — but never drop an issue that touches sensitive data or an authorization boundary."
+	default:
+		return fmt.Sprintf("Risk tolerance: %s — calibrate the severity threshold you report at accordingly.", level)
+	}
+}
+
+// dataSensitivityGuidance turns the data-sensitivity label into a severity
+// instruction, so e.g. "pii" raises the floor on data-exposure findings rather
+// than sitting in the prompt as an inert token.
+func dataSensitivityGuidance(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "public":
+		return "Data sensitivity: public — stored-data exposure is low impact; weight integrity, availability and authorization instead."
+	case "internal":
+		return "Data sensitivity: internal — calibrate exposure severity to business impact."
+	case "pii":
+		return "Data sensitivity: PII — treat any exposure of personal data as at least High severity regardless of CVSS, and weigh data-protection obligations."
+	case "phi":
+		return "Data sensitivity: PHI — treat exposure of health data as Critical; health-privacy obligations apply."
+	case "pci":
+		return "Data sensitivity: cardholder data — treat exposure of payment data as Critical; PCI-DSS scope applies."
+	case "regulated":
+		return "Data sensitivity: regulated — treat exposure of regulated data as at least High and weigh the governing obligations."
+	default:
+		return fmt.Sprintf("Data sensitivity: %s — raise the severity of data-exposure findings accordingly.", kind)
+	}
+}
+
 func (s *Soul) SystemPrompt() string {
 	if s == nil {
 		return ""
@@ -152,26 +190,30 @@ func (s *Soul) SystemPrompt() string {
 	if s.Industry != "" {
 		fmt.Fprintf(&b, "Industry: %s.\n", s.Industry)
 	}
-	if s.DataSensitivity != "" {
-		fmt.Fprintf(&b, "Data sensitivity: %s.\n", s.DataSensitivity)
-	}
 	if len(s.PrimaryStack) > 0 {
 		fmt.Fprintf(&b, "Primary stack: %s.\n", strings.Join(s.PrimaryStack, ", "))
 	}
 	if len(s.Infra) > 0 {
 		fmt.Fprintf(&b, "Infrastructure: %s.\n", strings.Join(s.Infra, ", "))
 	}
+
+	// Every line below attaches MEANING, not a bare label: the model is told
+	// what the value implies for the review, otherwise it interprets a token
+	// like "risk tolerance: high" however it likes (and tends to under-report).
+	if s.DataSensitivity != "" {
+		fmt.Fprintf(&b, "%s\n", dataSensitivityGuidance(s.DataSensitivity))
+	}
 	if s.SecretStorage != "" {
 		fmt.Fprintf(&b, "Secret storage: %s — treat placeholders referencing this system as expected, not as leaks.\n", s.SecretStorage)
 	}
 	if len(s.Compliance) > 0 {
-		fmt.Fprintf(&b, "Compliance frameworks: %s.\n", strings.Join(s.Compliance, ", "))
+		fmt.Fprintf(&b, "Compliance frameworks: %s — factor these obligations into severity and remediation.\n", strings.Join(s.Compliance, ", "))
 	}
 	if s.RiskTolerance != "" {
-		fmt.Fprintf(&b, "Risk tolerance: %s.\n", s.RiskTolerance)
+		fmt.Fprintf(&b, "%s\n", riskToleranceGuidance(s.RiskTolerance))
 	}
 	if s.Escalation != "" {
-		fmt.Fprintf(&b, "Escalation contact: %s.\n", s.Escalation)
+		fmt.Fprintf(&b, "Escalation contact for High/Critical findings: %s.\n", s.Escalation)
 	}
 	if s.Persona != "" {
 		b.WriteString("\n# Persona\n")
