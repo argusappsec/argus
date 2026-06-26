@@ -56,7 +56,7 @@ func reviewToolDecl() toolDecl {
 // handleToolsList advertises the coarse capabilities (ADR 0011). The low-level
 // scanners are deliberately absent — they stay inside Argus's own agent loop.
 func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
-	return result(req.ID, toolsListResult{Tools: []toolDecl{reviewToolDecl()}})
+	return result(req.ID, toolsListResult{Tools: []toolDecl{reviewToolDecl(), consultToolDecl()}})
 }
 
 // handleToolCall routes a tools/call to the named capability. sessionID is the
@@ -73,6 +73,8 @@ func (s *Server) handleToolCall(ctx context.Context, principal auth.Principal, s
 	switch params.Name {
 	case toolReview:
 		return s.handleReview(ctx, principal, sessionID, req, params.Arguments)
+	case toolConsult:
+		return s.handleConsult(ctx, principal, sessionID, req, params.Arguments)
 	default:
 		return errorResponse(req.ID, codeMethodNotFound, "unknown tool: "+params.Name)
 	}

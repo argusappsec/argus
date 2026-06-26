@@ -311,6 +311,20 @@ The word alone is ambiguous, so we always qualify the target:
 
 _Avoid_ using bare "review" when the target matters.
 
+### Consult
+
+An org-knowledge Q&A turn over the MCP channel (ADR 0011): the external AI asks
+Argus a security question that needs the **organization's** context to answer
+("does this CVE affect us?", "what are our auth conventions?"), and Argus answers
+from SOUL/MEMORY and the CONTEXT documents by running an agent turn with **no
+code target** — there is nothing to scan, so the agent answers in prose rather
+than recording findings, and no report file is written (the answer is transient).
+It is **read-only**, so a viewer may consult even though they cannot request a
+review. The boundary against generic security education ("what is a path
+traversal?") is the **tool description**, not a runtime gatekeeper: that question
+is simply not what `consult` advertises, and the developer's own AI already
+covers it.
+
 ### Pull Request (PR)
 
 The review target on the GitHub channel: a `base…head` proposed change on

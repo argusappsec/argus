@@ -126,18 +126,23 @@ func TestToolsList_AdvertisesReviewWithSchema(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(resp.Result.Tools) != 1 || resp.Result.Tools[0].Name != toolReview {
-		t.Fatalf("tools = %+v, want exactly [review]", resp.Result.Tools)
+	var tool *toolDecl
+	for i := range resp.Result.Tools {
+		if resp.Result.Tools[i].Name == toolReview {
+			tool = &resp.Result.Tools[i]
+		}
+		// The scanners are never advertised as tools (ADR 0011).
+		for _, name := range []string{"run_semgrep", "run_gitleaks", "run_osv_scanner"} {
+			if resp.Result.Tools[i].Name == name {
+				t.Errorf("low-level scanner %q must not be exposed as an MCP tool", name)
+			}
+		}
 	}
-	tool := resp.Result.Tools[0]
+	if tool == nil {
+		t.Fatalf("tools/list must advertise review, got %+v", resp.Result.Tools)
+	}
 	if tool.Description == "" {
 		t.Error("review tool must carry a description (the org-aware boundary)")
-	}
-	// The scanners are never advertised as tools (ADR 0011).
-	for _, name := range []string{"run_semgrep", "run_gitleaks", "run_osv_scanner"} {
-		if tool.Name == name {
-			t.Errorf("low-level scanner %q must not be exposed as an MCP tool", name)
-		}
 	}
 	props, _ := tool.InputSchema["properties"].(map[string]any)
 	if _, ok := props["files"]; !ok {

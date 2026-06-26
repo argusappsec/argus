@@ -264,6 +264,40 @@ func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string,
 	return s.run(ctx, seed, agent.Target{Path: snapshotPath}, s.registry, nil, cb)
 }
 
+// HandleConsult runs an org-aware Q&A turn (ADR 0011): the caller's question is
+// answered from the organization's security knowledge (SOUL/MEMORY in the system
+// prompt, the CONTEXT documents via list_context / read_context) with NO code
+// target — there is nothing to scan, so the agent answers in prose rather than
+// recording findings. The answer is the model's text, which the channel captures
+// through the run callbacks; no report file is written (reports is nil), so the
+// consultation is transient like a Snapshot review. Reuses the same org-aware
+// agent invocation plumbing as the review paths.
+func (s *Session) HandleConsult(ctx context.Context, question string, cb RunCallbacks) (*report.Report, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, err
+	}
+	defer s.endRun()
+
+	seedPrompt := "A developer has asked you, through their AI assistant, a security question that needs THIS " +
+		"organization's context to answer well — its stack, conventions, infra, compliance posture, risk " +
+		"tolerance, and the decisions recorded in SOUL/MEMORY and the CONTEXT documents. Use list_context / " +
+		"read_context to consult the organization's documents as needed and answer grounded in what you find, " +
+		"not generic security education (the developer's own AI already covers textbook questions). There is no " +
+		"code to review here: do not call add_finding or finalize_report — just answer in prose. The question:\n\n" +
+		question
+
+	seed, userMsg, err := s.seedWith(seedPrompt)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.convo.Append(conversation.Record{Message: userMsg}); err != nil {
+		return nil, fmt.Errorf("daemon: persist consult question: %w", err)
+	}
+	s.countUserMessage()
+
+	return s.run(ctx, seed, agent.Target{}, s.registry, nil, cb)
+}
+
 // runReviewTarget is the shared review spine for HandleReview and
 // HandlePRReview: pin the checkout as the tool root, seed and persist the
 // prompt, run one agent loop, and resolve the report file path the run may have

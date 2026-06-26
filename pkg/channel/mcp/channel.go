@@ -174,7 +174,7 @@ func (s *Server) dispatch(ctx context.Context, principal auth.Principal, session
 }
 
 // handleInitialize answers the MCP handshake: advertise the protocol version,
-// the coarse capability set (tools today — review; consult/Resources later),
+// the coarse capability set (tools today — review and consult; Resources later),
 // and identify the server. The params are not read — the surface is fixed by
 // ADR 0011, not negotiated.
 func (s *Server) handleInitialize(req rpcRequest) rpcResponse {

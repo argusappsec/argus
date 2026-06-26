@@ -71,8 +71,8 @@ func errorResponse(id json.RawMessage, code int, message string) rpcResponse {
 }
 
 // initializeResult is the MCP handshake response. Capabilities advertises the
-// coarse surface this server speaks (ADR 0011): tools today (review), with
-// consult and Resources arriving in later slices. The low-level scanners are
+// coarse surface this server speaks (ADR 0011): tools today (review and
+// consult), with Resources arriving in a later slice. The low-level scanners are
 // never exposed as tools.
 type initializeResult struct {
 	ProtocolVersion string         `json:"protocolVersion"`
