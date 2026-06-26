@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
@@ -36,16 +37,21 @@ type Options struct {
 	Addr string // HTTP listen address
 }
 
-// Server is the MCP channel. It holds only the shared DaemonContext and its
-// listen options; per-request identity is resolved on the wire, never cached.
+// Server is the MCP channel. It holds the shared DaemonContext, its listen
+// options, and the live MCP sessions (each carrying a Snapshot workspace so
+// follow-up reviews accumulate). Per-request identity is resolved on the wire,
+// never cached.
 type Server struct {
 	dc   *daemon.Context
 	opts Options
+
+	mu       sync.Mutex
+	sessions map[string]*mcpSession
 }
 
 // NewServer builds the channel over the shared DaemonContext.
 func NewServer(dc *daemon.Context, opts Options) *Server {
-	return &Server{dc: dc, opts: opts}
+	return &Server{dc: dc, opts: opts, sessions: map[string]*mcpSession{}}
 }
 
 // Name implements daemon.Channel.
@@ -72,10 +78,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 // handle is the MCP endpoint: authenticate → parse JSON-RPC → dispatch. Auth
 // happens before any work, so an unresolved/missing token never reaches the
-// protocol layer (no anonymous access to org knowledge).
+// protocol layer (no anonymous access to org knowledge). A DELETE terminates the
+// MCP session and cleans up its Snapshot workspace (Streamable HTTP transport).
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
+	switch r.Method {
+	case http.MethodPost:
+	case http.MethodDelete:
+		s.handleDelete(w, r)
+		return
+	default:
+		w.Header().Set("Allow", http.MethodPost+", "+http.MethodDelete)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -101,7 +113,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, respond := s.dispatch(r.Context(), principal, req)
+	sessionID := r.Header.Get(sessionHeader)
+	resp, respond, newSession := s.dispatch(r.Context(), principal, sessionID, req)
+	// initialize mints a session; hand its id back so the client echoes it on
+	// later requests and its Snapshot workspace accumulates across calls.
+	if newSession != "" {
+		w.Header().Set(sessionHeader, newSession)
+	}
 	if !respond {
 		// A notification expects no body (JSON-RPC 2.0 §4.1).
 		w.WriteHeader(http.StatusAccepted)
@@ -110,31 +128,48 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	writeResponse(w, resp)
 }
 
+// handleDelete terminates the MCP session named by the session header, releasing
+// its Snapshot workspace. It authenticates first (no anonymous teardown) and is
+// idempotent: a missing or unknown session is simply a 204.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	principal, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+	id := r.Header.Get(sessionHeader)
+	closed := s.closeSession(id)
+	s.audit("mcp_session_closed", principal, map[string]any{"closed": closed})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // dispatch routes one JSON-RPC message for an already-authenticated Principal.
 // The bool reports whether a response should be written (false for
-// notifications). Every authenticated call is attributed to the Person in the
-// audit log so MCP actions are traceable like any other channel.
-func (s *Server) dispatch(ctx context.Context, principal auth.Principal, req rpcRequest) (rpcResponse, bool) {
+// notifications); the string is a freshly-minted MCP session id to hand back
+// (non-empty only for initialize). Every authenticated call is attributed to the
+// Person in the audit log so MCP actions are traceable like any other channel.
+func (s *Server) dispatch(ctx context.Context, principal auth.Principal, sessionID string, req rpcRequest) (rpcResponse, bool, string) {
 	s.audit("mcp_request", principal, map[string]any{"method": req.Method})
 
 	// A notification expects no response whatever its method (JSON-RPC 2.0 §4.1):
 	// it is still processed (and audited above), but nothing is written back. This
 	// covers notifications/initialized and any future client-side notification.
 	if req.isNotification() {
-		return rpcResponse{}, false
+		return rpcResponse{}, false, ""
 	}
 
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req), true
+		// Open the connection's MCP session here so its Snapshot workspace can
+		// accumulate across the review calls that follow.
+		return s.handleInitialize(req), true, s.openSession()
 	case "ping":
-		return result(req.ID, map[string]any{}), true
+		return result(req.ID, map[string]any{}), true, ""
 	case "tools/list":
-		return s.handleToolsList(req), true
+		return s.handleToolsList(req), true, ""
 	case "tools/call":
-		return s.handleToolCall(ctx, principal, req), true
+		return s.handleToolCall(ctx, principal, sessionID, req), true, ""
 	default:
-		return errorResponse(req.ID, codeMethodNotFound, "method not found: "+req.Method), true
+		return errorResponse(req.ID, codeMethodNotFound, "method not found: "+req.Method), true, ""
 	}
 }
 

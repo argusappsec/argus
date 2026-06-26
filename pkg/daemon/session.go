@@ -232,13 +232,17 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 // findings come back through the normal report.Finding pipeline. They are
 // returned to the caller in the MCP response rather than persisted as a report
 // file, so the reports writer is intentionally nil for this run.
-func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string, cb RunCallbacks) (*report.Report, error) {
+func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string, rec session.MissRecorder, cb RunCallbacks) (*report.Report, error) {
 	if err := s.beginRun(); err != nil {
 		return nil, err
 	}
 	defer s.endRun()
 
 	s.toolState.SetRoot(snapshotPath)
+	// Wire the workspace in as the miss recorder so a read of a file the caller
+	// did not supply is recorded (and surfaces as files_needed) instead of being
+	// a hard error — this is what keeps the review collaborative (ADR 0011).
+	s.toolState.SetMissRecorder(rec)
 
 	seedPrompt := "You are running an organization-aware security review of a code Snapshot a " +
 		"developer handed you through their AI assistant. The changed files are already " +

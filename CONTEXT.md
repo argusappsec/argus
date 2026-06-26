@@ -295,6 +295,19 @@ The word alone is ambiguous, so we always qualify the target:
 - **PR review** — a diff-aware review of a Pull Request (see below). Same
   scanners, run over the whole tree at the PR head for context, but the
   findings are filtered to those relevant to the PR.
+- **Snapshot review** — an org-aware review of caller-supplied code over the
+  MCP channel (ADR 0011). A remote/self-hosted Argus cannot read the
+  developer's working tree, so the external AI hands over the changed files as
+  `{path, content}` pairs; Argus materializes them into a scratch workspace
+  (`pkg/snapshot`) and runs its own agent loop (SOUL/MEMORY, real scanners)
+  pointed at it as `agent.Target{Path}` with empty `Repo`/`SHA`. It is
+  **collaborative**: when the agent reads a file the caller did not supply, that
+  is not an error — the workspace records the miss, and at the end of the run the
+  misses surface as a structured **`files_needed`** request. The AI fetches those
+  paths and calls `review` again on the same MCP session, where the workspace
+  **accumulates** the new files (no resend) so cross-file reasoning works even
+  though Argus does not own the repo. No `request_files` tool exists — the
+  ordinary file-scoped tools drive the collaboration implicitly.
 
 _Avoid_ using bare "review" when the target matters.
 

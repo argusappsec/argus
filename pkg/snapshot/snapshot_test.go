@@ -108,6 +108,72 @@ func TestWorkspace_RejectsEscapingPaths(t *testing.T) {
 	}
 }
 
+func TestWorkspace_RecordsAndSurfacesMisses(t *testing.T) {
+	ws, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+
+	if err := ws.Add([]File{{Path: "handler.go", Content: "package main\n"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The agent reaches for a helper and a manifest the caller did not supply.
+	ws.RecordMiss("internal/auth/middleware.go")
+	ws.RecordMiss("go.mod")
+	// A read of a path that IS present is not a miss.
+	ws.RecordMiss("handler.go")
+
+	got := ws.Missing()
+	want := []string{"go.mod", "internal/auth/middleware.go"} // sorted, slash-form
+	if len(got) != len(want) {
+		t.Fatalf("Missing() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Missing()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestWorkspace_FollowUpAddRetiresAMiss(t *testing.T) {
+	ws, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+
+	ws.RecordMiss("internal/auth/middleware.go")
+	if len(ws.Missing()) != 1 {
+		t.Fatalf("Missing() = %v, want one entry", ws.Missing())
+	}
+
+	// The follow-up review supplies the previously-missing file: it must drop out
+	// of Missing() so the caller is not asked for it again (accumulation).
+	if err := ws.Add([]File{{Path: "internal/auth/middleware.go", Content: "package auth\n"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.Missing()) != 0 {
+		t.Errorf("Missing() = %v, want empty after the file was supplied", ws.Missing())
+	}
+}
+
+func TestWorkspace_RecordMissIgnoresUnrepresentablePaths(t *testing.T) {
+	ws, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+
+	// An escaping or empty path cannot name a workspace file, so it is not a miss.
+	for _, bad := range []string{"../escape.go", "/etc/passwd", ""} {
+		ws.RecordMiss(bad)
+	}
+	if len(ws.Missing()) != 0 {
+		t.Errorf("Missing() = %v, want empty (unrepresentable paths are not misses)", ws.Missing())
+	}
+}
+
 func TestWorkspace_AddAfterCloseFails(t *testing.T) {
 	ws, err := New()
 	if err != nil {

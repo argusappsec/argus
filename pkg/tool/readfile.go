@@ -55,6 +55,9 @@ func (r *readFile) Execute(_ context.Context, args map[string]any) (string, erro
 	if start == 0 && end == 0 {
 		b, err := os.ReadFile(abs)
 		if err != nil {
+			if miss, ok := r.recordMiss(path, err); ok {
+				return miss, nil
+			}
 			return "", fmt.Errorf("read_file: %w", err)
 		}
 		return string(b), nil
@@ -62,6 +65,9 @@ func (r *readFile) Execute(_ context.Context, args map[string]any) (string, erro
 
 	f, err := os.Open(abs)
 	if err != nil {
+		if miss, ok := r.recordMiss(path, err); ok {
+			return miss, nil
+		}
 		return "", fmt.Errorf("read_file: %w", err)
 	}
 	defer f.Close()
@@ -85,6 +91,23 @@ func (r *readFile) Execute(_ context.Context, args map[string]any) (string, erro
 		return "", fmt.Errorf("read_file: %w", err)
 	}
 	return b.String(), nil
+}
+
+// recordMiss turns a read of an absent path into a collaboration step rather
+// than a hard error, but only in a Snapshot review (a miss recorder is set). The
+// workspace records the path so it surfaces in the run's files_needed list, and
+// the agent gets a note — not an error — so it keeps reviewing the files it has
+// and can flag what it still needs. Returns ok=false (so the caller errors as
+// usual) for non-Snapshot reviews or for any failure other than not-exist.
+func (r *readFile) recordMiss(path string, err error) (string, bool) {
+	rec := r.sess.MissRecorder()
+	if rec == nil || !errors.Is(err, os.ErrNotExist) {
+		return "", false
+	}
+	rec.RecordMiss(path)
+	return fmt.Sprintf("%s is not in this snapshot — it was not among the files supplied for review. "+
+		"It has been recorded as needed; continue reviewing the files you do have, and it will be "+
+		"requested from the developer so you can finish the review with it.", path), true
 }
 
 func intArg(v any) int {

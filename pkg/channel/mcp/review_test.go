@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/redcarbon-dev/argus/pkg/audit"
@@ -212,6 +214,194 @@ func TestReview_NoFilesIsToolError(t *testing.T) {
 	res := callResult(t, rec.Body.Bytes())
 	if !res.IsError {
 		t.Fatal("review with no files must be a tool error")
+	}
+}
+
+// readFileCall scripts the agent to read one path via the file-scoped tool.
+func readFileCall(path string) provider.Response {
+	return provider.Response{ToolCalls: []provider.ToolCall{{
+		ID:   "r1",
+		Name: "read_file",
+		Args: map[string]any{"path": path},
+	}}}
+}
+
+// finalizeCall scripts the agent to finalize the report with a summary.
+func finalizeCall(summary string) provider.Response {
+	return provider.Response{ToolCalls: []provider.ToolCall{{
+		ID:   "f1",
+		Name: "finalize_report",
+		Args: map[string]any{"summary": summary},
+	}}}
+}
+
+// addFindingCall scripts the agent to record a finding on the given file.
+func addFindingCall(file string) provider.Response {
+	return provider.Response{ToolCalls: []provider.ToolCall{{
+		ID:   "a1",
+		Name: "add_finding",
+		Args: map[string]any{
+			"severity":    "high",
+			"rule_id":     "BOLA-1",
+			"file":        file,
+			"line":        float64(10),
+			"snippet":     "handler(w, r)",
+			"title":       "Missing authorization check",
+			"description": "The handler relies on middleware that does not authorize the actor.",
+			"remediation": "Authorize the actor against the resource owner.",
+		},
+	}}}
+}
+
+// initSession runs the initialize handshake and returns the minted MCP session
+// id the server handed back, so follow-up calls accumulate onto the same
+// Snapshot workspace.
+func initSession(t *testing.T, s *Server) string {
+	t.Helper()
+	rec := post(t, s, testToken, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if rec.Code != 200 {
+		t.Fatalf("initialize code = %d", rec.Code)
+	}
+	id := rec.Header().Get(sessionHeader)
+	if id == "" {
+		t.Fatal("initialize must mint an MCP session id (the workspace lives on it)")
+	}
+	return id
+}
+
+// postSession sends a JSON-RPC body carrying an MCP session id header.
+func postSession(t *testing.T, s *Server, sessionID, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", endpointPath, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set(sessionHeader, sessionID)
+	rec := httptest.NewRecorder()
+	s.handle(rec, req)
+	return rec
+}
+
+// structuredReview parses the structured payload of a review tool result.
+func structuredReview(t *testing.T, res toolCallResult) reviewResult {
+	t.Helper()
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rr reviewResult
+	if err := json.Unmarshal(raw, &rr); err != nil {
+		t.Fatalf("parse structured content: %v", err)
+	}
+	return rr
+}
+
+func TestReview_ReturnsFilesNeededWhenContextMissing(t *testing.T) {
+	// The agent reaches for a helper that was not supplied, then finalizes: the
+	// missing path must come back as a structured files_needed request.
+	prov := &scriptedProvider{responses: []provider.Response{
+		readFileCall("internal/auth/middleware.go"),
+		finalizeCall("Cannot judge without the middleware."),
+	}}
+	s, _ := reviewServer(t, prov, auth.RoleAnalyst)
+	id := initSession(t, s)
+
+	body := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"review","arguments":{"files":[{"path":"handler.go","content":"package main\n"}]}}}`
+	res := callResult(t, postSession(t, s, id, body).Body.Bytes())
+	if res.IsError {
+		t.Fatalf("a files_needed result is collaborative, not an error: %+v", res.Content)
+	}
+
+	rr := structuredReview(t, res)
+	if len(rr.FilesNeeded) != 1 || rr.FilesNeeded[0] != "internal/auth/middleware.go" {
+		t.Fatalf("files_needed = %v, want [internal/auth/middleware.go]", rr.FilesNeeded)
+	}
+	// The human-readable block must lead with the request so the external AI acts.
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "internal/auth/middleware.go") {
+		t.Errorf("text content did not surface the files_needed request: %+v", res.Content)
+	}
+}
+
+func TestReview_FollowUpAccumulatesAndCompletes(t *testing.T) {
+	// Call 1 reaches for the middleware (absent) and finalizes → files_needed.
+	// Call 2 supplies only the middleware; the agent reads it (now present),
+	// records a finding, and finalizes → findings, no files_needed.
+	prov := &scriptedProvider{responses: []provider.Response{
+		readFileCall("internal/auth/middleware.go"), // run 1
+		finalizeCall("Need the middleware to decide."),
+		readFileCall("internal/auth/middleware.go"), // run 2 (now present)
+		addFindingCall("handler.go"),
+		finalizeCall("One missing authorization check."),
+	}}
+	s, _ := reviewServer(t, prov, auth.RoleAnalyst)
+	id := initSession(t, s)
+
+	call1 := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"review","arguments":{"files":[{"path":"handler.go","content":"package main\n"}]}}}`
+	rr1 := structuredReview(t, callResult(t, postSession(t, s, id, call1).Body.Bytes()))
+	if len(rr1.FilesNeeded) != 1 {
+		t.Fatalf("call 1 files_needed = %v, want the middleware", rr1.FilesNeeded)
+	}
+	if len(rr1.Findings) != 0 {
+		t.Errorf("call 1 should have no findings yet, got %d", len(rr1.Findings))
+	}
+
+	// The follow-up supplies ONLY the newly-fetched file — the handler is retained.
+	call2 := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"review","arguments":{"files":[{"path":"internal/auth/middleware.go","content":"package auth\n"}]}}}`
+	rr2 := structuredReview(t, callResult(t, postSession(t, s, id, call2).Body.Bytes()))
+	if len(rr2.FilesNeeded) != 0 {
+		t.Errorf("call 2 should need no more files, got %v", rr2.FilesNeeded)
+	}
+	if len(rr2.Findings) != 1 {
+		t.Fatalf("call 2 findings = %d, want 1 (cross-file verdict after accumulation)", len(rr2.Findings))
+	}
+	if rr2.Findings[0].RuleID != "BOLA-1" {
+		t.Errorf("finding = %+v, want the BOLA-1 verdict", rr2.Findings[0])
+	}
+}
+
+func TestReview_FollowUpDoesNotResurfaceStaleMisses(t *testing.T) {
+	// Call 1 reaches for two absent files; the AI supplies only one and the
+	// follow-up run no longer needs the other. files_needed on call 2 must reflect
+	// what THAT run still lacks — not the stale miss the AI deliberately skipped.
+	prov := &scriptedProvider{responses: []provider.Response{
+		readFileCall("a.go"), // run 1: both absent
+		readFileCall("b.go"),
+		finalizeCall("Need a.go and b.go."),
+		readFileCall("a.go"), // run 2: a.go now present; b.go never touched
+		finalizeCall("Reviewed with a.go."),
+	}}
+	s, _ := reviewServer(t, prov, auth.RoleAnalyst)
+	id := initSession(t, s)
+
+	call1 := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"review","arguments":{"files":[{"path":"seed.go","content":"package main\n"}]}}}`
+	rr1 := structuredReview(t, callResult(t, postSession(t, s, id, call1).Body.Bytes()))
+	if len(rr1.FilesNeeded) != 2 {
+		t.Fatalf("call 1 files_needed = %v, want both a.go and b.go", rr1.FilesNeeded)
+	}
+
+	call2 := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"review","arguments":{"files":[{"path":"a.go","content":"package main\n"}]}}}`
+	rr2 := structuredReview(t, callResult(t, postSession(t, s, id, call2).Body.Bytes()))
+	if len(rr2.FilesNeeded) != 0 {
+		t.Errorf("call 2 must not re-request the stale b.go, got %v", rr2.FilesNeeded)
+	}
+}
+
+func TestReview_DeleteClosesSession(t *testing.T) {
+	prov := &scriptedProvider{responses: findingThenFinalize()}
+	s, _ := reviewServer(t, prov, auth.RoleAnalyst)
+	id := initSession(t, s)
+	if s.lookupSession(id) == nil {
+		t.Fatal("session should be live after initialize")
+	}
+
+	req := httptest.NewRequest("DELETE", endpointPath, nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set(sessionHeader, id)
+	rec := httptest.NewRecorder()
+	s.handle(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("DELETE code = %d, want 204", rec.Code)
+	}
+	if s.lookupSession(id) != nil {
+		t.Error("session must be gone after DELETE (workspace cleaned up)")
 	}
 }
 
