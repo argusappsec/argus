@@ -220,7 +220,16 @@ Each implementation:
 - **Slack** — Socket Mode bot. Identity = `slack:user_id` extracted from
   Slack events.
 - **MCP** — HTTP server exposing Resources + Tools per the Model Context
-  Protocol. Identity = `mcp:<token-hash>` from the bearer token.
+  Protocol. Identity = `mcp:<token-hash>` from the bearer token. The MCP
+  client is an *external generalist AI* (Claude Desktop, Cursor, …) for whom
+  Argus is a **consultable colleague**, not a toolbox: the surface is a few
+  coarse capabilities (a security `review`, an org-knowledge `consult`) plus
+  Resources over the org knowledge (SOUL, CONTEXT, recent reports), never the
+  low-level scanner tools. So the external AI delegates and Argus runs its own
+  org-aware loop — SOUL/MEMORY/CONTEXT stay inside Argus. **Non-goal:** generic
+  security Q&A ("what is path traversal?") the external AI already answers on
+  its own; the exposed surface is deliberately limited to what needs Argus's
+  unique value (the org's shared knowledge + the real scanners).
 - **GitHub** — a GitHub App (installation) receiving signed events for the
   repos it is installed on. One transport, two event paths:
   - **`pull_request` opened/synchronize** → an automatic review. The
@@ -295,6 +304,15 @@ The word alone is ambiguous, so we always qualify the target:
 - **PR review** — a diff-aware review of a Pull Request (see below). Same
   scanners, run over the whole tree at the PR head for context, but the
   findings are filtered to those relevant to the PR.
+- **Snapshot review** — a review of **caller-supplied content** rather than a
+  repo Argus clones. Born on the MCP channel: the external AI hands Argus the
+  changed files/diff from the developer's working tree (which Argus, possibly
+  remote/self-hosted, cannot read itself). It is **collaborative, not
+  one-shot** — Argus may answer "to judge this I also need `auth/middleware.go`
+  and the dependency manifest" and the external AI supplies them on a follow-up
+  call. This is what preserves Argus's cross-file reasoning (the authz-audit
+  skill resolves helpers/middleware by reading them, not by name; osv-scanner
+  needs the manifest) when it does not possess the repo.
 
 _Avoid_ using bare "review" when the target matters.
 
