@@ -2,8 +2,6 @@ package uds
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -127,7 +125,7 @@ func (s *Server) handleConn(ctx context.Context, conn *net.UnixConn) {
 		return
 	}
 
-	sess, _, err := s.dc.Sessions.GetOrCreate(ctx, s.Name(), newConversationKey(), principal, daemon.SessionOptions{
+	sess, _, err := s.dc.Sessions.GetOrCreate(ctx, s.Name(), daemon.NewConversationKey(), principal, daemon.SessionOptions{
 		Model:    hello.Model,
 		MaxTurns: hello.MaxTurns,
 	})
@@ -287,13 +285,3 @@ func rejectionReason(err error) string {
 	return err.Error()
 }
 
-// newConversationKey mints the per-connection conversation key. The UDS
-// shape is "one connection = one Session", so the key is simply fresh
-// randomness (the hello frame's session field is reserved for future resume).
-func newConversationKey() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return strconv.FormatInt(time.Now().UnixNano(), 16)
-	}
-	return hex.EncodeToString(b[:])
-}

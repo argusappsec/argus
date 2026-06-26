@@ -146,7 +146,7 @@ func TestHandle_InitializedNotificationGets202(t *testing.T) {
 
 func TestHandle_UnknownMethodIsMethodNotFound(t *testing.T) {
 	s, _ := testServer(t)
-	rec := post(t, s, testToken, `{"jsonrpc":"2.0","id":7,"method":"tools/list"}`)
+	rec := post(t, s, testToken, `{"jsonrpc":"2.0","id":7,"method":"resources/list"}`)
 	if rec.Code != 200 {
 		t.Fatalf("code = %d, want 200 (JSON-RPC errors ride a 200)", rec.Code)
 	}

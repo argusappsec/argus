@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,14 @@ type SessionOptions struct {
 
 	// MaxTurns caps each agent run in this Session. Zero = default (50).
 	MaxTurns int
+
+	// Ephemeral marks a one-shot, stateless Session whose conversation is not
+	// worth distilling into MEMORY.md — e.g. an MCP Snapshot review, whose only
+	// "message" is a machine-written seed prompt over throwaway caller code. Such
+	// a Session skips the end-of-session memory curation on Release, so the org's
+	// memory is shaped only by real conversations and reviews, not by transient
+	// one-shot calls (and the daemon avoids a wasted curation agent loop per call).
+	Ephemeral bool
 }
 
 // SessionManager allocates Sessions, keys them by hash(channel,
@@ -61,6 +71,18 @@ func NewSessionManager(dc *Context, cap int) *SessionManager {
 func SessionID(channel, conversationKey string) string {
 	sum := sha256.Sum256([]byte(channel + "\x00" + conversationKey))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+// NewConversationKey mints a fresh random conversation key for a channel whose
+// shape is "one connection/call = one Session" (the UDS connection, an MCP
+// one-shot review). On the practically-impossible rand failure it falls back to
+// a timestamp, which is still effectively unique per call.
+func NewConversationKey() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // GetOrCreate returns the Session for (channel, conversationKey), creating
@@ -136,6 +158,7 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 		principal: principal,
 		modelID:   modelID,
 		maxTurns:  opts.MaxTurns,
+		ephemeral: opts.Ephemeral,
 		dc:        dc,
 		toolState: toolState,
 		convo:     convo,
@@ -176,7 +199,10 @@ func (m *SessionManager) Release(s *Session) {
 		"user_messages": s.userMessages(),
 	}))
 
-	if s.userMessages() == 0 {
+	// An ephemeral one-shot Session (e.g. an MCP Snapshot review) carries no
+	// conversation worth distilling; skip curation rather than burn an agent loop
+	// on a single machine-written seed.
+	if s.userMessages() == 0 || s.ephemeral {
 		return
 	}
 

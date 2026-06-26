@@ -60,6 +60,7 @@ type Session struct {
 	principal auth.Principal
 	modelID   string
 	maxTurns  int
+	ephemeral bool // one-shot Session: skip end-of-session memory curation
 
 	dc        *Context
 	toolState *session.Session
@@ -138,7 +139,7 @@ func (s *Session) handleMessage(ctx context.Context, text string, registry *tool
 	}
 	s.countUserMessage()
 
-	return s.run(ctx, seed, agent.Target{}, registry, cb)
+	return s.run(ctx, seed, agent.Target{}, registry, s.dc.Reports, cb)
 }
 
 // HandleReview deterministically starts a review: clone on the daemon host,
@@ -221,6 +222,44 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 	}, seedPrompt, cb)
 }
 
+// HandleSnapshotReview runs an org-aware Snapshot review (ADR 0011) over a
+// scratch workspace of caller-supplied files. Unlike HandleReview /
+// HandlePRReview the daemon never clones: the workspace is materialized by the
+// MCP channel from content the external AI handed over, and pointed at the
+// agent's file-scoped tools and scanners as agent.Target.Path with empty
+// Repo/SHA — a Snapshot review has no repo or commit. The agent runs the same
+// org-aware loop (SOUL/MEMORY in the system prompt, real scanners), and its
+// findings come back through the normal report.Finding pipeline. They are
+// returned to the caller in the MCP response rather than persisted as a report
+// file, so the reports writer is intentionally nil for this run.
+func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string, cb RunCallbacks) (*report.Report, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, err
+	}
+	defer s.endRun()
+
+	s.toolState.SetRoot(snapshotPath)
+
+	seedPrompt := "You are running an organization-aware security review of a code Snapshot a " +
+		"developer handed you through their AI assistant. The changed files are already " +
+		"materialized locally — use list_files / read_file / grep / run_semgrep / run_gitleaks / " +
+		"run_osv_scanner freely over the workspace. Judge the code through THIS organization's lens " +
+		"(its stack, conventions, risk tolerance, and the false positives already accepted in SOUL/MEMORY), " +
+		"not a generic checklist. Record each issue you confirm via add_finding (set file and line), then " +
+		"call finalize_report with a concise summary. Proceed autonomously."
+
+	seed, userMsg, err := s.seedWith(seedPrompt)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.convo.Append(conversation.Record{Message: userMsg}); err != nil {
+		return nil, fmt.Errorf("daemon: persist seed: %w", err)
+	}
+	s.countUserMessage()
+
+	return s.run(ctx, seed, agent.Target{Path: snapshotPath}, s.registry, nil, cb)
+}
+
 // runReviewTarget is the shared review spine for HandleReview and
 // HandlePRReview: pin the checkout as the tool root, seed and persist the
 // prompt, run one agent loop, and resolve the report file path the run may have
@@ -239,7 +278,7 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 	}
 	s.countUserMessage()
 
-	rep, err := s.run(ctx, seed, target, s.registry, cb)
+	rep, err := s.run(ctx, seed, target, s.registry, s.dc.Reports, cb)
 	if err != nil {
 		return nil, "", err
 	}
@@ -252,12 +291,13 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 }
 
 // run executes one agent run with this Session's snapshots and streams it
-// through cb.
-func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, cb RunCallbacks) (*report.Report, error) {
+// through cb. reports may be nil — a Snapshot review (ADR 0011) returns its
+// findings to the MCP caller transiently and writes no report file.
+func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, reports *report.Writer, cb RunCallbacks) (*report.Report, error) {
 	ag := agent.New(agent.Options{
 		Provider:     s.provider,
 		Audit:        s.audit,
-		Reports:      s.dc.Reports,
+		Reports:      reports,
 		Tools:        registry,
 		Conversation: s.convo,
 		Soul:         s.soul,

@@ -114,7 +114,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 // The bool reports whether a response should be written (false for
 // notifications). Every authenticated call is attributed to the Person in the
 // audit log so MCP actions are traceable like any other channel.
-func (s *Server) dispatch(_ context.Context, principal auth.Principal, req rpcRequest) (rpcResponse, bool) {
+func (s *Server) dispatch(ctx context.Context, principal auth.Principal, req rpcRequest) (rpcResponse, bool) {
 	s.audit("mcp_request", principal, map[string]any{"method": req.Method})
 
 	// A notification expects no response whatever its method (JSON-RPC 2.0 §4.1):
@@ -129,18 +129,23 @@ func (s *Server) dispatch(_ context.Context, principal auth.Principal, req rpcRe
 		return s.handleInitialize(req), true
 	case "ping":
 		return result(req.ID, map[string]any{}), true
+	case "tools/list":
+		return s.handleToolsList(req), true
+	case "tools/call":
+		return s.handleToolCall(ctx, principal, req), true
 	default:
 		return errorResponse(req.ID, codeMethodNotFound, "method not found: "+req.Method), true
 	}
 }
 
-// handleInitialize answers the MCP handshake: advertise the protocol version and
-// the (currently empty) capability set, and identify the server. Slice 1 reads
-// nothing from the params — the coarse capabilities arrive in later slices.
+// handleInitialize answers the MCP handshake: advertise the protocol version,
+// the coarse capability set (tools today — review; consult/Resources later),
+// and identify the server. The params are not read — the surface is fixed by
+// ADR 0011, not negotiated.
 func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 	return result(req.ID, initializeResult{
 		ProtocolVersion: protocolVersion,
-		Capabilities:    map[string]any{},
+		Capabilities:    map[string]any{"tools": map[string]any{}},
 		ServerInfo:      serverInfo{Name: serverName, Version: serverVersion},
 	})
 }

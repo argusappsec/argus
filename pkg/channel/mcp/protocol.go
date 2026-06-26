@@ -21,6 +21,7 @@ const (
 	codeParseError     = -32700
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
+	codeInvalidParams  = -32602
 )
 
 // rpcRequest is an inbound JSON-RPC 2.0 message. A message with no id is a
@@ -69,9 +70,10 @@ func errorResponse(id json.RawMessage, code int, message string) rpcResponse {
 	return rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: message}}
 }
 
-// initializeResult is the MCP handshake response. Capabilities is intentionally
-// empty in slice 1 — no tools or resources are advertised yet (ADR 0011 keeps
-// the surface coarse; review/consult/Resources arrive in later slices).
+// initializeResult is the MCP handshake response. Capabilities advertises the
+// coarse surface this server speaks (ADR 0011): tools today (review), with
+// consult and Resources arriving in later slices. The low-level scanners are
+// never exposed as tools.
 type initializeResult struct {
 	ProtocolVersion string         `json:"protocolVersion"`
 	Capabilities    map[string]any `json:"capabilities"`
@@ -81,4 +83,41 @@ type initializeResult struct {
 type serverInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+}
+
+// toolDecl is one entry in a tools/list result: the tool's name, the
+// description the external AI reads to decide when to call it (the boundary is
+// the description, not a runtime gate — ADR 0011), and its JSON-Schema inputs.
+type toolDecl struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+// toolsListResult is the tools/list response.
+type toolsListResult struct {
+	Tools []toolDecl `json:"tools"`
+}
+
+// toolCallResult is the tools/call response (MCP CallToolResult). A tool-layer
+// refusal or failure rides a successful JSON-RPC response with IsError set, so
+// the calling AI relays it rather than treating it as a transport error.
+// StructuredContent carries the machine-readable payload (e.g. the findings)
+// alongside the human-readable Content blocks.
+type toolCallResult struct {
+	Content           []contentBlock `json:"content"`
+	StructuredContent any            `json:"structuredContent,omitempty"`
+	IsError           bool           `json:"isError,omitempty"`
+}
+
+// contentBlock is one piece of a tool result. Only text blocks are produced
+// today.
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// textContent wraps a string as a single text content block.
+func textContent(text string) []contentBlock {
+	return []contentBlock{{Type: "text", Text: text}}
 }
