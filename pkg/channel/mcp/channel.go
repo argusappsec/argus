@@ -168,20 +168,27 @@ func (s *Server) dispatch(ctx context.Context, principal auth.Principal, session
 		return s.handleToolsList(req), true, ""
 	case "tools/call":
 		return s.handleToolCall(ctx, principal, sessionID, req), true, ""
+	case "resources/list":
+		return s.handleResourcesList(principal, req), true, ""
+	case "resources/read":
+		return s.handleResourceRead(principal, req), true, ""
 	default:
 		return errorResponse(req.ID, codeMethodNotFound, "method not found: "+req.Method), true, ""
 	}
 }
 
 // handleInitialize answers the MCP handshake: advertise the protocol version,
-// the coarse capability set (tools today — review and consult; Resources later),
-// and identify the server. The params are not read — the surface is fixed by
-// ADR 0011, not negotiated.
+// the coarse capability set (tools — review and consult — and resources: SOUL,
+// CONTEXT documents, recent reports), and identify the server. The params are not
+// read — the surface is fixed by ADR 0011, not negotiated.
 func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 	return result(req.ID, initializeResult{
 		ProtocolVersion: protocolVersion,
-		Capabilities:    map[string]any{"tools": map[string]any{}},
-		ServerInfo:      serverInfo{Name: serverName, Version: serverVersion},
+		Capabilities: map[string]any{
+			"tools":     map[string]any{},
+			"resources": map[string]any{},
+		},
+		ServerInfo: serverInfo{Name: serverName, Version: serverVersion},
 	})
 }
 

@@ -22,6 +22,15 @@ const (
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
+
+	// codeResourceNotFound is the MCP-defined code for an unknown/unreadable
+	// resource URI (resources/read).
+	codeResourceNotFound = -32002
+
+	// codeForbidden is a server-defined code (JSON-RPC reserves -32000..-32099
+	// for implementation errors) for an authenticated caller whose Role is not
+	// permitted the operation — distinct from a malformed request (-32600).
+	codeForbidden = -32003
 )
 
 // rpcRequest is an inbound JSON-RPC 2.0 message. A message with no id is a
@@ -71,9 +80,9 @@ func errorResponse(id json.RawMessage, code int, message string) rpcResponse {
 }
 
 // initializeResult is the MCP handshake response. Capabilities advertises the
-// coarse surface this server speaks (ADR 0011): tools today (review and
-// consult), with Resources arriving in a later slice. The low-level scanners are
-// never exposed as tools.
+// coarse surface this server speaks (ADR 0011): tools (review and consult) and
+// resources (SOUL, CONTEXT documents, recent reports). The low-level scanners
+// are never exposed as tools.
 type initializeResult struct {
 	ProtocolVersion string         `json:"protocolVersion"`
 	Capabilities    map[string]any `json:"capabilities"`
