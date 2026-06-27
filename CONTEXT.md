@@ -220,7 +220,16 @@ Each implementation:
 - **Slack** — Socket Mode bot. Identity = `slack:user_id` extracted from
   Slack events.
 - **MCP** — HTTP server exposing Resources + Tools per the Model Context
-  Protocol. Identity = `mcp:<token-hash>` from the bearer token.
+  Protocol. Identity = `mcp:<token-hash>` from the bearer token. The MCP
+  client is an *external generalist AI* (Claude Desktop, Cursor, …) for whom
+  Argus is a **consultable colleague**, not a toolbox: the surface is a few
+  coarse capabilities (a security `review`, an org-knowledge `consult`) plus
+  Resources over the org knowledge (SOUL, CONTEXT, recent reports), never the
+  low-level scanner tools. So the external AI delegates and Argus runs its own
+  org-aware loop — SOUL/MEMORY/CONTEXT stay inside Argus. **Non-goal:** generic
+  security Q&A ("what is path traversal?") the external AI already answers on
+  its own; the exposed surface is deliberately limited to what needs Argus's
+  unique value (the org's shared knowledge + the real scanners).
 - **GitHub** — a GitHub App (installation) receiving signed events for the
   repos it is installed on. One transport, two event paths:
   - **`pull_request` opened/synchronize** → an automatic review. The
