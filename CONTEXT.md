@@ -304,17 +304,35 @@ The word alone is ambiguous, so we always qualify the target:
 - **PR review** — a diff-aware review of a Pull Request (see below). Same
   scanners, run over the whole tree at the PR head for context, but the
   findings are filtered to those relevant to the PR.
-- **Snapshot review** — a review of **caller-supplied content** rather than a
-  repo Argus clones. Born on the MCP channel: the external AI hands Argus the
-  changed files/diff from the developer's working tree (which Argus, possibly
-  remote/self-hosted, cannot read itself). It is **collaborative, not
-  one-shot** — Argus may answer "to judge this I also need `auth/middleware.go`
-  and the dependency manifest" and the external AI supplies them on a follow-up
-  call. This is what preserves Argus's cross-file reasoning (the authz-audit
-  skill resolves helpers/middleware by reading them, not by name; osv-scanner
-  needs the manifest) when it does not possess the repo.
+- **Snapshot review** — an org-aware review of caller-supplied code over the
+  MCP channel (ADR 0011). A remote/self-hosted Argus cannot read the
+  developer's working tree, so the external AI hands over the changed files as
+  `{path, content}` pairs; Argus materializes them into a scratch workspace
+  (`pkg/snapshot`) and runs its own agent loop (SOUL/MEMORY, real scanners)
+  pointed at it as `agent.Target{Path}` with empty `Repo`/`SHA`. It is
+  **collaborative**: when the agent reads a file the caller did not supply, that
+  is not an error — the workspace records the miss, and at the end of the run the
+  misses surface as a structured **`files_needed`** request. The AI fetches those
+  paths and calls `review` again on the same MCP session, where the workspace
+  **accumulates** the new files (no resend) so cross-file reasoning works even
+  though Argus does not own the repo. No `request_files` tool exists — the
+  ordinary file-scoped tools drive the collaboration implicitly.
 
 _Avoid_ using bare "review" when the target matters.
+
+### Consult
+
+An org-knowledge Q&A turn over the MCP channel (ADR 0011): the external AI asks
+Argus a security question that needs the **organization's** context to answer
+("does this CVE affect us?", "what are our auth conventions?"), and Argus answers
+from SOUL/MEMORY and the CONTEXT documents by running an agent turn with **no
+code target** — there is nothing to scan, so the agent answers in prose rather
+than recording findings, and no report file is written (the answer is transient).
+It is **read-only**, so a viewer may consult even though they cannot request a
+review. The boundary against generic security education ("what is a path
+traversal?") is the **tool description**, not a runtime gatekeeper: that question
+is simply not what `consult` advertises, and the developer's own AI already
+covers it.
 
 ### Pull Request (PR)
 

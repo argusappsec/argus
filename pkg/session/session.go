@@ -25,9 +25,19 @@ type Session struct {
 	id        string
 	createdAt time.Time
 
-	mu     sync.RWMutex
-	root   string
-	prDiff *codehost.PRDiff // set for a PR review; nil otherwise
+	mu      sync.RWMutex
+	root    string
+	prDiff  *codehost.PRDiff // set for a PR review; nil otherwise
+	missRec MissRecorder     // set for a Snapshot review; nil otherwise
+}
+
+// MissRecorder is the Snapshot workspace seen through the file-scoped tools: it
+// reports whether a path is held and records reads of paths it does not hold.
+// Only a Snapshot review (ADR 0011) sets one — for a repo/PR review a read of an
+// absent path stays a plain error. pkg/snapshot.Workspace implements it.
+type MissRecorder interface {
+	Has(path string) bool
+	RecordMiss(path string)
 }
 
 // New creates a Session with a fresh random id and no target set.
@@ -79,6 +89,24 @@ func (s *Session) SetPRDiff(d codehost.PRDiff) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prDiff = &d
+}
+
+// MissRecorder returns the Snapshot workspace's miss recorder, or nil when this
+// is not a Snapshot review. The file-scoped tools consult it on every Execute,
+// so SetMissRecorder takes effect on the next tool call.
+func (s *Session) MissRecorder() MissRecorder {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.missRec
+}
+
+// SetMissRecorder wires the Snapshot workspace in as the recorder of reads of
+// absent paths. A Snapshot review sets it alongside SetRoot; other reviews leave
+// it nil so an absent path stays an error.
+func (s *Session) SetMissRecorder(r MissRecorder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.missRec = r
 }
 
 // newID returns a 12-hex-char identifier. Short enough to be human-typeable

@@ -181,6 +181,39 @@ func (r *Resolver) ResolveService(secretSHA256 string) (Principal, error) {
 	return Principal{}, fmt.Errorf("%w: service secret", ErrUnknownIdentity)
 }
 
+// ResolveMCPToken maps an MCP bearer token to its owning Person. The token is
+// never stored in cleartext: it is hashed and compared against the per-Person
+// MCPTokens recorded by `argus user mcp-token create`. The resolved Identity is
+// `mcp:<token-hash>` (CONTEXT.md), so the audit log attributes the action to the
+// concrete token surface, not just the Person.
+//
+// The comparison is constant-time so a registered hash cannot be discovered by
+// timing. An unmatched token returns ErrUnknownIdentity, like Resolve — there
+// is no anonymous MCP access.
+func (r *Resolver) ResolveMCPToken(token string) (Principal, error) {
+	uf, err := r.load()
+	if err != nil {
+		return Principal{}, err
+	}
+	hash := SHA256Hex(token)
+	for _, p := range uf.Persons {
+		for _, t := range p.MCPTokens {
+			if t.SHA256 == "" {
+				continue
+			}
+			if subtle.ConstantTimeCompare([]byte(t.SHA256), []byte(hash)) == 1 {
+				return Principal{
+					ID:       p.ID,
+					Kind:     KindPerson,
+					Role:     p.Role,
+					Identity: "mcp:" + hash,
+				}, nil
+			}
+		}
+	}
+	return Principal{}, fmt.Errorf("%w: mcp token", ErrUnknownIdentity)
+}
+
 // load re-reads the user table from disk. A missing file yields an empty
 // table, not an error.
 func (r *Resolver) load() (*usersFile, error) { return loadUsers(r.path) }

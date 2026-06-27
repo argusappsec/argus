@@ -243,6 +243,31 @@ func TestRelease_CuratesOnlySessionsWithInteraction(t *testing.T) {
 	}
 }
 
+func TestRelease_EphemeralSessionSkipsCuration(t *testing.T) {
+	// A scripted provider whose only non-text response would be the curator's;
+	// we assert the curator never calls Generate by counting calls.
+	prov := &scriptedProvider{responses: []provider.Response{textOnly("x")}}
+	dc := testContext(t, prov, 4)
+	ctx := context.Background()
+
+	s, _, err := dc.Sessions.GetOrCreate(ctx, "mcp", "k", principal(), SessionOptions{Ephemeral: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.HandleMessage(ctx, "hello", RunCallbacks{}); err != nil {
+		t.Fatal(err)
+	}
+	callsAfterRun := prov.calls
+
+	dc.Sessions.Release(s)
+	dc.Sessions.Drain(2 * time.Second)
+
+	// No curation goroutine ran, so the provider saw no further calls.
+	if prov.calls != callsAfterRun {
+		t.Errorf("ephemeral session triggered curation: provider calls went %d → %d", callsAfterRun, prov.calls)
+	}
+}
+
 func TestSessionID_StableAndChannelScoped(t *testing.T) {
 	if SessionID("uds", "a") != SessionID("uds", "a") {
 		t.Error("SessionID must be deterministic")

@@ -60,6 +60,7 @@ type Session struct {
 	principal auth.Principal
 	modelID   string
 	maxTurns  int
+	ephemeral bool // one-shot Session: skip end-of-session memory curation
 
 	dc        *Context
 	toolState *session.Session
@@ -138,7 +139,7 @@ func (s *Session) handleMessage(ctx context.Context, text string, registry *tool
 	}
 	s.countUserMessage()
 
-	return s.run(ctx, seed, agent.Target{}, registry, cb)
+	return s.run(ctx, seed, agent.Target{}, registry, s.dc.Reports, cb)
 }
 
 // HandleReview deterministically starts a review: clone on the daemon host,
@@ -221,6 +222,89 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 	}, seedPrompt, cb)
 }
 
+// HandleSnapshotReview runs an org-aware Snapshot review (ADR 0011) over a
+// scratch workspace of caller-supplied files. Unlike HandleReview /
+// HandlePRReview the daemon never clones: the workspace is materialized by the
+// MCP channel from content the external AI handed over, and pointed at the
+// agent's file-scoped tools and scanners as agent.Target.Path with empty
+// Repo/SHA — a Snapshot review has no repo or commit. The agent runs the same
+// org-aware loop (SOUL/MEMORY in the system prompt, real scanners), and its
+// findings come back through the normal report.Finding pipeline. They are
+// returned to the caller in the MCP response rather than persisted as a report
+// file, so the reports writer is intentionally nil for this run.
+func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string, rec session.MissRecorder, cb RunCallbacks) (*report.Report, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, err
+	}
+	defer s.endRun()
+
+	s.toolState.SetRoot(snapshotPath)
+	// Wire the workspace in as the miss recorder so a read of a file the caller
+	// did not supply is recorded (and surfaces as files_needed) instead of being
+	// a hard error — this is what keeps the review collaborative (ADR 0011).
+	s.toolState.SetMissRecorder(rec)
+
+	seedPrompt := "You are running an organization-aware security review of a code Snapshot a " +
+		"developer handed you through their AI assistant. The changed files are already " +
+		"materialized locally — use list_files / read_file / grep / run_semgrep / run_gitleaks / " +
+		"run_osv_scanner freely over the workspace. Judge the code through THIS organization's lens " +
+		"(its stack, conventions, risk tolerance, and the false positives already accepted in SOUL/MEMORY), " +
+		"not a generic checklist. " +
+		"IMPORTANT — reach for the call chain: when deciding whether a handler is safe depends on code you " +
+		"were not given (a helper, middleware, base repository, policy, or a dependency manifest like go.mod / " +
+		"package.json), do NOT assume it is correct. Try to read it with read_file using its repo-relative path " +
+		"(e.g. internal/guard/guard.go). A path the snapshot does not hold is not an error — it is recorded and " +
+		"returned to the developer as a files_needed request, who will supply it so you can finish. Never " +
+		"approve an authorization/ownership guard you have not actually read. " +
+		"Record each issue you confirm via add_finding (set file and line), then " +
+		"call finalize_report with a concise summary. Proceed autonomously."
+
+	seed, userMsg, err := s.seedWith(seedPrompt)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.convo.Append(conversation.Record{Message: userMsg}); err != nil {
+		return nil, fmt.Errorf("daemon: persist seed: %w", err)
+	}
+	s.countUserMessage()
+
+	return s.run(ctx, seed, agent.Target{Path: snapshotPath}, s.registry, nil, cb)
+}
+
+// HandleConsult runs an org-aware Q&A turn (ADR 0011): the caller's question is
+// answered from the organization's security knowledge (SOUL/MEMORY in the system
+// prompt, the CONTEXT documents via list_context / read_context) with NO code
+// target — there is nothing to scan, so the agent answers in prose rather than
+// recording findings. The answer is the model's text, which the channel captures
+// through the run callbacks; no report file is written (reports is nil), so the
+// consultation is transient like a Snapshot review. Reuses the same org-aware
+// agent invocation plumbing as the review paths.
+func (s *Session) HandleConsult(ctx context.Context, question string, cb RunCallbacks) (*report.Report, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, err
+	}
+	defer s.endRun()
+
+	seedPrompt := "A developer has asked you, through their AI assistant, a security question that needs THIS " +
+		"organization's context to answer well — its stack, conventions, infra, compliance posture, risk " +
+		"tolerance, and the decisions recorded in SOUL/MEMORY and the CONTEXT documents. Use list_context / " +
+		"read_context to consult the organization's documents as needed and answer grounded in what you find, " +
+		"not generic security education (the developer's own AI already covers textbook questions). There is no " +
+		"code to review here: do not call add_finding or finalize_report — just answer in prose. The question:\n\n" +
+		question
+
+	seed, userMsg, err := s.seedWith(seedPrompt)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.convo.Append(conversation.Record{Message: userMsg}); err != nil {
+		return nil, fmt.Errorf("daemon: persist consult question: %w", err)
+	}
+	s.countUserMessage()
+
+	return s.run(ctx, seed, agent.Target{}, s.registry, nil, cb)
+}
+
 // runReviewTarget is the shared review spine for HandleReview and
 // HandlePRReview: pin the checkout as the tool root, seed and persist the
 // prompt, run one agent loop, and resolve the report file path the run may have
@@ -239,7 +323,7 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 	}
 	s.countUserMessage()
 
-	rep, err := s.run(ctx, seed, target, s.registry, cb)
+	rep, err := s.run(ctx, seed, target, s.registry, s.dc.Reports, cb)
 	if err != nil {
 		return nil, "", err
 	}
@@ -252,12 +336,13 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 }
 
 // run executes one agent run with this Session's snapshots and streams it
-// through cb.
-func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, cb RunCallbacks) (*report.Report, error) {
+// through cb. reports may be nil — a Snapshot review (ADR 0011) returns its
+// findings to the MCP caller transiently and writes no report file.
+func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, reports *report.Writer, cb RunCallbacks) (*report.Report, error) {
 	ag := agent.New(agent.Options{
 		Provider:     s.provider,
 		Audit:        s.audit,
-		Reports:      s.dc.Reports,
+		Reports:      reports,
 		Tools:        registry,
 		Conversation: s.convo,
 		Soul:         s.soul,

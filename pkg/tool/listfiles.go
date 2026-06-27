@@ -68,6 +68,16 @@ func (l *listFiles) Execute(_ context.Context, args map[string]any) (string, err
 		paths = append(paths, filepath.ToSlash(rel))
 		return nil
 	}); err != nil {
+		// In a Snapshot review a list of an absent sub-path is not an error — the
+		// workspace simply does not hold that directory yet. Tell the agent so it
+		// carries on, but do NOT record it as a needed file: files_needed names
+		// specific {path, content} files the AI can supply, and a directory is
+		// neither suppliable nor retirable by an Add. The agent requests concrete
+		// files via read_file, which is what drives the collaboration.
+		if rec := l.sess.MissRecorder(); rec != nil && errors.Is(err, fs.ErrNotExist) {
+			return fmt.Sprintf("%s is not in this snapshot — it was not among the files supplied for review. "+
+				"Read the specific files you need with read_file and they will be requested from the developer.", sub), nil
+		}
 		return "", fmt.Errorf("list_files: %w", err)
 	}
 	sort.Strings(paths)

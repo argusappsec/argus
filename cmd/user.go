@@ -216,7 +216,7 @@ func userMCPTokenCreateCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "created token %q for %q. Store it now — it is not recoverable:\n\n  %s\n\n", name, args[0], token)
-			fmt.Fprintf(cmd.OutOrStdout(), "Use it as the bearer token; the identity resolves to mcp:<sha-prefix>.\n")
+			fmt.Fprintf(cmd.OutOrStdout(), "Use it as the bearer token; the identity resolves to mcp:<token-hash>.\n")
 			return nil
 		},
 	}
