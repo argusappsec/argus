@@ -1,0 +1,18 @@
+# VCS and CI
+.git
+.github
+
+# Local build artifacts
+/argus
+coverage.txt
+
+# Editor / tooling
+.idea
+.vscode
+.mise.toml
+
+# Docs and local state — not needed in the build context
+docs
+*.md
+.argus
+.env

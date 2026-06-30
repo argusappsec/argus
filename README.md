@@ -149,4 +149,5 @@ docs/
 
 - [CONTEXT.md](CONTEXT.md) — canonical domain glossary
 - [docs/adr/](docs/adr/) — architecture decision records
+- [docs/deployment/kubernetes.md](docs/deployment/kubernetes.md) — hosting Argus on Kubernetes
 - [AGENTS.md](AGENTS.md) — agent instructions and conventions
