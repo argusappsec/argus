@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="brand/argus.svg" alt="Argus — peacock feather with an eyespot" width="140">
+</p>
+
 # Argus
 
 > An LLM-driven security review agent for GitHub repositories.
@@ -151,3 +155,8 @@ docs/
 - [docs/adr/](docs/adr/) — architecture decision records
 - [docs/deployment/kubernetes.md](docs/deployment/kubernetes.md) — hosting Argus on Kubernetes
 - [AGENTS.md](AGENTS.md) — agent instructions and conventions
+
+## License
+
+Argus is licensed under the [Apache License 2.0](LICENSE). The Argus logo and
+brand assets are licensed under [CC BY 4.0](brand/LICENSE).
