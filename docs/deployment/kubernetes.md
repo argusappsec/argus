@@ -50,19 +50,36 @@ Argus splits its files by a single question — *is it mutated at runtime?*
 - An Ingress controller (e.g. ingress-nginx) and TLS — **the GitHub webhook
   must be reachable on a public HTTPS URL**. [cert-manager](https://cert-manager.io)
   is the easy path to certificates.
-- A container image for Argus. The repo ships a multi-stage
-  [`Dockerfile`](../../Dockerfile) that builds a static binary onto a
-  distroless `nonroot` base:
+- The official Argus image. You **do not build it yourself** — pull it from
+  `ghcr.io/argusappsec/argus`:
 
   ```sh
-  docker build -t ghcr.io/your-org/argus:latest .
-  docker push  ghcr.io/your-org/argus:latest
+  docker pull ghcr.io/argusappsec/argus:latest
   ```
 
+  It is **batteries-included**: `argus` plus every binary its Tools shell out
+  to — `git` (required, for cloning), `semgrep`, `gitleaks` and `osv-scanner`
+  — so the GitHub PR-review Channel works out of the box with no derived image
+  or sidecar (see [ADR 0013](../adr/0013-batteries-included-runtime-image.md)).
   The image runs as nonroot (uid `65532`) and exposes `:8080` (GitHub) and
-  `:8090` (MCP). If you want the optional scanner binaries (`semgrep`,
-  `gitleaks`, `osv-scanner`) available to the agent, add them to a derived
-  image or run them in a sidecar — the daemon starts fine without them.
+  `:8090` (MCP). It is published multi-arch for `linux/amd64` and `linux/arm64`
+  with provenance and SBOM attestations.
+
+  **Which tag to run:**
+
+  | Tag | Source | Use it when |
+  | --- | --- | --- |
+  | `latest` | the newest stable `v*` release | you want the recommended stable image (prereleases never move it) |
+  | `vX.Y.Z`, `vX.Y`, `vX` | a specific `v*` git tag | you want to pin to an exact release for reproducible deploys |
+  | `edge` | every push to `main` | you want the bleeding edge — continuous dogfooding of the latest daemon before it is tagged |
+
+  Pin to a semver tag in production; reach for `edge` only if you deliberately
+  want to track `main`.
+
+  > **Contributors** who want to build the image locally can still do so from
+  > the repo's multi-stage [`Dockerfile`](../../Dockerfile)
+  > (`docker build -t argus:dev .`) — that is a development workflow, not the
+  > operator path.
 
 ## Step 1 — Author the seed config locally
 
@@ -162,7 +179,7 @@ spec:
             - { name: seed, mountPath: /seed, readOnly: true }
       containers:
         - name: argus
-          image: ghcr.io/your-org/argus:latest
+          image: ghcr.io/argusappsec/argus:latest
           args: ["daemon"]
           env:
             - { name: ARGUS_HOME, value: /data/.argus }
