@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/budget"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/report"
-	"github.com/redcarbon-dev/argus/pkg/skill"
-	"github.com/redcarbon-dev/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/soul"
 )
 
 // scriptedProvider returns canned responses in order; the last response is
@@ -269,7 +269,9 @@ func TestRelease_EphemeralSessionSkipsCuration(t *testing.T) {
 }
 
 func TestSessionID_StableAndChannelScoped(t *testing.T) {
-	if SessionID("uds", "a") != SessionID("uds", "a") {
+	first := SessionID("uds", "a")
+	second := SessionID("uds", "a")
+	if first != second {
 		t.Error("SessionID must be deterministic")
 	}
 	if SessionID("uds", "a") == SessionID("slack", "a") {

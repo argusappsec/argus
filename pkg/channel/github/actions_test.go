@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // routerProvider answers each model turn from the SHAPE of the request rather
@@ -83,7 +83,7 @@ func openedPRNum(number int, headSHA string) string {
     "head": {"sha": ` + strconv.Quote(headSHA) + `},
     "base": {"sha": "basesha000"}
   },
-  "repository": {"full_name": "redcarbon-dev/argus", "name": "argus", "owner": {"login": "redcarbon-dev"}}
+  "repository": {"full_name": "argusappsec/argus", "name": "argus", "owner": {"login": "argusappsec"}}
 }`
 }
 

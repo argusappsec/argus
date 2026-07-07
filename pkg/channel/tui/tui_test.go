@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/redcarbon-dev/argus/pkg/channel/tui"
+	"github.com/argusappsec/argus/pkg/channel/tui"
 )
 
 // TestModel_TracerSubmitsTextToHistory: when the user types text and presses

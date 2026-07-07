@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/codehost"
 )
 
 // Session carries the per-run state used by tools. It is safe for concurrent

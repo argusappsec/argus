@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/redcarbon-dev/argus/pkg/channel/tui"
+	"github.com/argusappsec/argus/pkg/channel/tui"
 )
 
 // TestAutoSubmit_FiresOnInit: when Config.AutoSubmit is set, Init() returns
@@ -20,7 +20,7 @@ func TestAutoSubmit_FiresOnInit(t *testing.T) {
 			dispatchedWith = s
 			return nil
 		},
-		AutoSubmit: "review github.com/redcarbon-dev/argus",
+		AutoSubmit: "review github.com/argusappsec/argus",
 	}
 	m := tui.New(cfg)
 
@@ -45,14 +45,14 @@ func TestAutoSubmit_FiresOnInit(t *testing.T) {
 		m = updated.(tui.Model)
 	}
 
-	if dispatchedWith != "review github.com/redcarbon-dev/argus" {
+	if dispatchedWith != "review github.com/argusappsec/argus" {
 		t.Errorf("dispatch should receive the AutoSubmit text, got %q", dispatchedWith)
 	}
 	if !m.IsBusy() {
 		t.Error("auto-submit should mark the model busy (agent run kicked off)")
 	}
 	msgs := m.Messages()
-	if len(msgs) != 1 || msgs[0].Role != "user" || msgs[0].Content != "review github.com/redcarbon-dev/argus" {
+	if len(msgs) != 1 || msgs[0].Role != "user" || msgs[0].Content != "review github.com/argusappsec/argus" {
 		t.Errorf("history after AutoSubmit = %+v", msgs)
 	}
 }

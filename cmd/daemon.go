@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	ghchannel "github.com/redcarbon-dev/argus/pkg/channel/github"
-	mcpchannel "github.com/redcarbon-dev/argus/pkg/channel/mcp"
-	"github.com/redcarbon-dev/argus/pkg/channel/uds"
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
+	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
+	mcpchannel "github.com/argusappsec/argus/pkg/channel/mcp"
+	"github.com/argusappsec/argus/pkg/channel/uds"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/daemon"
 )
 
 // daemonCmd runs argusd: the long-running shared daemon every Channel lives

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/channel/uds"
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/channel/uds"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/daemon"
 )
 
 // clientSession is a connected CLI client plus the lifecycle of whatever is

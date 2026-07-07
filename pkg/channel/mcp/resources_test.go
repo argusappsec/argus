@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/auth"
 )
 
 // seedOrgKnowledge writes a SOUL, a CONTEXT document, and a report under the

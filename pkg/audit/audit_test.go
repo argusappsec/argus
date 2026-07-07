@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/audit"
 )
 
 func writeEvents(t *testing.T, path string, events []audit.Event) {

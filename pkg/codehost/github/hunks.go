@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/codehost"
 )
 
 // parseHunks extracts the head-side line ranges from a GitHub unified-diff

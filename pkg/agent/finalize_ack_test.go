@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/agent"
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/agent"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/report"
 )
 
 // TestFinalizeReport_EmitsAcknowledgmentToolResult: when the agent calls

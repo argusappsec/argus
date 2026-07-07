@@ -5,8 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/redcarbon-dev/argus/pkg/channel/tui"
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/channel/tui"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // TestModel_AgentEchoesUserMessageIsIgnored: the agent's OnMessage hook

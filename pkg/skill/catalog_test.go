@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/redcarbon-dev/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/skill"
 )
 
 // skillFile builds an fstest entry for fsys/<name>/SKILL.md with the given body.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/security"
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/security"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 func TestGitleaks_ToolMetadata(t *testing.T) {

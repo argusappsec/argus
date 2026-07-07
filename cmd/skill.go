@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redcarbon-dev/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/skill"
 )
 
 // skillCmd manages user-curated agent skills stored under ~/.argus/skills/.

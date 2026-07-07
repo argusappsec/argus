@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/audit"
 )
 
 // RunChannels starts one goroutine per Channel (ADR 0004) and blocks until

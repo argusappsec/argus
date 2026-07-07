@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/skill"
 )
 
 // NewListSkills returns a `list_skills` tool that enumerates the skills the

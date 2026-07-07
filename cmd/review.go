@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/redcarbon-dev/argus/pkg/channel/tui"
-	"github.com/redcarbon-dev/argus/pkg/channel/uds"
-	"github.com/redcarbon-dev/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/channel/tui"
+	"github.com/argusappsec/argus/pkg/channel/uds"
+	"github.com/argusappsec/argus/pkg/codehost/github"
 )
 
 // reviewCmd runs a security review on a GitHub repository through the

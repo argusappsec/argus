@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	cdgithub "github.com/redcarbon-dev/argus/pkg/codehost/github"
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
+	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/daemon"
 )
 
 // Build constructs the GitHub channel from its config section, resolving the

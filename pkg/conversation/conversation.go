@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // Record is one append-only entry in a conversation file.

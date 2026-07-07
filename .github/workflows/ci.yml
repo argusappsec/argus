@@ -1,0 +1,62 @@
+# PR guardian: lint, test, and the image-contract gate on every pull request
+# and push to main. The image job builds the batteries-included image and runs
+# `argus doctor --binaries` inside it (ADR 0013) — a PR that drops a promised
+# scanner from the Dockerfile goes red here. The release pipeline reuses these
+# build/cache patterns for its per-architecture publish.
+#
+# lint and test run their tools through mise, so CI uses the exact go and
+# golangci-lint versions pinned in .mise.toml — no drift from local dev.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - name: golangci-lint
+        run: make lint
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - name: go test -race
+        run: make test
+
+  image-gate:
+    name: image-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Single-arch for a fast PR loop; multi-arch is the release pipeline's
+      # job. GHA layer cache keeps rebuilds cheap when only source changes.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: argus:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # No attestations on the PR gate: they belong to the release
+          # pipeline, and a provenance manifest list can't be `--load`ed into
+          # the runner's docker image store. Keep the build a single loadable
+          # image so `docker run` below can execute it.
+          provenance: false
+      # The image contract: every binary the Tools promise must be present.
+      # Exits non-zero if any is missing, failing the PR.
+      - name: Image-contract gate — argus doctor --binaries
+        run: docker run --rm argus:ci doctor --binaries

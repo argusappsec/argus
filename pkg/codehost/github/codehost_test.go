@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost"
-	"github.com/redcarbon-dev/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/codehost/github"
 )
 
 // tokenEndpoint registers the App installation-token mint endpoint the minter
@@ -28,7 +28,7 @@ func apiServer(t *testing.T) (*httptest.Server, *string) {
 	var lastComment string
 	mux := http.NewServeMux()
 	tokenEndpoint(mux)
-	mux.HandleFunc("/repos/redcarbon-dev/argus/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer ghs_x" {
 			t.Errorf("auth header = %q, want installation token", got)
 		}
@@ -44,8 +44,8 @@ func apiServer(t *testing.T) (*httptest.Server, *string) {
 	mux.HandleFunc("/installation/repositories", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"repositories": []map[string]any{
-				{"full_name": "redcarbon-dev/argus"},
-				{"full_name": "redcarbon-dev/other"},
+				{"full_name": "argusappsec/argus"},
+				{"full_name": "argusappsec/other"},
 			},
 		})
 	})
@@ -69,7 +69,7 @@ func TestCodeHost_PostComment(t *testing.T) {
 	srv, lastComment := apiServer(t)
 	host := newTestHost(t, srv)
 
-	repo := codehost.Repo{Host: "github.com", Owner: "redcarbon-dev", Name: "argus", FullName: "github.com/redcarbon-dev/argus"}
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
 	if err := host.PostComment(context.Background(), repo, 42, "hello PR"); err != nil {
 		t.Fatalf("post comment: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestCodeHost_InstallationRepos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("installation repos: %v", err)
 	}
-	want := []string{"github.com/redcarbon-dev/argus", "github.com/redcarbon-dev/other"}
+	want := []string{"github.com/argusappsec/argus", "github.com/argusappsec/other"}
 	if strings.Join(repos, ",") != strings.Join(want, ",") {
 		t.Errorf("repos = %v, want %v", repos, want)
 	}
@@ -95,7 +95,7 @@ func TestCodeHost_InstallationRepos(t *testing.T) {
 func TestCodeHost_FetchPRDiff(t *testing.T) {
 	mux := http.NewServeMux()
 	tokenEndpoint(mux)
-	mux.HandleFunc("/repos/redcarbon-dev/argus/pulls/42/files", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/pulls/42/files", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[
 		  {"filename": "config.py", "status": "modified",
 		   "patch": "@@ -40,3 +40,5 @@ def load()\n-old\n+new1\n+new2"},
@@ -106,7 +106,7 @@ func TestCodeHost_FetchPRDiff(t *testing.T) {
 	t.Cleanup(srv.Close)
 	host := newTestHost(t, srv)
 
-	repo := codehost.Repo{Host: "github.com", Owner: "redcarbon-dev", Name: "argus", FullName: "github.com/redcarbon-dev/argus"}
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
 	diff, err := host.FetchPRDiff(context.Background(), repo, 42)
 	if err != nil {
 		t.Fatalf("fetch PR diff: %v", err)
@@ -137,7 +137,7 @@ func TestCodeHost_PostReviewMapsInlineAndSummary(t *testing.T) {
 	var summaryBody string
 	mux := http.NewServeMux()
 	tokenEndpoint(mux)
-	mux.HandleFunc("/repos/redcarbon-dev/argus/pulls/42/comments", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/pulls/42/comments", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var payload map[string]any
 		_ = json.Unmarshal(b, &payload)
@@ -145,7 +145,7 @@ func TestCodeHost_PostReviewMapsInlineAndSummary(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id": 1}`))
 	})
-	mux.HandleFunc("/repos/redcarbon-dev/argus/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var payload struct {
 			Body string `json:"body"`
@@ -159,7 +159,7 @@ func TestCodeHost_PostReviewMapsInlineAndSummary(t *testing.T) {
 	t.Cleanup(srv.Close)
 	host := newTestHost(t, srv)
 
-	repo := codehost.Repo{Host: "github.com", Owner: "redcarbon-dev", Name: "argus", FullName: "github.com/redcarbon-dev/argus"}
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
 	review := codehost.Review{
 		HeadSHA: "headsha111",
 		Summary: "Off-diff: bumped lib to a vulnerable version.",
@@ -194,7 +194,7 @@ func TestCodeHost_PostReviewReplaceDeletesPrior(t *testing.T) {
 	mux := http.NewServeMux()
 	tokenEndpoint(mux)
 	// Listing prior PR review comments: one carries the marker, one does not.
-	mux.HandleFunc("/repos/redcarbon-dev/argus/pulls/42/comments", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/pulls/42/comments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`[
 			  {"id": 11, "body": "stale finding\n<!-- argus-review -->"},
@@ -205,14 +205,14 @@ func TestCodeHost_PostReviewReplaceDeletesPrior(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id": 1}`))
 	})
-	mux.HandleFunc("/repos/redcarbon-dev/argus/pulls/comments/11", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/pulls/comments/11", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			deleted = append(deleted, 11)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	// Listing prior issue (summary) comments: one carries the marker.
-	mux.HandleFunc("/repos/redcarbon-dev/argus/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`[{"id": 21, "body": "old summary\n<!-- argus-review -->"}]`))
 			return
@@ -220,7 +220,7 @@ func TestCodeHost_PostReviewReplaceDeletesPrior(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id": 2}`))
 	})
-	mux.HandleFunc("/repos/redcarbon-dev/argus/issues/comments/21", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/argusappsec/argus/issues/comments/21", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			deleted = append(deleted, 21)
 		}
@@ -230,7 +230,7 @@ func TestCodeHost_PostReviewReplaceDeletesPrior(t *testing.T) {
 	t.Cleanup(srv.Close)
 	host := newTestHost(t, srv)
 
-	repo := codehost.Repo{Host: "github.com", Owner: "redcarbon-dev", Name: "argus", FullName: "github.com/redcarbon-dev/argus"}
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
 	review := codehost.Review{HeadSHA: "headsha111", Summary: "fresh review"}
 	if err := host.PostReview(context.Background(), repo, 42, review, true); err != nil {
 		t.Fatalf("post review (replace): %v", err)
@@ -252,11 +252,11 @@ func TestCodeHost_PostReviewReplaceDeletesPrior(t *testing.T) {
 func TestCodeHost_ParseURL(t *testing.T) {
 	srv, _ := apiServer(t)
 	host := newTestHost(t, srv)
-	repo, err := host.ParseURL("https://github.com/redcarbon-dev/argus")
+	repo, err := host.ParseURL("https://github.com/argusappsec/argus")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if repo.FullName != "github.com/redcarbon-dev/argus" || repo.Owner != "redcarbon-dev" {
+	if repo.FullName != "github.com/argusappsec/argus" || repo.Owner != "argusappsec" {
 		t.Errorf("repo = %+v", repo)
 	}
 }

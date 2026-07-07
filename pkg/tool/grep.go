@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // NewGrep returns a grep tool that searches files under the Session's current

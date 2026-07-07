@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/report"
 )
 
 // prReview is the channel-owned record of the review argus[bot] last posted on

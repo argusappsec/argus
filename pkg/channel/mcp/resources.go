@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/auth"
 )
 
 // MCP Resources (ADR 0011, slice 5): the organization's knowledge exposed so the

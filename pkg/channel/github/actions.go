@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/codehost"
-	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/report"
 )
 
 // canActOnReview reports whether role may change a PR's review from the thread

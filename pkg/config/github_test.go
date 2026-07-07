@@ -63,7 +63,7 @@ github:
   webhook_secret: env(GH_WEBHOOK_SECRET)
   auto_enroll: false
   enabled_repos:
-    - github.com/redcarbon-dev/argus
+    - github.com/argusappsec/argus
 `
 	path := writeConfigFile(t, yaml)
 	cfg, err := LoadConfig(path)
@@ -79,7 +79,7 @@ github:
 	if cfg.GitHub.AutoEnrollEnabled() {
 		t.Error("auto_enroll: false should parse as disabled")
 	}
-	if len(cfg.GitHub.EnabledRepos) != 1 || cfg.GitHub.EnabledRepos[0] != "github.com/redcarbon-dev/argus" {
+	if len(cfg.GitHub.EnabledRepos) != 1 || cfg.GitHub.EnabledRepos[0] != "github.com/argusappsec/argus" {
 		t.Errorf("enabled_repos = %v", cfg.GitHub.EnabledRepos)
 	}
 }

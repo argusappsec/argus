@@ -3,8 +3,8 @@ package github
 import "testing"
 
 func TestGate(t *testing.T) {
-	const repo = "github.com/redcarbon-dev/argus"
-	installed := []string{"github.com/redcarbon-dev/argus", "github.com/redcarbon-dev/other"}
+	const repo = "github.com/argusappsec/argus"
+	installed := []string{"github.com/argusappsec/argus", "github.com/argusappsec/other"}
 
 	cases := []struct {
 		name      string

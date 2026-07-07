@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/auth"
 )
 
 // A tools/call from an SSE-capable client streams: the response comes back as an

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/soul"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 func TestWriteSoul_TracerCreatesFile(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // ProtocolVersion is bumped on incompatible frame changes. The server

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/doctor"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/doctor"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // makeStubBinary creates an executable file at <dir>/<name>. It returns a
@@ -238,6 +238,115 @@ func TestRun_DedupesBinariesAcrossSources(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("shared-bin reported %d times, want 1 (extras should win)", count)
+	}
+}
+
+func TestRun_BinariesOnly_AllPresentSucceeds(t *testing.T) {
+	binDir := t.TempDir()
+	homeDir := t.TempDir()
+	makeStubBinary(t, binDir, "git")
+	makeStubBinary(t, binDir, "scanner-bin")
+	t.Setenv("PATH", binDir)
+	// No API key / config on purpose: they must not affect the outcome.
+	t.Setenv("GEMINI_API_KEY", "")
+
+	reg := tool.NewRegistry()
+	reg.Register(stubRequirer{binary: "scanner-bin", hint: "brew install scanner-bin"})
+
+	checks := doctor.Run(doctor.Options{
+		Home:         homeDir,
+		Registry:     reg,
+		BinariesOnly: true,
+		ExtraBinaries: []doctor.ExtraBinary{
+			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
+		},
+	})
+
+	for _, c := range checks {
+		if c.Status != doctor.Pass {
+			t.Errorf("check %q should Pass, got %v (%s)", c.Name, c.Status, c.Hint)
+		}
+	}
+	if doctor.Summarize(checks).HasBlockingFailure() {
+		t.Error("all binaries present should not be a blocking failure")
+	}
+}
+
+func TestRun_BinariesOnly_MissingToolBinaryBlocks(t *testing.T) {
+	binDir := t.TempDir()
+	homeDir := t.TempDir()
+	makeStubBinary(t, binDir, "git")
+	// scanner-bin intentionally missing
+	t.Setenv("PATH", binDir)
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	reg := tool.NewRegistry()
+	reg.Register(stubRequirer{binary: "scanner-bin", hint: "brew install scanner-bin"})
+
+	checks := doctor.Run(doctor.Options{
+		Home:         homeDir,
+		Registry:     reg,
+		BinariesOnly: true,
+		ExtraBinaries: []doctor.ExtraBinary{
+			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
+		},
+	})
+
+	if !doctor.Summarize(checks).HasBlockingFailure() {
+		t.Error("a missing tool-declared binary must be a blocking failure in binaries-only mode")
+	}
+}
+
+func TestRun_BinariesOnly_MissingExtraBinaryBlocks(t *testing.T) {
+	binDir := t.TempDir()
+	homeDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
+	// git (an extra, optional-by-default here) intentionally missing
+	t.Setenv("PATH", binDir)
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	reg := tool.NewRegistry()
+	reg.Register(stubRequirer{binary: "scanner-bin", hint: "brew install scanner-bin"})
+
+	checks := doctor.Run(doctor.Options{
+		Home:         homeDir,
+		Registry:     reg,
+		BinariesOnly: true,
+		ExtraBinaries: []doctor.ExtraBinary{
+			// Declared as NOT required — binaries-only mode must still block.
+			{Name: "git", Required: false, UsedBy: "cloning", InstallHint: "brew install git"},
+		},
+	})
+
+	if !doctor.Summarize(checks).HasBlockingFailure() {
+		t.Error("a missing extra binary must block even when declared optional in binaries-only mode")
+	}
+}
+
+func TestRun_BinariesOnly_SkipsNonBinaryChecks(t *testing.T) {
+	binDir := t.TempDir()
+	homeDir := t.TempDir()
+	makeStubBinary(t, binDir, "git")
+	t.Setenv("PATH", binDir)
+	// Missing API key and config would normally produce a required failure.
+	t.Setenv("GEMINI_API_KEY", "")
+
+	checks := doctor.Run(doctor.Options{
+		Home:         homeDir,
+		BinariesOnly: true,
+		ExtraBinaries: []doctor.ExtraBinary{
+			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
+		},
+	})
+
+	for _, c := range checks {
+		switch c.Name {
+		case "argus.yaml", "GEMINI_API_KEY", "SOUL.md", "context/", "github":
+			t.Errorf("non-binary check %q must not run in binaries-only mode", c.Name)
+		}
+	}
+	if doctor.Summarize(checks).HasBlockingFailure() {
+		t.Error("missing API key/config must not affect the binaries-only outcome")
 	}
 }
 
