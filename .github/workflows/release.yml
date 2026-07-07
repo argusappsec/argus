@@ -1,0 +1,137 @@
+# Release pipeline: publishes the official batteries-included image to
+# ghcr.io/argusappsec/argus (ADR 0013).
+#
+#   - every push to main  → :edge         (continuous dogfooding channel)
+#   - a git tag v*        → semver tags + :latest
+#
+# Multi-arch linux/amd64 + linux/arm64: semgrep ships aarch64 manylinux wheels
+# and gitleaks/osv-scanner are multi-arch Go binaries, so both platforms carry
+# the full toolchain. Login uses the native GITHUB_TOKEN with packages: write —
+# no extra secrets. Provenance + SBOM attestations are pushed to the registry
+# and verify via `gh attestation verify`.
+#
+# The image-contract gate (`argus doctor --binaries`) runs per architecture on
+# native runners BEFORE anything is pushed: the publish job `needs: gate`, so a
+# platform whose image drops a promised scanner never reaches the registry.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/argusappsec/argus
+
+jobs:
+  # Per-architecture image-contract gate. Each platform builds a single-arch
+  # loadable image on its native runner and runs the same check CI's PR gate
+  # runs — no QEMU emulation, so semgrep/python execute natively. The GHA cache
+  # is scoped per platform and reused by the publish build below.
+  gate:
+    name: image-gate (${{ matrix.platform }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.platform }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: argus:gate
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          # A provenance manifest list can't be `--load`ed into the runner's
+          # docker image store; the publish job attaches attestations instead.
+          provenance: false
+      - name: Image-contract gate — argus doctor --binaries
+        run: docker run --rm argus:gate doctor --binaries
+
+  # Multi-arch build, push, and attest. Only runs once every architecture's
+  # gate is green. Reuses the per-platform GHA cache the gate warmed, so this
+  # build is mostly cache hits rather than a full rebuild.
+  publish:
+    name: publish
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push image + attestations to GHCR
+      id-token: write # OIDC for attestation signing
+      attestations: write # record attestations in the GitHub store
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # main → :edge; v* → semver tags (X.Y.Z, X.Y, X) + :latest.
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # latest=auto (the default) tags :latest on semver tags but skips
+          # prereleases, so a `v1.2.0-rc.1` tag never moves the stable :latest.
+          flavor: |
+            latest=auto
+          tags: |
+            type=edge,branch=main
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=linux/amd64
+            type=gha,scope=linux/arm64
+          # Attestations are attached below via the actions/attest-* toolchain
+          # so they land in the GitHub store and verify with `gh attestation
+          # verify`; buildkit's inline attestations would not.
+          provenance: false
+          sbom: false
+      # Provenance for the pushed manifest-list digest, mirrored to GHCR.
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      # SBOM of the published image, attested and mirrored to GHCR.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
