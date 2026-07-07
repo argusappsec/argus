@@ -90,8 +90,11 @@ need to protect the genuinely irreplaceable accumulated state.
   declarative user management; `users.yaml` is runtime state, not config.
   Securing the deployment means securing `exec` rights via K8s RBAC.
 - **A container image is required.** The repo ships a multi-stage
-  `Dockerfile` producing a static binary on a distroless `nonroot` base
-  (uid 65532), so the PVC must be mounted with `securityContext.fsGroup`.
+  `Dockerfile`; the runtime image carries the scanner toolchain — see
+  [ADR 0013](0013-batteries-included-runtime-image.md), which supersedes the
+  distroless/static base originally shipped with this ADR (it could neither
+  clone nor scan). The image still runs nonroot (uid 65532), so the PVC must
+  be mounted with `securityContext.fsGroup`.
 - **MCP exposure is a deploy-time toggle** (public behind bearer+TLS for
   remote developers, or ClusterIP-only for VPN/in-cluster clients), not an
   architectural decision.
