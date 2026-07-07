@@ -8,8 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/redcarbon-dev/argus/pkg/skill"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // userCatalog builds a Catalog whose only source is the user dir (the built-in

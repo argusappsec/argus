@@ -1,4 +1,4 @@
-module github.com/redcarbon-dev/argus
+module github.com/argusappsec/argus
 
 go 1.26
 

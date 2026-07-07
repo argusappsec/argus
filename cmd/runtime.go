@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/redcarbon-dev/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/budget"
 )
 
 // The per-command embedded runtime is gone: chat and review are UDS clients

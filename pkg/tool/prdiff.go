@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // NewPRDiff returns a `pr_diff` tool that exposes the pull request's changed

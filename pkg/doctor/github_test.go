@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/doctor"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/doctor"
 )
 
 func findCheck(checks []doctor.Check, name string) *doctor.Check {

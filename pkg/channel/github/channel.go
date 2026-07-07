@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/codehost"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/report"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // maxBodyBytes bounds the webhook payload we read into memory.

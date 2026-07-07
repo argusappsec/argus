@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/config"
 )
 
 func TestEnv_LoadParsesKeyValuePairs(t *testing.T) {

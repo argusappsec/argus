@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // NewListFiles returns a list_files tool that reads its target directory from

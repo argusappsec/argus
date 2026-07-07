@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/config"
 )
 
 // fakePEM writes a believable private key file and returns its path.

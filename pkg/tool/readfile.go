@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // NewReadFile returns a read_file tool that resolves paths against the

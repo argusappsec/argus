@@ -15,14 +15,14 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/redcarbon-dev/argus/pkg/agent"
-	"github.com/redcarbon-dev/argus/pkg/budget"
-	"github.com/redcarbon-dev/argus/pkg/channel/tui"
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
-	"github.com/redcarbon-dev/argus/pkg/soul"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/agent"
+	"github.com/argusappsec/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/channel/tui"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider/gemini"
+	"github.com/argusappsec/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // initCmd is the bootstrap flow. Two phases:

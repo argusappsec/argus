@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // toolConsult is the name of the consult capability (ADR 0011): org-knowledge

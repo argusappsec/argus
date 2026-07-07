@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/auth"
 )
 
 // sseHeartbeatInterval is how often a streaming tool call emits a keep-alive

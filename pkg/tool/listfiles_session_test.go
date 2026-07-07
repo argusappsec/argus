@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // TestListFiles_UsesSessionRoot is the v0.2 tracer: list_files no longer takes

@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/redcarbon-dev/argus/pkg/channel/tui"
-	"github.com/redcarbon-dev/argus/pkg/channel/uds"
+	"github.com/argusappsec/argus/pkg/channel/tui"
+	"github.com/argusappsec/argus/pkg/channel/uds"
 )
 
 // chatCmd is the interactive entry point. The TUI is a pure UDS client: it

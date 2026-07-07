@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/codehost/github"
 )
 
 func testKeyPEM(t *testing.T) []byte {

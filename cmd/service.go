@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/auth"
 )
 
 // serviceCmd manages the services in ~/.argus/users.yaml (ADR 0003 / 0008). A

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // NewGitleaks returns a `run_gitleaks` tool that scans the Session's current

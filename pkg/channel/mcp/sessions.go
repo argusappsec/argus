@@ -3,8 +3,8 @@ package mcp
 import (
 	"sync"
 
-	"github.com/redcarbon-dev/argus/pkg/daemon"
-	"github.com/redcarbon-dev/argus/pkg/snapshot"
+	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/snapshot"
 )
 
 // sessionHeader is the MCP Streamable HTTP session id: the server mints it on

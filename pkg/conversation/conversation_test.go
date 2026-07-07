@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/conversation"
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 func TestWriter_AppendsAndReadAllReturnsInOrder(t *testing.T) {

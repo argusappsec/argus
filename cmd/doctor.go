@@ -10,12 +10,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	ghchannel "github.com/redcarbon-dev/argus/pkg/channel/github"
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/doctor"
-	"github.com/redcarbon-dev/argus/pkg/security"
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/doctor"
+	"github.com/argusappsec/argus/pkg/security"
+	"github.com/argusappsec/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // doctorCmd performs a pre-flight check of the environment. Exits 0 when all

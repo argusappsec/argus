@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/report"
-	"github.com/redcarbon-dev/argus/pkg/soul"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // Target identifies the artifact under review.

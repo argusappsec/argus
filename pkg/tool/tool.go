@@ -11,7 +11,7 @@ import (
 	"maps"
 	"sort"
 
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // Tool is the contract every callable capability satisfies.

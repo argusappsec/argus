@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/redcarbon-dev/argus/cmd"
+	"github.com/argusappsec/argus/cmd"
 )
 
 func main() {

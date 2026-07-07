@@ -18,16 +18,16 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/budget"
-	"github.com/redcarbon-dev/argus/pkg/codehost/github"
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/provider/gemini"
-	"github.com/redcarbon-dev/argus/pkg/report"
-	"github.com/redcarbon-dev/argus/pkg/skill"
-	"github.com/redcarbon-dev/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider/gemini"
+	"github.com/argusappsec/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/soul"
 )
 
 // Channel is one transport binding (ADR 0004). Implementations listen on

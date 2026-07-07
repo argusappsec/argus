@@ -24,14 +24,14 @@ const openedPR = `{
     "head": {"sha": "headsha111"},
     "base": {"sha": "basesha000"}
   },
-  "repository": {"full_name": "redcarbon-dev/argus", "name": "argus", "owner": {"login": "redcarbon-dev"}}
+  "repository": {"full_name": "argusappsec/argus", "name": "argus", "owner": {"login": "argusappsec"}}
 }`
 
 const issueComment = `{
   "action": "created",
   "issue": {"number": 7},
   "comment": {"body": "@argus explain this", "user": {"login": "bob"}},
-  "repository": {"full_name": "redcarbon-dev/argus", "name": "argus", "owner": {"login": "redcarbon-dev"}}
+  "repository": {"full_name": "argusappsec/argus", "name": "argus", "owner": {"login": "argusappsec"}}
 }`
 
 func TestParse_ValidPullRequest(t *testing.T) {
@@ -46,10 +46,10 @@ func TestParse_ValidPullRequest(t *testing.T) {
 	if evt.Action != "opened" || evt.Number != 42 {
 		t.Errorf("action/number = %q/%d", evt.Action, evt.Number)
 	}
-	if evt.Repo != "github.com/redcarbon-dev/argus" {
+	if evt.Repo != "github.com/argusappsec/argus" {
 		t.Errorf("repo = %q", evt.Repo)
 	}
-	if evt.Owner != "redcarbon-dev" || evt.Name != "argus" {
+	if evt.Owner != "argusappsec" || evt.Name != "argus" {
 		t.Errorf("owner/name = %q/%q", evt.Owner, evt.Name)
 	}
 	if evt.HeadSHA != "headsha111" || evt.BaseSHA != "basesha000" {
@@ -113,7 +113,7 @@ func TestParse_CommentSurfacesLoginBodyRepoNumber(t *testing.T) {
 	if evt.Body != "@argus explain this" {
 		t.Errorf("body = %q", evt.Body)
 	}
-	if evt.Number != 7 || evt.Repo != "github.com/redcarbon-dev/argus" {
+	if evt.Number != 7 || evt.Repo != "github.com/argusappsec/argus" {
 		t.Errorf("number/repo = %d/%q", evt.Number, evt.Repo)
 	}
 }

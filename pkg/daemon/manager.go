@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
-	"github.com/redcarbon-dev/argus/pkg/memory"
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/memory"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // ErrSessionLimit is returned by GetOrCreate above max_concurrent_sessions.

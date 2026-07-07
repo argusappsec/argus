@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // sessionWith returns a Session pre-rooted at root, the common setup pattern.

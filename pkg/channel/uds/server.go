@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // helloTimeout bounds how long a fresh connection may take to present its

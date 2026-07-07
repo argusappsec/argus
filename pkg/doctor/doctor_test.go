@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/doctor"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/doctor"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // makeStubBinary creates an executable file at <dir>/<name>. It returns a

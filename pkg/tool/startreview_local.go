@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // NewStartReviewLocal returns a `start_review_local` tool that the LLM calls

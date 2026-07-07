@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // NewSemgrep returns a `run_semgrep` tool that scans the Session's current

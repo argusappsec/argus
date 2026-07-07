@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/redcarbon-dev/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/soul"
 )
 
 // NewWriteSoul returns a `write_soul` tool that persists the agent's identity

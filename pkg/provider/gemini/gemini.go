@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"github.com/redcarbon-dev/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // Provider talks to Gemini via google.golang.org/genai.

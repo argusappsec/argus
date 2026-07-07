@@ -7,24 +7,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/codehost/github"
 )
 
 func TestParseURL_HTTPSForm(t *testing.T) {
-	u, err := github.ParseURL("https://github.com/redcarbon-dev/argus")
+	u, err := github.ParseURL("https://github.com/argusappsec/argus")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if u.Owner != "redcarbon-dev" || u.Name != "argus" {
+	if u.Owner != "argusappsec" || u.Name != "argus" {
 		t.Errorf("got %+v", u)
 	}
-	if u.FullName != "github.com/redcarbon-dev/argus" {
+	if u.FullName != "github.com/argusappsec/argus" {
 		t.Errorf("full = %q", u.FullName)
 	}
 }
 
 func TestParseURL_HTTPSWithDotGit(t *testing.T) {
-	u, err := github.ParseURL("https://github.com/redcarbon-dev/argus.git")
+	u, err := github.ParseURL("https://github.com/argusappsec/argus.git")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -34,11 +34,11 @@ func TestParseURL_HTTPSWithDotGit(t *testing.T) {
 }
 
 func TestParseURL_ShortForm(t *testing.T) {
-	u, err := github.ParseURL("github.com/redcarbon-dev/argus")
+	u, err := github.ParseURL("github.com/argusappsec/argus")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if u.Owner != "redcarbon-dev" {
+	if u.Owner != "argusappsec" {
 		t.Errorf("owner = %q", u.Owner)
 	}
 }
@@ -83,7 +83,7 @@ func TestCloner_ClonesWhenCacheMiss(t *testing.T) {
 	}
 
 	c := github.NewClonerWithRunner(cacheRoot, runs)
-	u, _ := github.ParseURL("https://github.com/redcarbon-dev/argus")
+	u, _ := github.ParseURL("https://github.com/argusappsec/argus")
 	co, err := c.Clone(context.Background(), u, "")
 	if err != nil {
 		t.Fatalf("clone: %v", err)
@@ -128,7 +128,7 @@ func TestCloner_CacheHitSkipsClone(t *testing.T) {
 		},
 	}
 	c := github.NewClonerWithRunner(cacheRoot, runs)
-	u, _ := github.ParseURL("https://github.com/redcarbon-dev/argus")
+	u, _ := github.ParseURL("https://github.com/argusappsec/argus")
 
 	if _, err := c.Clone(context.Background(), u, ""); err != nil {
 		t.Fatalf("first clone: %v", err)

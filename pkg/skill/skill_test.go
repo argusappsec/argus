@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/skill"
 )
 
 func TestParse_Valid(t *testing.T) {

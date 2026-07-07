@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/soul"
 )
 
 func TestParse_FrontmatterAndBody(t *testing.T) {

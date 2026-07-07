@@ -7,7 +7,7 @@ should follow the conventions documented here.
 
 ### Issue tracker
 
-Issues live on GitHub (`redcarbon-dev/argus`) and are managed via the `gh` CLI.
+Issues live on GitHub (`argusappsec/argus`) and are managed via the `gh` CLI.
 See `docs/agents/issue-tracker.md`.
 
 ### Triage labels

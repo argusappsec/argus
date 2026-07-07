@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost/github"
-	"github.com/redcarbon-dev/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/codehost/github"
+	"github.com/argusappsec/argus/pkg/session"
 )
 
 // Cloner is the subset of pkg/codehost/github we need: enough to ask "clone

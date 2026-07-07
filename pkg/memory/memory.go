@@ -24,11 +24,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/agent"
-	"github.com/redcarbon-dev/argus/pkg/conversation"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/soul"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/agent"
+	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // Options bundles the curator's dependencies.

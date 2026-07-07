@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/redcarbon-dev/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/codehost"
 )
 
 // CodeHost is the GitHub implementation of codehost.CodeHost (ADR 0010). It

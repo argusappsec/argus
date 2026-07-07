@@ -14,18 +14,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/audit"
-	"github.com/redcarbon-dev/argus/pkg/auth"
-	"github.com/redcarbon-dev/argus/pkg/budget"
-	"github.com/redcarbon-dev/argus/pkg/codehost"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
-	"github.com/redcarbon-dev/argus/pkg/provider"
-	"github.com/redcarbon-dev/argus/pkg/report"
-	"github.com/redcarbon-dev/argus/pkg/skill"
-	"github.com/redcarbon-dev/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/audit"
+	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/codehost"
+	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/skill"
+	"github.com/argusappsec/argus/pkg/soul"
 )
 
-const installedRepo = "github.com/redcarbon-dev/argus"
+const installedRepo = "github.com/argusappsec/argus"
 
 // fakeHost records writes and clones, returns a fixed installation repo set,
 // and serves a configurable PR diff so the channel's inline-vs-summary
@@ -441,7 +441,7 @@ func commentOn(number int, login, text string) string {
   "action": "created",
   "issue": {"number": ` + strconv.Itoa(number) + `},
   "comment": {"body": ` + strconv.Quote(text) + `, "user": {"login": ` + strconv.Quote(login) + `}},
-  "repository": {"full_name": "redcarbon-dev/argus", "name": "argus", "owner": {"login": "redcarbon-dev"}}
+  "repository": {"full_name": "argusappsec/argus", "name": "argus", "owner": {"login": "argusappsec"}}
 }`
 }
 
@@ -533,7 +533,7 @@ func TestChannel_CommentSharesPRSessionIdentityAndContext(t *testing.T) {
 
 	// Both the review seed and the comment request live in ONE conversation log,
 	// keyed by the PR's stable session identity — that is the shared continuity.
-	id := daemon.SessionID("github", "github.com/redcarbon-dev/argus#42")
+	id := daemon.SessionID("github", "github.com/argusappsec/argus#42")
 	log, err := os.ReadFile(filepath.Join(dc.Home, "conversations", id+".jsonl"))
 	if err != nil {
 		t.Fatalf("read conversation log: %v", err)

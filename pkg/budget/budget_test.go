@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redcarbon-dev/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/budget"
 )
 
 // staticClock returns a fixed time, useful for deterministic daily-window tests.

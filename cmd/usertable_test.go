@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/auth"
 )
 
 func runUser(t *testing.T, args ...string) (string, error) {

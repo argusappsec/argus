@@ -14,9 +14,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/soul"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/soul"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // Status is the outcome of a single check.

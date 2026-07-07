@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/redcarbon-dev/argus/pkg/session"
-	"github.com/redcarbon-dev/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/session"
+	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // NewOSVScanner returns a `run_osv_scanner` tool that scans the Session's

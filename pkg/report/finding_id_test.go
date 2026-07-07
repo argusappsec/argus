@@ -3,7 +3,7 @@ package report_test
 import (
 	"testing"
 
-	"github.com/redcarbon-dev/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/report"
 )
 
 func TestComputeFindingID_Deterministic(t *testing.T) {

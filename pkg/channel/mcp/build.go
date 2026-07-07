@@ -1,8 +1,8 @@
 package mcp
 
 import (
-	"github.com/redcarbon-dev/argus/pkg/config"
-	"github.com/redcarbon-dev/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/daemon"
 )
 
 // Build constructs the MCP channel from its config section. Auth is per-Person
