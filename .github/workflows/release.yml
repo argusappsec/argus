@@ -4,6 +4,11 @@
 #   - every push to main  → :edge         (continuous dogfooding channel)
 #   - a git tag v*        → semver tags + :latest
 #
+# Tags normally arrive from release-please (ADR 0014), whose GITHUB_TOKEN tag
+# events can't fire the push trigger (GitHub's recursion guard) — its workflow
+# dispatches this one on the tag ref instead, which is exempt from the guard.
+# Hand-pushed tags still come through the push trigger.
+#
 # Multi-arch linux/amd64 + linux/arm64: semgrep ships aarch64 manylinux wheels
 # and gitleaks/osv-scanner are multi-arch Go binaries, so both platforms carry
 # the full toolchain. Login uses the native GITHUB_TOKEN with packages: write —
@@ -19,6 +24,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # Dispatched by release-please.yml on the freshly created tag ref; the
+  # semver image tags below derive from github.ref, so no inputs are needed.
+  workflow_dispatch:
 
 permissions:
   contents: read
