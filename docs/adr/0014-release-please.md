@@ -40,10 +40,14 @@ changelog and GitHub Releases:
   minor (0.x → 0.(x+1)) instead of jumping to 1.0.0. Going 1.0 is a
   deliberate act, not the side effect of a `!` commit. `feat` bumps minor,
   `fix` bumps patch (defaults).
-- **Bootstrap:** `.release-please-manifest.json` starts at `0.0.0` — the
+- **Bootstrap:** `.release-please-manifest.json` starts at `0.0.1` — the
   manifest records the *last released* version, and the `feat` commits in
   history bump it to a first release of **v0.1.0** whose changelog carries
-  the full feature history.
+  the full feature history. Not `0.0.0`: release-please treats that one
+  value as "never released" and falls back to its default initial version,
+  1.0.0 (upstream issue #2087), ignoring the pre-major flags. The tag
+  `v0.0.1` never existed; the only artifact of the lie is a dead compare
+  link in the first changelog entry.
 
 ## Consequences
 
