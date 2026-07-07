@@ -79,10 +79,27 @@ type Options struct {
 	// doctor package itself pure). Nil means the mint is not attempted —
 	// only credential presence is checked.
 	GitHubMint func(ctx context.Context) error
+
+	// BinariesOnly restricts Run to the image-contract check (ADR 0013):
+	// only binary checks execute, and every binary is treated as blocking
+	// (Required) regardless of its per-tool "optional" severity. This is the
+	// check CI runs against the batteries-included image — inside the official
+	// image "optional" does not exist; everything the image promises is owed.
+	// Non-binary checks (config, API key, SOUL, context, GitHub) are skipped
+	// and cannot affect the outcome.
+	BinariesOnly bool
 }
 
 // Run executes all checks and returns the results in display order.
 func Run(opts Options) []Check {
+	if opts.BinariesOnly {
+		checks := binaryChecks(opts.Registry, opts.ExtraBinaries)
+		for i := range checks {
+			checks[i].Severity = SeverityRequired
+		}
+		return checks
+	}
+
 	var out []Check
 	out = append(out, binaryChecks(opts.Registry, opts.ExtraBinaries)...)
 	out = append(out, configChecks(opts.Home)...)
