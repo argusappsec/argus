@@ -196,7 +196,6 @@ func (a *Agent) Run(ctx context.Context, t Target) (*report.Report, error) {
 					Output: buildFinalizeAck(rep, reportPath),
 				})
 				toolMsg := provider.Message{Role: "tool", ToolResults: results}
-				msgs = append(msgs, toolMsg)
 				a.persistMessage(toolMsg)
 				return rep, nil
 			default:

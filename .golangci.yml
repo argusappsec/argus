@@ -1,0 +1,28 @@
+# golangci-lint policy for Argus. Runs in CI (ci.yml) and locally via
+# `make lint`; the version is pinned in .mise.toml.
+#
+# We keep the default linter set. The one carve-out is errcheck on
+# fire-and-forget calls: closing a handle (typically in a defer), writing to
+# stdout/stderr for user-facing output, and removing a temp path during
+# cleanup. There is no meaningful recovery for these, and checking them adds
+# noise without catching bugs. Everything else — including real error returns
+# — stays enforced.
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - os.Remove
+        - os.RemoveAll
+  exclusions:
+    rules:
+      # Unchecked Close() — on files, connections, listeners — is a deliberate
+      # fire-and-forget idiom here; matching on the source line catches it
+      # regardless of the concrete handle type.
+      - linters:
+          - errcheck
+        source: '\.Close\(\)'

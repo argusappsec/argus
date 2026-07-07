@@ -269,7 +269,9 @@ func TestRelease_EphemeralSessionSkipsCuration(t *testing.T) {
 }
 
 func TestSessionID_StableAndChannelScoped(t *testing.T) {
-	if SessionID("uds", "a") != SessionID("uds", "a") {
+	first := SessionID("uds", "a")
+	second := SessionID("uds", "a")
+	if first != second {
 		t.Error("SessionID must be deterministic")
 	}
 	if SessionID("uds", "a") == SessionID("slack", "a") {
