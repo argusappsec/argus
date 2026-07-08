@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/argusappsec/argus/compare/v0.1.0...v0.2.0) (2026-07-08)
+
+
+### Features
+
+* **persona:** operator-chosen instance name via persona.name ([#46](https://github.com/argusappsec/argus/issues/46)) ([3d746c6](https://github.com/argusappsec/argus/commit/3d746c64f2d00e44ce4437c1949b5ccc4909920f))
+
 ## [0.1.0](https://github.com/argusappsec/argus/compare/v0.0.1...v0.1.0) (2026-07-07)
 
 
