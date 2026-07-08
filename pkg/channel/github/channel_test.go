@@ -477,6 +477,32 @@ func TestChannel_MentionFromResolvedPersonGetsThreadedReply(t *testing.T) {
 	}
 }
 
+func TestChannel_PersonaNameMentionGetsThreadedReply(t *testing.T) {
+	// An instance deployed under the persona name "Ercole" answers a comment
+	// that tags @Ercole (as well as @argus), proving the name is wired from the
+	// channel Options through to the deterministic mention match.
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	_, dc, _ := testChannel(t, host, replyScript("Move that key to an env var."), true, nil)
+	s := NewServer(dc, host, Options{
+		Addr:          ":0",
+		WebhookSecret: testSecret,
+		AutoEnroll:    true,
+		PersonaName:   "Ercole",
+	})
+
+	body := []byte(commentOn(42, "bob", "@Ercole explain this"))
+	code := postEvent(t, s, "issue_comment", "c1", body, sign(body, testSecret))
+	if code != 200 {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if len(host.comments) != 1 {
+		t.Fatalf("comments = %d, want 1 (a persona-name mention must be answered)", len(host.comments))
+	}
+	if !strings.Contains(host.comments[0].body, "env var") {
+		t.Errorf("reply body missing agent answer:\n%s", host.comments[0].body)
+	}
+}
+
 func TestChannel_CommentWithoutMentionSilentlyIgnored(t *testing.T) {
 	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
 	s, _, _ := testChannel(t, host, replyScript("should not run"), true, nil)
