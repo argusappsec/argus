@@ -69,6 +69,12 @@ type Options struct {
 	// by the memory-curator subagent at the end of each session.
 	Memory string
 
+	// PersonaName is the operator-chosen name this instance is deployed under
+	// (persona.name in argus.yaml). When set, a single line is prepended to the
+	// system prompt so the agent introduces and signs itself by that name. Empty
+	// leaves the prompt unchanged.
+	PersonaName string
+
 	MaxTurns int
 }
 
@@ -376,22 +382,25 @@ func severityCounts(findings []report.Finding) string {
 }
 
 // composeSystemPrompt builds the full system instruction by stacking:
-//  1. SOUL — identity (always-load, slow-moving facts about who/what)
-//  2. MEMORY — session continuity (preferences, accepted FPs, recent decisions)
+//  1. PERSONA — the deployed name (so the agent signs itself consistently)
+//  2. SOUL — identity (always-load, slow-moving facts about who/what)
+//  3. MEMORY — session continuity (preferences, accepted FPs, recent decisions)
 //
-// Both are optional. If neither is set the system instruction is empty and
-// the agent runs unstyled — useful for tests and for the bootstrap interview
-// before SOUL.md exists.
+// All are optional. If none is set the system instruction is empty and the
+// agent runs unstyled — useful for tests and for the bootstrap interview before
+// SOUL.md exists.
 func (a *Agent) composeSystemPrompt() string {
-	soulPart := a.opts.Soul.SystemPrompt()
-	memPart := strings.TrimSpace(a.opts.Memory)
-	if memPart == "" {
-		return soulPart
+	var parts []string
+	if name := strings.TrimSpace(a.opts.PersonaName); name != "" {
+		parts = append(parts, fmt.Sprintf("You are deployed under the name %s; that is how colleagues address you and how you sign your replies.", name))
 	}
-	if soulPart == "" {
-		return "# Memory — what you remember from prior sessions\n" + memPart
+	if soulPart := a.opts.Soul.SystemPrompt(); soulPart != "" {
+		parts = append(parts, soulPart)
 	}
-	return soulPart + "\n\n# Memory — what you remember from prior sessions\n" + memPart
+	if memPart := strings.TrimSpace(a.opts.Memory); memPart != "" {
+		parts = append(parts, "# Memory — what you remember from prior sessions\n"+memPart)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (a *Agent) audit(evtType string, data map[string]any) error {

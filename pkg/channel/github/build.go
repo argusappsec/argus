@@ -28,6 +28,9 @@ func Build(dc *daemon.Context, cfg config.GitHubConfig) (*Server, error) {
 		WebhookSecret: secret,
 		AutoEnroll:    cfg.AutoEnrollEnabled(),
 		EnabledRepos:  cfg.EnabledRepos,
+		// persona.name lives at the top level of argus.yaml (not under github:),
+		// so it reaches the channel via the shared daemon Context.
+		PersonaName: dc.PersonaName,
 	}), nil
 }
 

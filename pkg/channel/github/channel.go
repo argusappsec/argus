@@ -31,6 +31,7 @@ type Options struct {
 	WebhookSecret string   // resolved App webhook secret (raw)
 	AutoEnroll    bool     // effective github.auto_enroll
 	EnabledRepos  []string // explicit allow-list when AutoEnroll is false
+	PersonaName   string   // operator-chosen name (persona.name); adds @<name> as a mention token
 }
 
 // Server is the GitHub App channel (ADR 0008): an HTTP listener for webhook
@@ -44,6 +45,11 @@ type Server struct {
 	secretSHA string
 	dedup     *deliveryCache
 	reviews   *prReviewStore
+
+	// mentions is the set of @-handles a comment may use to address this
+	// instance (@argus plus any configured persona handle), computed once at
+	// construction rather than per event.
+	mentions []string
 }
 
 // NewServer builds the channel. host is the authenticated CodeHost the ack is
@@ -57,6 +63,7 @@ func NewServer(dc *daemon.Context, host codehost.CodeHost, opts Options) *Server
 		secretSHA: hex.EncodeToString(sum[:]),
 		dedup:     newDeliveryCache(2048),
 		reviews:   newPRReviewStore(dc.Home),
+		mentions:  mentionTokens(opts.PersonaName),
 	}
 }
 
@@ -183,7 +190,7 @@ func (s *Server) dispatchPullRequest(ctx context.Context, evt Event) error {
 // resident in-memory session), runs one agent turn attributed to that Person
 // with their Role, and posts the agent's answer back in the thread.
 func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
-	request, ok := parseMention(evt.Body)
+	request, ok := parseMention(evt.Body, s.mentions)
 	if !ok {
 		return nil // not addressed to Argus — silently ignored (ADR 0008)
 	}
@@ -236,7 +243,8 @@ func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
 	}
 
 	// The mention-stripped request is what the agent acts on; fall back to the
-	// raw body for a bare "@argus" so the user message is never empty.
+	// raw body for a bare mention (the comment was only the handle) so the user
+	// message is never empty.
 	text := request
 	if text == "" {
 		text = evt.Body

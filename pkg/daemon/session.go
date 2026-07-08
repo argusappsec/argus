@@ -62,15 +62,16 @@ type Session struct {
 	maxTurns  int
 	ephemeral bool // one-shot Session: skip end-of-session memory curation
 
-	dc        *Context
-	toolState *session.Session
-	convo     *conversation.Writer
-	convoPath string
-	provider  provider.Provider
-	registry  *tool.Registry
-	audit     *audit.Logger
-	soul      *soul.Soul
-	memory    string
+	dc          *Context
+	toolState   *session.Session
+	convo       *conversation.Writer
+	convoPath   string
+	provider    provider.Provider
+	registry    *tool.Registry
+	audit       *audit.Logger
+	soul        *soul.Soul
+	memory      string
+	personaName string
 
 	mu       sync.Mutex
 	running  bool
@@ -347,6 +348,7 @@ func (s *Session) run(ctx context.Context, seed []provider.Message, target agent
 		Conversation: s.convo,
 		Soul:         s.soul,
 		Memory:       s.memory,
+		PersonaName:  s.personaName,
 		MaxTurns:     s.maxTurns,
 		SeedMessages: seed,
 		OnMessage: func(m provider.Message) {

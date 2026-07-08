@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
@@ -46,6 +47,12 @@ type Context struct {
 	DefaultModel string
 	SocketPath   string
 	Pricing      budget.Pricing
+
+	// PersonaName is the operator-chosen name this instance answers to
+	// (persona.name in argus.yaml), or "" for the brand default. Like the rest
+	// of argus.yaml it is read once at Build (restart to change): it feeds the
+	// GitHub mention token and the agent's system prompt.
+	PersonaName string
 
 	Auth    *auth.Resolver
 	Audit   *audit.Logger
@@ -93,6 +100,7 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		DefaultModel: cfg.DefaultModel,
 		SocketPath:   cfg.Daemon.SocketPath(home),
 		Pricing:      defaultPricing(),
+		PersonaName:  strings.TrimSpace(cfg.Persona.Name),
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
