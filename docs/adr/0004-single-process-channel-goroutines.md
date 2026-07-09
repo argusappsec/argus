@@ -1,6 +1,8 @@
 # ADR 0004 — Single-process daemon with one goroutine per Channel
 
-**Status:** Accepted
+**Status:** Accepted — amended by
+[ADR 0015](0015-integrations-declared-in-configuration.md): HTTP channels
+bind paths on the daemon's shared front door instead of owning ports
 **Date:** 2026-05-16
 **Builds on:** [ADR 0001](0001-single-shared-daemon-per-organization.md)
 

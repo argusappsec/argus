@@ -32,9 +32,9 @@ func TestSlashCommand_HelpDoesNotInvokeAgent(t *testing.T) {
 	if model.IsBusy() {
 		t.Error("slash command should not mark model busy")
 	}
-	view := model.View()
-	if !strings.Contains(view, "/help") || !strings.Contains(view, "/clear") {
-		t.Errorf("help output should list available commands; got:\n%s", view)
+	// Help lands in the scrollback (a system message), not the footer.
+	if !historyContains(model, "/help") || !historyContains(model, "/clear") {
+		t.Errorf("help output should list available commands; got:\n%+v", model.Messages())
 	}
 }
 
@@ -66,12 +66,12 @@ func TestSlashCommand_CostShowsCurrentSpend(t *testing.T) {
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(tui.Model)
 
-	view := model.View()
-	if !strings.Contains(view, "1000") || !strings.Contains(view, "200") {
-		t.Errorf("/cost should show cumulative tokens; view:\n%s", view)
+	// /cost prints a system line into the scrollback with the current spend.
+	if !historyContains(model, "1000") || !historyContains(model, "200") {
+		t.Errorf("/cost should report cumulative tokens; got:\n%+v", model.Messages())
 	}
-	if !strings.Contains(view, "0.0123") {
-		t.Errorf("/cost should show cumulative USD; view:\n%s", view)
+	if !historyContains(model, "0.0123") {
+		t.Errorf("/cost should report cumulative USD; got:\n%+v", model.Messages())
 	}
 }
 
@@ -99,9 +99,8 @@ func TestSlashCommand_UnknownIsRejected(t *testing.T) {
 	if dispatched {
 		t.Error("unknown slash command must not be dispatched to the agent")
 	}
-	view := model.View()
-	if !strings.Contains(view, "unknown") || !strings.Contains(view, "/nonsense") {
-		t.Errorf("unknown slash command should produce a system message naming it; view:\n%s", view)
+	if !historyContains(model, "unknown") || !historyContains(model, "/nonsense") {
+		t.Errorf("unknown slash command should produce a system message naming it; got:\n%+v", model.Messages())
 	}
 }
 
@@ -148,8 +147,8 @@ func TestSlashCommand_SkillIsDispatchedToAgent(t *testing.T) {
 	if !model.IsBusy() {
 		t.Error("invoking a skill should mark the model busy")
 	}
-	if !strings.Contains(model.View(), "invoking skill") {
-		t.Errorf("expected an 'invoking skill' notice; view:\n%s", model.View())
+	if !historyContains(model, "invoking skill") {
+		t.Errorf("expected an 'invoking skill' notice; got:\n%+v", model.Messages())
 	}
 }
 
@@ -168,7 +167,7 @@ func TestSlashCommand_UnknownSkillIsRejected(t *testing.T) {
 	if dispatched {
 		t.Error("an unresolved skill slash command must not be dispatched")
 	}
-	if !strings.Contains(model.View(), "unknown") {
-		t.Errorf("unresolved skill should be reported as unknown; view:\n%s", model.View())
+	if !historyContains(model, "unknown") {
+		t.Errorf("unresolved skill should be reported as unknown; got:\n%+v", model.Messages())
 	}
 }

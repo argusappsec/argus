@@ -299,13 +299,16 @@ func soulCheck(home string) Check {
 		if s.RiskTolerance != "" {
 			populated++
 		}
-		if s.Escalation != "" {
+		if s.Language != "" {
+			populated++
+		}
+		if len(s.SeverityRules) > 0 {
 			populated++
 		}
 		if s.Persona != "" {
 			populated++
 		}
-		c.Message = fmt.Sprintf("company=%s, %d/10 fields populated", emptyOrValue(s.Company), populated)
+		c.Message = fmt.Sprintf("company=%s, %d/11 fields populated", emptyOrValue(s.Company), populated)
 	}
 	return c
 }

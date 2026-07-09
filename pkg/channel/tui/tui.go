@@ -1,25 +1,32 @@
 // Package tui implements the bubbletea-based terminal chat for Argus.
 //
-// Visual style is intentionally close to Claude Code's terminal UI:
-// bordered viewport for scrollable history on top, bordered input at the
-// bottom, single-line status bar showing cumulative usage and a spinner
-// while the agent is working.
+// The TUI runs INLINE (no alt-screen): completed messages are printed once
+// into the terminal's native scrollback via tea.Println, and bubbletea only
+// manages a small footer frame at the bottom — the input textarea (bordered,
+// growing 1→6 rows) plus a single status line with cumulative usage and a
+// spinner while the agent works. Printing to scrollback (instead of a bordered
+// viewport) means the terminal owns wrapping and selection: long lines are no
+// longer truncated, and the mouse stays free for copy/paste.
 //
-// The model follows the Elm pattern: Update returns a new Model in response
-// to messages; View renders the current state. External integration is via
-// a Dispatcher closure (see Config) and tea.Program.Send for streaming
-// agent events.
+// The model follows the Elm pattern: Update returns a new Model in response to
+// messages; View renders the current footer. Every message that reaches the
+// scrollback is also kept in the internal `messages` slice, which backs the
+// test-facing Messages() accessor. External integration is via a Dispatcher
+// closure (see Config) and tea.Program.Send for streaming agent events.
 package tui
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/argusappsec/argus/pkg/provider"
 )
@@ -29,6 +36,12 @@ type Message struct {
 	Role    string // "user" | "agent" | "tool" | "system"
 	Content string
 	Name    string // tool name when Role=="tool"
+
+	// markdown flags an agent message whose body is genuine prose that should
+	// be rendered through glamour. Tool-call summaries (also Role=="agent")
+	// leave it false so their line breaks survive — markdown collapses single
+	// newlines into spaces, which would merge one call per line into a blob.
+	markdown bool
 }
 
 // Dispatcher kicks off an agent run for the given user prompt. The dispatcher
@@ -54,6 +67,12 @@ type Config struct {
 	// the TUI starts. Used by `argus review <url>` to drop the user straight
 	// into a chat where the agent is already working on the requested review.
 	AutoSubmit string
+
+	// AutoSubmitHidden dispatches AutoSubmit to the agent without echoing it
+	// in the history. Used by `argus init`, whose kick-off text is a synthetic
+	// protocol note ("the interview just started") the user should never see —
+	// the first visible message is the agent's greeting.
+	AutoSubmitHidden bool
 
 	// ResolveSkill maps a skill name (the token after the leading slash — e.g.
 	// "pr-quick-check" for "/pr-quick-check") to the prompt to dispatch to the
@@ -101,8 +120,12 @@ type AgentUsageMsg struct {
 type AgentDoneMsg struct{}
 
 // autoSubmitMsg fires once after Init() when Config.AutoSubmit is set. The
-// handler treats it as if the user had typed AutoSubmit and pressed Enter.
-type autoSubmitMsg struct{ text string }
+// handler treats it as if the user had typed AutoSubmit and pressed Enter;
+// with hidden set, the text is dispatched but not echoed in the history.
+type autoSubmitMsg struct {
+	text   string
+	hidden bool
+}
 
 // AgentErrorMsg signals the agent loop returned an error.
 type AgentErrorMsg struct {
@@ -117,19 +140,32 @@ type Model struct {
 	cfg    Config
 	styles styles
 
-	// Layout — populated by WindowSizeMsg.
-	width, height int
-	ready         bool
+	// width is the last terminal width reported by a WindowSizeMsg; it drives
+	// the input box width and the wrap width for printed messages. Zero until
+	// the first WindowSizeMsg, so renderers fall back to a sane default.
+	width int
 
-	// Components.
-	viewport viewport.Model
-	input    textinput.Model
-	spinner  spinner.Model
+	// Components. The scrollback is the terminal's own — there is no viewport;
+	// completed messages are printed with tea.Println.
+	input   textarea.Model
+	spinner spinner.Model
+
+	// glamourStyle is the markdown style name resolved once at construction
+	// (see detectGlamourStyle) so rendering never queries the terminal mid-run.
+	glamourStyle string
 
 	// State.
 	messages []Message
 	busy     bool
 	lastErr  error
+	quitting bool // set on the quit path so the final View() is blank (clean exit)
+
+	// Input history (shell-style recall with Up/Down). submitted holds every
+	// line the user sent; histIdx == len(submitted) means "not browsing";
+	// histDraft preserves whatever was being typed when browsing started.
+	submitted []string
+	histIdx   int
+	histDraft string
 
 	// Cumulative usage for the status bar.
 	tokensIn, tokensOut int
@@ -138,32 +174,70 @@ type Model struct {
 
 // New constructs a Model with empty history and a configured text input.
 func New(cfg Config) Model {
-	ti := textinput.New()
-	ti.Placeholder = "Type a message and press Enter — slash commands like /help work here"
-	ti.Prompt = "▷ "
-	ti.Focus()
-	ti.CharLimit = 4096
+	ta := textarea.New()
+	ta.Placeholder = "Type a message — Enter sends, Alt+Enter adds a line, /help lists commands"
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 4096
+	ta.SetHeight(1)
+	// "▷ " on the first line, plain indent on continuation lines — a repeated
+	// prompt glyph on every wrapped row reads as multiple inputs.
+	ta.SetPromptFunc(2, func(lineIdx int) string {
+		if lineIdx == 0 {
+			return "▷ "
+		}
+		return "  "
+	})
+	// The default cursor-line background paints the whole row; inside a
+	// bordered one-line input that looks like a rendering glitch.
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	// Enter is claimed by submit (see Update); newlines go through Alt+Enter
+	// or Ctrl+J instead.
+	ta.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("alt+enter", "ctrl+j"),
+		key.WithHelp("alt+enter", "insert newline"),
+	)
+	ta.Focus()
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
 	return Model{
-		cfg:     cfg,
-		styles:  newStyles(),
-		input:   ti,
-		spinner: sp,
-		busy:    cfg.StartBusy,
+		cfg:          cfg,
+		styles:       newStyles(),
+		input:        ta,
+		spinner:      sp,
+		busy:         cfg.StartBusy,
+		glamourStyle: detectGlamourStyle(),
 	}
 }
 
-// Init satisfies tea.Model. If Config.AutoSubmit is set, a one-shot Cmd is
-// scheduled that delivers an autoSubmitMsg — handled in Update as if the user
-// had typed it.
+// detectGlamourStyle resolves the glamour style name once, while stdin is
+// still ours: New() runs before tea.Program starts reading input. glamour's
+// WithAutoStyle probes the terminal background (OSC 11 + cursor report) on
+// every renderer construction — issued mid-run, the terminal's reply is
+// swallowed by bubbletea's input reader and lands in the textarea as garbage
+// keystrokes. Resolving the style here keeps runtime rendering query-free.
+func detectGlamourStyle() string {
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		return "notty" // pipes and tests: plain markdown, no ANSI
+	}
+	if lipgloss.HasDarkBackground() {
+		return "dark"
+	}
+	return "light"
+}
+
+// Init satisfies tea.Model. It prints any messages baked in with
+// WithInitialMessages into the scrollback, and — if Config.AutoSubmit is set —
+// schedules a one-shot autoSubmitMsg handled in Update as if the user typed it.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink, m.spinner.Tick}
+	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick}
+	if len(m.messages) > 0 {
+		cmds = append(cmds, m.printMessages(m.messages...))
+	}
 	if m.cfg.AutoSubmit != "" {
-		text := m.cfg.AutoSubmit
-		cmds = append(cmds, func() tea.Msg { return autoSubmitMsg{text: text} })
+		text, hidden := m.cfg.AutoSubmit, m.cfg.AutoSubmitHidden
+		cmds = append(cmds, func() tea.Msg { return autoSubmitMsg{text: text, hidden: hidden} })
 	}
 	return tea.Batch(cmds...)
 }
@@ -173,28 +247,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
+		// Inline mode: no layout budget to balance against the terminal
+		// height — bubbletea sizes the footer frame itself. We only need the
+		// width for the input box and for wrapping printed messages. A new
+		// width changes how the content soft-wraps, so re-sync the height.
 		m.width = msg.Width
-		m.height = msg.Height
-		m = m.relayout()
+		m.input.SetWidth(max(msg.Width-2, 20))
+		m = m.syncInputHeight()
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyEnter:
+		switch {
+		case msg.Type == tea.KeyEnter && !msg.Alt:
 			return m.handleSubmit()
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case msg.Type == tea.KeyCtrlC, msg.Type == tea.KeyEsc:
+			m.quitting = true
 			return m, tea.Quit
+		case msg.Type == tea.KeyUp:
+			if next, handled := m.recallOlder(); handled {
+				return next, nil
+			}
+		case msg.Type == tea.KeyDown:
+			if next, handled := m.recallNewer(); handled {
+				return next, nil
+			}
 		}
 
 	case AgentMessageMsg:
 		// Drop user-role echoes from the agent's OnMessage hook (we already
-		// rendered them locally in handleSubmit).
+		// printed them locally in handleSubmit).
 		if msg.Message.Role == "user" {
 			return m, nil
 		}
-		m.messages = append(m.messages, fromProviderMessage(msg.Message))
-		m.refreshViewport()
-		return m, nil
+		dm := fromProviderMessage(msg.Message)
+		m.messages = append(m.messages, dm)
+		return m, m.printMessages(dm)
 
 	case AgentDoneMsg:
 		m.busy = false
@@ -203,7 +290,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentErrorMsg:
 		m.busy = false
 		m.lastErr = msg.Err
-		return m, nil
+		// The status line keeps the last error at a glance; the scrollback
+		// keeps a permanent record.
+		return m, tea.Println("\n" + m.renderError(msg.Err))
 
 	case AgentUsageMsg:
 		m.tokensIn += msg.InputTokens
@@ -212,6 +301,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case autoSubmitMsg:
+		if msg.hidden {
+			m.busy = true
+			cmds := []tea.Cmd{m.spinner.Tick}
+			if m.cfg.Dispatch != nil {
+				cmds = append(cmds, m.cfg.Dispatch(msg.text))
+			}
+			return m, tea.Batch(cmds...)
+		}
 		m.input.SetValue(msg.text)
 		return m.handleSubmit()
 
@@ -224,17 +321,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Forward everything else to the input + viewport so they get keystrokes,
-	// scroll wheels, etc.
-	var cmds []tea.Cmd
+	// Forward everything else to the input so it gets keystrokes, blink ticks,
+	// etc. The input grows/shrinks with its content.
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	cmds = append(cmds, cmd)
-	if m.ready {
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-	return m, tea.Batch(cmds...)
+	m = m.syncInputHeight()
+	return m, cmd
 }
 
 func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
@@ -243,147 +335,204 @@ func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.input.SetValue("")
+	m = m.syncInputHeight()
+
+	// Every submitted line is recallable with Up, slash commands included.
+	m.submitted = append(m.submitted, text)
+	m.histIdx = len(m.submitted)
+	m.histDraft = ""
 
 	if isSlashCommand(text) {
-		newModel, cmd := m.runSlashCommand(text)
-		newModel.refreshViewport()
-		return newModel, cmd
+		return m.runSlashCommand(text)
 	}
 
 	if m.busy {
 		return m, nil
 	}
 
-	m.messages = append(m.messages, Message{Role: "user", Content: text})
+	userMsg := Message{Role: "user", Content: text}
+	m.messages = append(m.messages, userMsg)
 	m.busy = true
-	m.refreshViewport()
 
-	cmds := []tea.Cmd{m.spinner.Tick}
+	cmds := []tea.Cmd{m.printMessages(userMsg), m.spinner.Tick}
 	if m.cfg.Dispatch != nil {
 		cmds = append(cmds, m.cfg.Dispatch(text))
 	}
 	return m, tea.Batch(cmds...)
 }
 
-// relayout recomputes the viewport size and rebuilds its content. Called on
-// WindowSizeMsg.
-func (m Model) relayout() Model {
-	// Reserve rows for: input box (3: border+line+border) + status bar (1) +
-	// some breathing room between input and status (1).
-	const inputRows = 3
-	const statusRows = 1
-	const padding = 1
-
-	historyHeight := m.height - inputRows - statusRows - padding
-	if historyHeight < 3 {
-		historyHeight = 3
+// recallOlder implements the Up half of shell-style input history. It fires
+// only when the cursor sits on the first line of the input AND the user is
+// either already browsing or has typed nothing — so Up inside a multiline
+// draft still moves the cursor instead of clobbering the text.
+func (m Model) recallOlder() (Model, bool) {
+	browsing := m.histIdx < len(m.submitted)
+	if m.input.Line() != 0 || (!browsing && strings.TrimSpace(m.input.Value()) != "") {
+		return m, false
 	}
-	historyWidth := m.width - 2 // borders
-	if historyWidth < 20 {
-		historyWidth = 20
+	if m.histIdx == 0 {
+		return m, browsing // at the oldest entry: swallow the key while browsing
 	}
+	if !browsing {
+		m.histDraft = m.input.Value()
+	}
+	m.histIdx--
+	m.input.SetValue(m.submitted[m.histIdx])
+	m = m.syncInputHeight()
+	return m, true
+}
 
-	if !m.ready {
-		m.viewport = viewport.New(historyWidth, historyHeight)
-		m.ready = true
+// recallNewer is the Down half: only meaningful while browsing, with the
+// cursor on the last line. Walking past the newest entry restores whatever
+// was being typed when browsing started.
+func (m Model) recallNewer() (Model, bool) {
+	if m.histIdx >= len(m.submitted) || m.input.Line() != m.input.LineCount()-1 {
+		return m, false
+	}
+	m.histIdx++
+	if m.histIdx == len(m.submitted) {
+		m.input.SetValue(m.histDraft)
 	} else {
-		m.viewport.Width = historyWidth
-		m.viewport.Height = historyHeight
+		m.input.SetValue(m.submitted[m.histIdx])
 	}
+	m = m.syncInputHeight()
+	return m, true
+}
 
-	m.input.Width = m.width - 4 // borders + prompt
-
-	m.refreshViewport()
+// syncInputHeight grows and shrinks the input box with its content, capped at
+// six rows. In inline mode this is all the layout there is: the footer frame
+// tracks the input height automatically, so there is nothing else to recompute.
+// The count is soft-wrap aware (displayRows): sizing by logical lines would
+// keep a long wrapped line in a one-row window showing only its last row.
+func (m Model) syncInputHeight() Model {
+	rows := m.displayRows()
+	h := min(rows, 6)
+	if h != m.input.Height() {
+		m.input.SetHeight(h)
+	}
+	// SetHeight cannot un-scroll the textarea: the keystroke that wrapped
+	// onto a new row was processed while the box was still one row short, so
+	// the textarea scrolled its internal viewport and that offset survives
+	// the growth — first row (and its ▷ prompt) hidden above the window, a
+	// phantom blank row at the bottom. When the content fits the box the
+	// offset must be zero; the ▷ prompt, rendered only on display row 0,
+	// doubles as the sentinel for a stale offset.
+	if rows <= h && !strings.Contains(m.input.View(), "▷") {
+		m = m.rebuildInput()
+	}
 	return m
 }
 
-// refreshViewport re-renders all history into the viewport and keeps the user
-// pinned to the bottom (chat-style auto-scroll).
-func (m *Model) refreshViewport() {
-	if !m.ready {
-		return
+// rebuildInput resets the textarea's internal scroll offset — Reset (called
+// by SetValue) is the only public path to its viewport's GotoTop — while
+// preserving value and cursor position.
+func (m Model) rebuildInput() Model {
+	row := m.input.Line()
+	li := m.input.LineInfo()
+	col := li.StartColumn + li.ColumnOffset
+	m.input.SetValue(m.input.Value()) // cursor lands at the end, offset at 0
+	for m.input.Line() > row {
+		m.input.CursorUp()
 	}
-	m.viewport.SetContent(m.renderHistory())
-	m.viewport.GotoBottom()
+	m.input.SetCursor(col)
+	return m
 }
 
-// View renders the current Model state.
+// printMessages renders the given messages and returns a single tea.Println
+// Cmd that writes them into the scrollback as one atomic block — one write
+// keeps ordering deterministic (tea.Batch would race). A leading blank line
+// separates each block from the previous scrollback content.
+func (m Model) printMessages(msgs ...Message) tea.Cmd {
+	if len(msgs) == 0 {
+		return nil
+	}
+	blocks := make([]string, 0, len(msgs))
+	for _, msg := range msgs {
+		blocks = append(blocks, m.renderMessage(msg))
+	}
+	return tea.Println("\n" + strings.Join(blocks, "\n\n"))
+}
+
+// View renders the managed footer: the bordered input box and the status line.
+// Everything else lives in the terminal scrollback (see printMessages).
 func (m Model) View() string {
-	if !m.ready {
-		// Test / pre-size fallback: simple top-to-bottom rendering so unit
-		// tests that don't dispatch WindowSizeMsg still see the expected text.
-		return m.fallbackView()
-	}
-
-	historyPane := m.styles.historyBox.
-		Width(m.viewport.Width).
-		Height(m.viewport.Height).
-		Render(m.viewport.View())
-
-	inputPane := m.styles.inputBox.
-		Width(m.width - 2).
-		Render(m.input.View())
-
-	statusLine := m.styles.statusBar.Render(m.statusLine())
-
-	return lipgloss.JoinVertical(lipgloss.Left, historyPane, inputPane, statusLine)
-}
-
-// fallbackView is used when no WindowSizeMsg has arrived (typical in tests).
-// It mirrors View() conceptually but skips lipgloss boxing so plain-string
-// assertions still match.
-func (m Model) fallbackView() string {
-	var b strings.Builder
-	b.WriteString(m.renderHistory())
-	if m.lastErr != nil {
-		fmt.Fprintf(&b, "\n[error] %s\n", m.lastErr.Error())
-	}
-	if m.busy {
-		b.WriteString("\n(working...)\n")
-	}
-	b.WriteString("\n")
-	b.WriteString(m.input.View())
-	b.WriteString("\n")
-	b.WriteString(m.statusLine())
-	return b.String()
-}
-
-func (m Model) renderHistory() string {
-	if len(m.messages) == 0 {
+	if m.quitting {
+		// Blank the footer on exit so only the scrollback remains — bubbletea
+		// writes this View once more before it tears the renderer down.
 		return ""
 	}
-	var b strings.Builder
-	for i, msg := range m.messages {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(m.renderMessage(msg))
+
+	box := m.styles.inputBox
+	if m.width > 0 {
+		box = box.Width(m.width - 2) // border adds the remaining 2 columns
 	}
-	return b.String()
+	inputPane := box.Render(m.input.View())
+	statusLine := m.styles.statusBar.Render(m.statusLine())
+
+	return lipgloss.JoinVertical(lipgloss.Left, inputPane, statusLine)
 }
 
 func (m Model) renderMessage(msg Message) string {
+	width := m.wrapWidth()
 	switch msg.Role {
 	case "user":
 		return m.styles.userPrompt.Render("▶ you") + "\n" +
-			m.styles.userBody.Render(indent(msg.Content, "  "))
+			m.styles.userBody.Render(indent(wrapText(msg.Content, width-2), "  "))
 	case "agent":
 		body := msg.Content
 		if body == "" {
 			body = "…"
 		}
-		return m.styles.agentPrompt.Render("◆ argus") + "\n" +
-			m.styles.agentBody.Render(indent(body, "  "))
+		header := m.styles.agentPrompt.Render("◆ argus")
+		if msg.markdown {
+			// glamour supplies its own left margin and wrapping — do NOT also
+			// indent(2), or the body drifts right by four columns.
+			if rendered, ok := renderMarkdown(body, width, m.glamourStyle); ok {
+				return header + "\n" + rendered
+			}
+		}
+		return header + "\n" +
+			m.styles.agentBody.Render(indent(wrapText(body, width-2), "  "))
 	case "tool":
 		header := m.styles.toolPrefix.Render(fmt.Sprintf("  ↳ %s", msg.Name))
-		body := m.styles.toolBody.Render(indent(truncate(msg.Content, 400), "    "))
+		body := m.styles.toolBody.Render(indent(wrapText(truncate(msg.Content, 400), width-4), "    "))
 		return header + "\n" + body
 	case "system":
 		return m.styles.systemPrefix.Render("• system") + "\n" +
-			m.styles.systemBody.Render(indent(msg.Content, "  "))
+			m.styles.systemBody.Render(indent(wrapText(msg.Content, width-2), "  "))
 	default:
 		return msg.Content
 	}
+}
+
+// renderError formats an error for the scrollback (the status line carries a
+// live copy separately).
+func (m Model) renderError(err error) string {
+	return m.styles.errorPrefix.Render("⚠ error") + "\n" +
+		m.styles.errorBody.Render(indent(wrapText(err.Error(), m.wrapWidth()-2), "  "))
+}
+
+// renderMarkdown renders an agent body as markdown at the given wrap width,
+// with the style name resolved at construction time (detectGlamourStyle).
+// WithAutoStyle must NOT be used here: it probes the terminal on stdin, which
+// bubbletea owns while running, and the probe reply would leak into the input
+// as keystrokes. It reports ok=false on any failure so the caller can fall
+// back to raw text.
+func renderMarkdown(body string, width int, style string) (string, bool) {
+	if width < 1 {
+		width = 1
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(width))
+	if err != nil {
+		return "", false
+	}
+	out, err := r.Render(body)
+	if err != nil {
+		return "", false
+	}
+	// glamour brackets its output with blank lines; drop them so message
+	// blocks stack tightly (printMessages controls inter-block spacing).
+	return strings.Trim(out, "\n"), true
 }
 
 func (m Model) statusLine() string {
@@ -407,6 +556,27 @@ func (m Model) statusLine() string {
 		line += "  " + m.styles.errorBody.Render("⚠ "+m.lastErr.Error())
 	}
 	return line
+}
+
+// wrapWidth is the column budget for wrapping printed messages: the last known
+// terminal width, or a sane default before the first WindowSizeMsg (typical in
+// tests, and while the very first frame is still pending).
+func (m Model) wrapWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return 80
+}
+
+// wrapText hard-wraps s at width columns on word boundaries. Explicit newlines
+// are preserved. Wrapping is done on the raw text (before styling) so the
+// indent prefix stays flush; the terminal would wrap anyway, but doing it here
+// keeps the indentation clean.
+func wrapText(s string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	return ansi.Wordwrap(s, width, "")
 }
 
 func indent(s, prefix string) string {
@@ -435,7 +605,7 @@ func fromProviderMessage(m provider.Message) Message {
 	switch m.Role {
 	case "model":
 		if m.Content != "" {
-			return Message{Role: "agent", Content: m.Content}
+			return Message{Role: "agent", Content: m.Content, markdown: true}
 		}
 		if len(m.ToolCalls) > 0 {
 			names := make([]string, 0, len(m.ToolCalls))
@@ -502,16 +672,18 @@ func (m Model) TokensOut() int { return m.tokensOut }
 func (m Model) CostUSD() float64 { return m.costUSD }
 
 // WithInput returns a new Model with the input box pre-populated. Used by
-// tests to avoid simulating keystroke-by-keystroke entry.
+// tests to avoid simulating keystroke-by-keystroke entry; the height syncs
+// exactly as it would while typing.
 func (m Model) WithInput(s string) Model {
 	m.input.SetValue(s)
-	return m
+	return m.syncInputHeight()
 }
 
 // WithInitialMessages returns a new Model with the supplied history baked in.
-// Used to display a welcome/instructions message before the first user input.
-// Do NOT use this to inject "user" messages that should be processed by the
-// agent — those must go through the Dispatch flow.
+// Used to display a welcome/instructions message before the first user input;
+// Init() prints them into the scrollback. Do NOT use this to inject "user"
+// messages that should be processed by the agent — those must go through the
+// Dispatch flow.
 func (m Model) WithInitialMessages(msgs []Message) Model {
 	m.messages = append([]Message{}, msgs...)
 	return m

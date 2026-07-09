@@ -1,6 +1,10 @@
 # ADR 0011 — The MCP channel exposes Argus as a consultable colleague, not a toolbox
 
-**Status:** Accepted
+**Status:** Accepted — amended by
+[ADR 0015](0015-integrations-declared-in-configuration.md) (listener →
+shared front door) and
+[ADR 0016](0016-review-requested-through-channels.md) (`review` gains a
+codehost repo target alongside snapshots)
 **Date:** 2026-06-26
 **Builds on:** [ADR 0004](0004-single-process-channel-goroutines.md), [ADR 0006](0006-no-generic-shell-tool.md)
 

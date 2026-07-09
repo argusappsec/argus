@@ -137,7 +137,8 @@ func runReviewInteractive(cmd *cobra.Command, cs *clientSession, repoFullName, g
 		Role:    "system",
 		Content: fmt.Sprintf("review of %s@%s started — the agent is working, you can intervene at any time", repoFullName, defaultIfEmpty(ref, "HEAD")),
 	}})
-	program = tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(cmd.Context()))
+	// Inline (no alt-screen): the review streams into the terminal scrollback.
+	program = tea.NewProgram(model, tea.WithContext(cmd.Context()))
 
 	go receiveLoop(cs.Client, program)
 	go func() {

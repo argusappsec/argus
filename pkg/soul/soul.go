@@ -60,13 +60,21 @@ type Soul struct {
 	// RiskTolerance: "low" | "medium" | "high".
 	RiskTolerance string `yaml:"risk_tolerance,omitempty"`
 
-	// Escalation is the security owner's email or chat handle. Cited by
-	// the agent in HIGH+ findings.
-	Escalation string `yaml:"escalation,omitempty"`
+	// Language is the language the agent writes in — findings, reports and
+	// chat replies (e.g. "italian", "english"). Empty means the agent mirrors
+	// whatever language it is addressed in.
+	Language string `yaml:"language,omitempty"`
+
+	// SeverityRules are non-negotiable severity policies set by the
+	// organization, e.g. "Any leak of customer PII is High regardless of
+	// CVSS". Rendered as explicit rules the model must apply over its own
+	// judgement.
+	SeverityRules []string `yaml:"severity_rules,omitempty"`
 
 	// Persona is the markdown body after the frontmatter. Free-form prose
-	// the human (or the bootstrap agent) wrote about tone, priorities and
-	// any context that doesn't fit the structured fields.
+	// the human (or the bootstrap agent) wrote, ideally structured in two
+	// sections: "## Mission" (who the agent serves, what it does and does
+	// not do) and "## Conduct" (tone, audience, priorities).
 	Persona string `yaml:"-"`
 }
 
@@ -212,8 +220,15 @@ func (s *Soul) SystemPrompt() string {
 	if s.RiskTolerance != "" {
 		fmt.Fprintf(&b, "%s\n", riskToleranceGuidance(s.RiskTolerance))
 	}
-	if s.Escalation != "" {
-		fmt.Fprintf(&b, "Escalation contact for High/Critical findings: %s.\n", s.Escalation)
+	if s.Language != "" {
+		fmt.Fprintf(&b, "Write every finding, report and reply in %s, keeping code identifiers and technical terms in their original form.\n", s.Language)
+	}
+	if len(s.SeverityRules) > 0 {
+		b.WriteString("\n# Severity rules\n")
+		b.WriteString("Non-negotiable policies set by the organization. When one applies, it overrides your own severity judgement:\n")
+		for _, r := range s.SeverityRules {
+			fmt.Fprintf(&b, "- %s\n", r)
+		}
 	}
 	if s.Persona != "" {
 		b.WriteString("\n# Persona\n")

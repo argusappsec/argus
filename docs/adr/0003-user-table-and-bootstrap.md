@@ -1,6 +1,8 @@
 # ADR 0003 — User table in YAML, CLI bootstrap, opaque rejection of strangers
 
-**Status:** Accepted
+**Status:** Accepted — the Service provisioning half is superseded by
+[ADR 0015](0015-integrations-declared-in-configuration.md); `users.yaml`
+holds Persons only
 **Date:** 2026-05-16
 **Builds on:** [ADR 0001](0001-single-shared-daemon-per-organization.md),
 [ADR 0002](0002-rbac-model.md)

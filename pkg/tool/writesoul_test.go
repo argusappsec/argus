@@ -23,7 +23,8 @@ func TestWriteSoul_TracerCreatesFile(t *testing.T) {
 		"secret_storage":   "HashiCorp Vault",
 		"compliance":       []any{"SOC2", "ISO27001"},
 		"risk_tolerance":   "low",
-		"escalation":       "ciso@redcarbon.ai",
+		"language":         "italian",
+		"severity_rules":   []any{"Any leak of customer PII is High regardless of CVSS"},
 		"persona":          "You are RedCarbon's security copilot. Be terse and technical. Cite CWE/OWASP.",
 	})
 	if err != nil {
@@ -53,8 +54,11 @@ func TestWriteSoul_TracerCreatesFile(t *testing.T) {
 	if s.RiskTolerance != "low" {
 		t.Errorf("risk_tolerance = %q", s.RiskTolerance)
 	}
-	if s.Escalation != "ciso@redcarbon.ai" {
-		t.Errorf("escalation = %q", s.Escalation)
+	if s.Language != "italian" {
+		t.Errorf("language = %q", s.Language)
+	}
+	if len(s.SeverityRules) != 1 || !strings.Contains(s.SeverityRules[0], "PII") {
+		t.Errorf("severity_rules = %v", s.SeverityRules)
 	}
 	if s.DataSensitivity != "pii" {
 		t.Errorf("data_sensitivity = %q", s.DataSensitivity)

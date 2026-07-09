@@ -1,6 +1,9 @@
 # ADR 0008 — The GitHub channel runs as a GitHub App (absorbing the Webhook channel)
 
-**Status:** Accepted
+**Status:** Accepted — the Service model section is superseded by
+[ADR 0015](0015-integrations-declared-in-configuration.md) (Services are
+config-declared; the listener moves to the shared front door at
+`/webhooks/github`)
 **Date:** 2026-06-21
 **Builds on:** [ADR 0002](0002-rbac-model.md), [ADR 0003](0003-user-table-and-bootstrap.md), [ADR 0004](0004-single-process-channel-goroutines.md), [ADR 0007](0007-socket-possession-is-authentication.md)
 

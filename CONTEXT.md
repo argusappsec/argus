@@ -27,11 +27,16 @@ Slack, MCP, or the CLI.
 
 ### Service
 
-A subtype of Principal representing a non-human actor: GitHub webhook,
-cron job, CI integration. A Service has a fixed scoped Role assigned at
-provisioning time and is bound to a specific resource (e.g. one webhook
-secret is bound to one repo). Services never edit SOUL or manage other
-Principals.
+A subtype of Principal representing a non-human actor — today the GitHub
+App installation. A Service is **not provisioned**: it is declared by the
+configuration of the Channel that carries it (configuring the GitHub
+channel is what brings the `github-app` Service into existence; removing
+that configuration removes the Service). It has no operator-assigned Role:
+its capabilities are fixed by the channel type and are always narrower
+than any Person's — a Service never edits SOUL and never manages
+Principals. The concept exists so the audit log can attribute non-human
+actions to exactly one actor. _Avoid_: treating a Service as an entry in
+the user file — `users.yaml` holds Persons only.
 
 ### Identity
 
@@ -45,7 +50,7 @@ The mapping is stored in the daemon's user file.
 A named bundle of capabilities. Each Person has exactly one Role.
 
 **Person Roles**:
-- **admin** — full power. Edits SOUL, manages Persons + Services, manages
+- **admin** — full power. Edits SOUL, manages Persons, manages
   cron + webhooks, configures providers, overrides budget caps. Reads the
   audit log directly off disk (it's a file). Expected count: 1–2.
 - **analyst** — developer / security engineer. Triggers reviews, opens
@@ -56,15 +61,14 @@ A named bundle of capabilities. Each Person has exactly one Role.
   global budget cap). Cannot trigger reviews from scratch, write context,
   or modify any state.
 
-**Service Roles**:
-- **ci-trigger** — bound to one repo at provisioning. Can trigger a
-  review on that repo only. The agent writes findings during the review
-  it spawned; the Service itself never posts findings directly.
-- **mirror-read** — read-only on reports for downstream export
-  integrations (e.g. publish to S3, push to GitHub Issues).
+Roles apply to **Persons only**. A Service has no Role — its capabilities
+are fixed by the channel type that declares it. (Retired terms:
+**ci-trigger** and **mirror-read** were Service roles under the ADR 0003
+model, where services were provisioned rows in the user table; they died
+when services moved to channel configuration.)
 
 **Unrecognised principal** — any inbound request whose identity does NOT
-resolve to a Person or Service entry is rejected with a polite
+resolve to a known Principal is rejected with a polite
 "contact your administrator" message. There is no implicit / guest /
 anonymous access. This is not a Role: it's the absence of one.
 
@@ -83,9 +87,11 @@ Role. Remote channels (Slack, MCP, Webhook) have no such exception.
 
 `~/.argus/SOUL.md` on the daemon host. The *organization's* identity:
 company name, industry, data sensitivity, stack, infra, compliance, risk
-tolerance, escalation contact, plus a free-form persona paragraph. Loaded
-into every LLM call as part of the system prompt. Editable only by Persons
-with the right Role.
+tolerance, output language, non-negotiable severity rules, plus a free-form
+persona body (mission + conduct). Loaded into every LLM call as part of the
+system prompt. Editable only by Persons with the right Role. Schema rule: a
+field earns its place here only if it changes an agent decision on every
+call — anything else belongs in CONTEXT/ or MEMORY.
 
 ### MEMORY
 
@@ -184,9 +190,11 @@ Tool layer once channel auth (stream A) lands.
 ## Channels
 
 A way for a Principal to talk to Argus. Each Channel is one transport
-binding. All Channels coexist as goroutines inside the single daemon
-process (see ADR 0004) and share a `DaemonContext` with the common
-state (Provider, Registry, SOUL, MEMORY, Auth, audit logger, …).
+binding — a transport of its own (Unix socket, Slack WS) or a path on the
+daemon's single HTTP front door (`/webhooks/github`, `/mcp`); a Channel
+never owns a port of its own. All Channels coexist as goroutines inside
+the single daemon process (see ADR 0004) and share a `DaemonContext` with
+the common state (Provider, Registry, SOUL, MEMORY, Auth, audit logger, …).
 
 ### Channel interface
 
@@ -209,13 +217,13 @@ Each implementation:
    either a conversational user message or a **structured review
    target** (repo + ref): starting a review is deterministic, never
    dependent on the model choosing to call a tool. The webhook channel
-   relies on this; `argus review` exercises it.
+   and the MCP repo-target `review` rely on this.
 6. Streams responses back through its own transport.
 
 ### Channels in scope
 
-- **TUI** — local Unix socket (the `argus chat` / `argus review` CLI on
-  the operator's laptop). Auth = filesystem permissions on the socket;
+- **TUI** — local Unix socket (the `argus chat` CLI on the operator's
+  laptop). Auth = filesystem permissions on the socket;
   Identity = `local:$USER`.
 - **Slack** — Socket Mode bot. Identity = `slack:user_id` extracted from
   Slack events.
@@ -223,7 +231,9 @@ Each implementation:
   Protocol. Identity = `mcp:<token-hash>` from the bearer token. The MCP
   client is an *external generalist AI* (Claude Desktop, Cursor, …) for whom
   Argus is a **consultable colleague**, not a toolbox: the surface is a few
-  coarse capabilities (a security `review`, an org-knowledge `consult`) plus
+  coarse capabilities (a security `review` — whose target is either
+  caller-supplied files, a Snapshot review, or a codehost repo reference,
+  a Repo review — and an org-knowledge `consult`) plus
   Resources over the org knowledge (SOUL, CONTEXT, recent reports), never the
   low-level scanner tools. So the external AI delegates and Argus runs its own
   org-aware loop — SOUL/MEMORY/CONTEXT stay inside Argus. **Non-goal:** generic
@@ -236,8 +246,8 @@ Each implementation:
     triggering principal is a **Service** representing the App
     installation (one webhook secret for the whole App, not per-repo); the
     Person who authored the PR is recorded as metadata, not as the actor.
-    Which installed repos get reviewed is gated by the `github.auto_enroll`
-    policy in `argus.yaml` (see ADR 0008).
+    Which installed repos get reviewed is gated by the GitHub channel's
+    `auto_enroll` policy in `argus.yaml` (see ADR 0008).
   - **comment events** (`issue_comment`, `pull_request_review_comment`)
     that contain the mention token `@argus` → a conversational turn. The
     actor is the **Person** resolved from the commenter's
@@ -298,9 +308,10 @@ This is the single point where session identity is decided.
 One agent-driven security analysis of a code target, producing a Report.
 The word alone is ambiguous, so we always qualify the target:
 
-- **Repo review** — the whole checkout at a single SHA. The `argus review`
-  CLI and the existing `agent.Target{Repo, SHA, Path}` shape. No notion of
-  a diff.
+- **Repo review** — the whole tree at a single SHA, cloned from the
+  CodeHost with its credentials (private repos included). Requested on
+  demand through a conversational channel (chat) or over MCP with a repo
+  target — there is no dedicated CLI verb. No notion of a diff.
 - **PR review** — a diff-aware review of a Pull Request (see below). Same
   scanners, run over the whole tree at the PR head for context, but the
   findings are filtered to those relevant to the PR.
@@ -339,7 +350,9 @@ covers it.
 The review target on the GitHub channel: a `base…head` proposed change on
 a GitHub repository. A PR keys exactly one GitHub Session (by repo + PR
 number) and is the unit the automatic review and all `@argus` comment
-turns attach to. Argus learns its changed files and patch hunks from the
+turns attach to. A PR review is born from webhook events only — it is not
+requestable on demand (if that ever changes, it is a `repo`+`pr` target
+extension of `review`, not a new capability). Argus learns its changed files and patch hunks from the
 GitHub API (`pulls/{n}/files`), not from a local diff.
 
 ### PR-relevant finding
@@ -360,7 +373,12 @@ need — parse a repo/PR URL, clone with auth, fetch a PR's changed files
 and patch hunks, post a review and inline comments, resolve a commenter's
 Identity. **GitHub** is the only implementation today; the interface
 exists so a second host (GitLab, …) can slot in later without rewriting
-the channel. _Avoid_: "codesource", "provider" (that word is taken by the
+the channel. A CodeHost is **one platform instance plus one App
+identity**: it owns the outbound credentials used to clone and call the
+API, on behalf of *any* channel. Inbound authentication (the webhook
+secret) is not its concern — that belongs to the Channel. GitHub
+organizations are not CodeHosts: they are installations of the same App
+on the same CodeHost. _Avoid_: "codesource", "provider" (that word is taken by the
 LLM Provider). Note the vocabulary gap a second host will expose: GitLab's
 equivalent of a PR is a **Merge Request**, and it authenticates with a
 token rather than an App. See ADR 0010.
@@ -370,7 +388,9 @@ token rather than an App. See ADR 0010.
 The installation-based GitHub identity Argus runs as on the GitHub
 channel. It receives signed webhook events, clones private repos and calls
 the API with an installation token, and posts back as the `argus[bot]`
-account. Required permissions: `contents: read` (clone), `pull_requests:
+account. One App spans many organizations — one installation per org; the
+installation acting at any moment is derived from the webhook event or the
+target repo, never a fixed property of the deployment. Required permissions: `contents: read` (clone), `pull_requests:
 write` (read changed files, post the review + inline comments), and the
 mandatory `metadata: read`. Chosen over a bare webhook receiver (cannot
 write back) and a personal access token (not per-install, not scoped to an
