@@ -78,6 +78,10 @@ func initCmd() *cobra.Command {
 				},
 			}
 			cfg.DefaultModel = picked.Model
+			// The instance name is asked deterministically in the Phase A form
+			// (already normalized), so it lands in argus.yaml alongside the rest
+			// of this phase's config. An empty value keeps the brand default.
+			cfg.Persona.Name = picked.PersonaName
 			if err := config.SaveConfig(cfgPath, cfg); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
@@ -107,7 +111,6 @@ func initCmd() *cobra.Command {
 
 			reg := tool.NewRegistry()
 			reg.Register(tool.NewWriteSoul(soulPath))
-			reg.Register(&setPersonaName{cfgPath: cfgPath})
 
 			interviewer := &soul.Soul{Persona: interviewerPersona()}
 
@@ -183,6 +186,10 @@ type providerSelection struct {
 	Provider string
 	Model    string
 	APIKey   string
+	// PersonaName is the operator-chosen instance name (persona.name in
+	// argus.yaml), already trimmed and stripped of a leading @. Empty means the
+	// brand default (@argus only).
+	PersonaName string
 }
 
 // runProviderForm shows a huh form: pick provider → pick model → enter API key.
@@ -190,9 +197,10 @@ type providerSelection struct {
 // init only needs ENTER on what you want to keep.
 func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, error) {
 	sel := providerSelection{
-		Provider: "gemini",
-		Model:    cfg.DefaultModel,
-		APIKey:   env.Get(providerEnvVar("gemini")),
+		Provider:    "gemini",
+		Model:       cfg.DefaultModel,
+		APIKey:      env.Get(providerEnvVar("gemini")),
+		PersonaName: cfg.Persona.Name,
 	}
 	if sel.Provider == "" {
 		sel.Provider = "gemini"
@@ -253,11 +261,22 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 			return nil
 		})
 
+	nameStep := huh.NewInput().
+		Title("Instance name (optional)").
+		Description("A name colleagues address this agent by — e.g. @Ercole on GitHub, in addition to @argus. Single word. Leave empty to keep just @argus.").
+		Placeholder("Ercole").
+		Value(&sel.PersonaName).
+		Validate(func(s string) error {
+			_, err := normalizePersonaName(s)
+			return err
+		})
+
 	form := huh.NewForm(
 		huh.NewGroup(providerStep),
 		huh.NewGroup(modelStep),
 		huh.NewGroup(customStep).WithHideFunc(func() bool { return modelChoice != "custom" }),
 		huh.NewGroup(keyStep),
+		huh.NewGroup(nameStep),
 	).WithTheme(huh.ThemeBase16())
 
 	if err := form.Run(); err != nil {
@@ -270,6 +289,13 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		sel.Model = modelChoice
 	}
 	sel.APIKey = strings.TrimSpace(sel.APIKey)
+	// Normalize once more after the form: the validator only reports errors, it
+	// does not rewrite the bound value, so trim/strip-@ happens here.
+	name, err := normalizePersonaName(sel.PersonaName)
+	if err != nil {
+		return providerSelection{}, err
+	}
+	sel.PersonaName = name
 	return sel, nil
 }
 
@@ -400,53 +426,19 @@ func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registr
 const interviewKickoff = "[kick-off] The human just launched `argus init`. " +
 	"They have typed nothing yet. Greet them and ask your first question."
 
-// setPersonaName is the `set_persona_name` tool, registered only for the init
-// interview. The instance name lives in argus.yaml (persona.name), NOT in
-// SOUL.md, so channel code can read it without parsing markdown — this tool is
-// the bridge that lets the interviewer persist the name the user picks.
-type setPersonaName struct{ cfgPath string }
-
-func (t *setPersonaName) Name() string { return "set_persona_name" }
-
-func (t *setPersonaName) Description() string {
-	return "Save the operator-chosen instance name to argus.yaml (persona.name). " +
-		"Call at most once, and only if the user picked a name. Colleagues will " +
-		"address the agent as @<name> in addition to the brand handle @argus."
-}
-
-func (t *setPersonaName) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name": map[string]any{
-				"type":        "string",
-				"description": "Single-word instance name without the leading @ (e.g. \"Ercole\").",
-			},
-		},
-		"required": []string{"name"},
-	}
-}
-
-func (t *setPersonaName) Execute(_ context.Context, args map[string]any) (string, error) {
-	raw, _ := args["name"].(string)
+// normalizePersonaName cleans an operator-entered instance name for
+// persona.name in argus.yaml: it trims surrounding whitespace and strips a
+// leading @ (colleagues address the agent as @<name>, but the config stores the
+// bare word). An empty result is valid and means "no persona name" — the brand
+// default (@argus only). A non-empty name must be a single word: a mention is
+// one whitespace-delimited token (see pkg/channel/github mentionTokens), so a
+// multi-word name can never form a usable @handle and is rejected.
+func normalizePersonaName(raw string) (string, error) {
 	name := strings.TrimPrefix(strings.TrimSpace(raw), "@")
-	if name == "" {
-		return "", errors.New("set_persona_name: name is required")
+	if name != "" && len(strings.Fields(name)) != 1 {
+		return "", fmt.Errorf("%q must be a single word (no spaces)", name)
 	}
-	// Multi-word names cannot form a GitHub mention token (see pkg/channel/
-	// github mentionTokens): reject early so the user can pick a usable one.
-	if len(strings.Fields(name)) != 1 {
-		return "", fmt.Errorf("set_persona_name: %q must be a single word", name)
-	}
-	cfg, err := config.LoadConfig(t.cfgPath)
-	if err != nil {
-		return "", fmt.Errorf("set_persona_name: %w", err)
-	}
-	cfg.Persona.Name = name
-	if err := config.SaveConfig(t.cfgPath, cfg); err != nil {
-		return "", fmt.Errorf("set_persona_name: %w", err)
-	}
-	return fmt.Sprintf("persona.name %q saved to %s.", name, t.cfgPath), nil
+	return name, nil
 }
 
 // interviewerPersona is the hardcoded system prompt for the bootstrap agent.
@@ -508,12 +500,8 @@ TOPICS TO COVER (adaptive order — follow the conversation, not the list):
    them, capture it as a severity rule (optional — do not press).
 6. Output: language for findings/reports, tone + audience (developers?
    C-level? both?).
-7. Instance name (optional, keep it light): they can give this Argus
-   instance a name colleagues will address it by — e.g. on GitHub as
-   @<name> in addition to @argus. Single word. "Skip" is a fine answer.
 
 WHEN DONE:
-- If the user picked an instance name, call set_persona_name ONCE with it.
 - Call write_soul ONCE with ALL collected fields. Required: company + persona.
   Pass each captured value into the matching field name — do NOT cram
   stack/infra/severity rules into the persona prose if you've collected them
@@ -539,7 +527,7 @@ DO NOT ASK ABOUT:
   escalate through; do not collect data it cannot act on.
 
 GUARDRAILS:
-- Do not call write_soul or set_persona_name more than once.
+- Do not call write_soul more than once.
 - Proposing inferred guesses is encouraged, but write_soul must contain
   ONLY what the user confirmed — never an unconfirmed guess, never a
   stack/compliance/severity item they didn't agree to.
