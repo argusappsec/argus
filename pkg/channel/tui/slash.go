@@ -13,15 +13,18 @@ func isSlashCommand(line string) bool {
 }
 
 // runSlashCommand executes a client-side slash command, returning the updated
-// Model and an optional tea.Cmd (used by /quit). Unknown commands produce a
-// "system" message in the chat history.
+// Model and an optional tea.Cmd. Every command echoes the typed line to the
+// scrollback; most also print a "system" reply. Unknown commands report an
+// error line. The command is recorded in the `messages` registry too, so the
+// test-facing Messages() accessor stays authoritative.
 //
 // Pedagogically: slash commands NEVER reach the LLM. They live entirely in
 // the client and are the boundary between "what the UX decides" and "what the
 // agent decides". /cost and /cancel must be instant and free of LLM cost.
 func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
-	// Echo the command itself in history so the user has a record.
-	m.messages = append(m.messages, Message{Role: "user", Content: line})
+	// Echo the command itself so the user has a record.
+	echo := Message{Role: "user", Content: line}
+	m.messages = append(m.messages, echo)
 
 	// First token is the command, the rest are args (currently unused).
 	parts := strings.Fields(line)
@@ -29,22 +32,26 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 
 	switch cmd {
 	case "/help":
-		m.messages = append(m.messages, Message{Role: "system", Content: helpText()})
-		return m, nil
+		sys := Message{Role: "system", Content: helpText()}
+		m.messages = append(m.messages, sys)
+		return m, m.printMessages(echo, sys)
 
 	case "/clear":
-		// Drop everything except the just-recorded /clear line, then drop that too.
+		// Wipe the display registry. The native scrollback cannot be erased in
+		// inline mode, so earlier lines remain visible in the terminal — this
+		// clears Argus's own record (and any lingering error), not the screen.
 		m.messages = nil
 		m.lastErr = nil
-		return m, nil
+		return m, m.printMessages(echo)
 
 	case "/cost":
-		m.messages = append(m.messages, Message{
+		sys := Message{
 			Role: "system",
 			Content: fmt.Sprintf("tokens in:%d out:%d  cost:$%.4f",
 				m.tokensIn, m.tokensOut, m.costUSD),
-		})
-		return m, nil
+		}
+		m.messages = append(m.messages, sys)
+		return m, m.printMessages(echo, sys)
 
 	case "/cancel":
 		// Tell the source to abort (the daemon cancels the run's context),
@@ -54,11 +61,16 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 				m.cfg.Cancel()
 			}
 			m.busy = false
-			m.messages = append(m.messages, Message{Role: "system", Content: "cancelled"})
+			sys := Message{Role: "system", Content: "cancelled"}
+			m.messages = append(m.messages, sys)
+			return m, m.printMessages(echo, sys)
 		}
-		return m, nil
+		return m, m.printMessages(echo)
 
 	case "/quit":
+		// Return tea.Quit unadorned so the caller's Cmd resolves to QuitMsg;
+		// quitting blanks the footer for a clean exit (see Model.View).
+		m.quitting = true
 		return m, tea.Quit
 
 	default:
@@ -68,39 +80,44 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 		name := strings.TrimPrefix(cmd, "/")
 		if m.cfg.ResolveSkill != nil {
 			if prompt, ok := m.cfg.ResolveSkill(name); ok {
-				return m.dispatchSkill(name, prompt)
+				return m.dispatchSkill(echo, name, prompt)
 			}
 		}
 		// Daemon-client mode: the catalog lives on the daemon host, so the
 		// raw line travels and the daemon resolves it (unknown skills come
 		// back as an error frame).
 		if m.cfg.ForwardSlash {
-			return m.dispatchSkill(name, line)
+			return m.dispatchSkill(echo, name, line)
 		}
-		m.messages = append(m.messages, Message{
+		sys := Message{
 			Role:    "system",
 			Content: fmt.Sprintf("unknown command %s (try /help)", cmd),
-		})
-		return m, nil
+		}
+		m.messages = append(m.messages, sys)
+		return m, m.printMessages(echo, sys)
 	}
 }
 
 // dispatchSkill sends a skill invocation through the regular Dispatch flow,
-// guarding the single-run-at-a-time invariant.
-func (m Model) dispatchSkill(name, prompt string) (Model, tea.Cmd) {
+// guarding the single-run-at-a-time invariant. echo is the already-recorded
+// command line; it is printed alongside the notice so the scrollback keeps
+// both in order.
+func (m Model) dispatchSkill(echo Message, name, prompt string) (Model, tea.Cmd) {
 	if m.busy {
-		m.messages = append(m.messages, Message{
+		sys := Message{
 			Role:    "system",
 			Content: "agent is busy — wait for the current turn to finish, then retry",
-		})
-		return m, nil
+		}
+		m.messages = append(m.messages, sys)
+		return m, m.printMessages(echo, sys)
 	}
-	m.messages = append(m.messages, Message{
+	notice := Message{
 		Role:    "system",
 		Content: fmt.Sprintf("invoking skill: %s", name),
-	})
+	}
+	m.messages = append(m.messages, notice)
 	m.busy = true
-	cmds := []tea.Cmd{m.spinner.Tick}
+	cmds := []tea.Cmd{m.printMessages(echo, notice), m.spinner.Tick}
 	if m.cfg.Dispatch != nil {
 		cmds = append(cmds, m.cfg.Dispatch(prompt))
 	}

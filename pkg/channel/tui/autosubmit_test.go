@@ -57,6 +57,50 @@ func TestAutoSubmit_FiresOnInit(t *testing.T) {
 	}
 }
 
+// TestAutoSubmit_HiddenDispatchesWithoutEcho: with AutoSubmitHidden, the text
+// reaches the dispatcher (the agent run starts, model goes busy) but is NOT
+// echoed in the visible history — used by `argus init`, whose kick-off is a
+// synthetic protocol note the user should never see.
+func TestAutoSubmit_HiddenDispatchesWithoutEcho(t *testing.T) {
+	dispatchedWith := ""
+	cfg := tui.Config{
+		Dispatch: func(s string) tea.Cmd {
+			dispatchedWith = s
+			return nil
+		},
+		AutoSubmit:       "[kick-off] begin the interview",
+		AutoSubmitHidden: true,
+	}
+	m := tui.New(cfg)
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init() returned nil Cmd")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		batch = tea.BatchMsg{func() tea.Msg { return msg }}
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		updated, _ := m.Update(c())
+		m = updated.(tui.Model)
+	}
+
+	if dispatchedWith != "[kick-off] begin the interview" {
+		t.Errorf("dispatch should receive the AutoSubmit text, got %q", dispatchedWith)
+	}
+	if !m.IsBusy() {
+		t.Error("hidden auto-submit should mark the model busy")
+	}
+	if msgs := m.Messages(); len(msgs) != 0 {
+		t.Errorf("hidden auto-submit must not appear in history, got %+v", msgs)
+	}
+}
+
 func TestAutoSubmit_EmptyIsNoOp(t *testing.T) {
 	m := tui.New(tui.Config{Dispatch: func(string) tea.Cmd { return nil }})
 	cmd := m.Init()

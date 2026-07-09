@@ -41,16 +41,36 @@ func TestModel_EmptyInputDoesNotSubmit(t *testing.T) {
 	}
 }
 
-func TestModel_ViewIncludesHistoryAndInput(t *testing.T) {
+// TestModel_SubmitPrintsToScrollback: in the inline model a submitted line is
+// no longer part of View() (that is only the footer) — it is recorded in the
+// history registry and printed to the scrollback via a tea.Println Cmd. Assert
+// both: the message is registered, and submit returns a non-nil Cmd to print it.
+func TestModel_SubmitPrintsToScrollback(t *testing.T) {
 	m := tui.New(tui.Config{})
 	m = m.WithInput("hi")
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model := updated.(tui.Model)
 
-	view := model.View()
-	if !strings.Contains(view, "hi") {
-		t.Errorf("view missing submitted message %q:\n%s", "hi", view)
+	if !historyContains(model, "hi") {
+		t.Errorf("submitted message %q missing from history: %+v", "hi", model.Messages())
 	}
+	if cmd == nil {
+		t.Error("submit should return a non-nil Cmd (tea.Println of the echo + dispatch)")
+	}
+	// The footer (View) carries the input + status line, never the transcript.
+	if strings.Contains(model.View(), "hi") {
+		t.Errorf("inline footer must not echo the transcript; view:\n%s", model.View())
+	}
+}
+
+// historyContains reports whether any recorded message's content contains sub.
+func historyContains(m tui.Model, sub string) bool {
+	for _, msg := range m.Messages() {
+		if strings.Contains(msg.Content, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestModel_WithInitialMessages: pre-populating the history at construction

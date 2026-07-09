@@ -58,7 +58,9 @@ func chatCmd() *cobra.Command {
 				ForwardSlash: true,
 				Cancel:       func() { _ = cs.Client.Cancel() },
 			})
-			program = tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(cmd.Context()))
+			// Inline (no alt-screen): history lands in the terminal scrollback
+			// via tea.Println, keeping the mouse free for native selection.
+			program = tea.NewProgram(model, tea.WithContext(cmd.Context()))
 
 			go receiveLoop(cs.Client, program)
 

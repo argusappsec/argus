@@ -5,10 +5,9 @@ import "github.com/charmbracelet/lipgloss"
 // styles centralises every lipgloss rule used by the TUI. Keeping them in one
 // place makes the visual identity easy to tweak and (later) themeable.
 type styles struct {
-	app        lipgloss.Style
-	historyBox lipgloss.Style
-	inputBox   lipgloss.Style
-	statusBar  lipgloss.Style
+	app       lipgloss.Style
+	inputBox  lipgloss.Style
+	statusBar lipgloss.Style
 
 	userPrompt   lipgloss.Style
 	userBody     lipgloss.Style
@@ -39,11 +38,6 @@ func newStyles() styles {
 
 	return styles{
 		app: lipgloss.NewStyle(),
-
-		historyBox: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(border).
-			Padding(0, 1),
 
 		inputBox: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
