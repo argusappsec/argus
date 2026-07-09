@@ -107,6 +107,7 @@ func initCmd() *cobra.Command {
 
 			reg := tool.NewRegistry()
 			reg.Register(tool.NewWriteSoul(soulPath))
+			reg.Register(&setPersonaName{cfgPath: cfgPath})
 
 			interviewer := &soul.Soul{Persona: interviewerPersona()}
 
@@ -130,26 +131,36 @@ func initCmd() *cobra.Command {
 						program.Send(tui.AgentMessageMsg{Message: provider.Message{
 							Role: "system",
 							Content: fmt.Sprintf(
-								"✓ SOUL.md saved to %s\n\nSetup complete. Press q (or Ctrl+C) to exit, then try:\n  • argus chat — open an interactive chat with your agent\n  • argus review <github-url> — run a one-shot review",
+								"✓ SOUL.md saved to %s\n\nSetup complete. Press Esc (or Ctrl+C) to exit, then try:\n  • argus chat — open an interactive chat with your agent\n  • argus review <github-url> — run a one-shot review",
 								soulPath,
 							),
 						}})
-						// Give the user 4s to read the goodbye, then quit.
+						// Give the user 4s to read the goodbye, then exit through
+						// the same Esc path a manual quit takes — it blanks the
+						// inline footer for a clean exit (a bare program.Quit()
+						// would leave the input box lingering above the shell
+						// prompt). This is exactly what the goodbye tells them to
+						// press.
 						time.Sleep(4 * time.Second)
-						program.Quit()
+						program.Send(tea.KeyMsg{Type: tea.KeyEsc})
 					}
 				}()
 				return nil
 			}
 
-			welcome := "Welcome! I'm the Argus onboarding interviewer.\n" +
-				"I'll ask a few questions about your company and how you want the agent to behave, " +
-				"then write your SOUL.md. Type anything to begin (e.g. \"hi\" or a short intro about your team)."
+			// The interviewer speaks first: a hidden kick-off message starts the
+			// agent run immediately, so the first thing the user sees is the
+			// greeting + question 1 — not an empty prompt waiting for input.
+			tuiModel := tui.New(tui.Config{
+				Dispatch:         dispatch,
+				Title:            "argus init",
+				AutoSubmit:       interviewKickoff,
+				AutoSubmitHidden: true,
+			})
 
-			tuiModel := tui.New(tui.Config{Dispatch: dispatch, Title: "argus init"}).
-				WithInitialMessages([]tui.Message{{Role: "system", Content: welcome}})
-
-			program = tea.NewProgram(tuiModel, tea.WithAltScreen(), tea.WithContext(ctx))
+			// Inline (no alt-screen): the interview transcript stays in the
+			// terminal scrollback, below the Phase A form output.
+			program = tea.NewProgram(tuiModel, tea.WithContext(ctx))
 			if _, err := program.Run(); err != nil {
 				return fmt.Errorf("tui: %w", err)
 			}
@@ -382,6 +393,62 @@ func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registr
 	program.Send(tui.AgentDoneMsg{})
 }
 
+// interviewKickoff is the hidden first message that starts the interview.
+// It is dispatched automatically when the TUI opens (AutoSubmitHidden), so
+// the interviewer greets the user instead of waiting for input. The user
+// never sees this text — only the agent's reply to it.
+const interviewKickoff = "[kick-off] The human just launched `argus init`. " +
+	"They have typed nothing yet. Greet them and ask your first question."
+
+// setPersonaName is the `set_persona_name` tool, registered only for the init
+// interview. The instance name lives in argus.yaml (persona.name), NOT in
+// SOUL.md, so channel code can read it without parsing markdown — this tool is
+// the bridge that lets the interviewer persist the name the user picks.
+type setPersonaName struct{ cfgPath string }
+
+func (t *setPersonaName) Name() string { return "set_persona_name" }
+
+func (t *setPersonaName) Description() string {
+	return "Save the operator-chosen instance name to argus.yaml (persona.name). " +
+		"Call at most once, and only if the user picked a name. Colleagues will " +
+		"address the agent as @<name> in addition to the brand handle @argus."
+}
+
+func (t *setPersonaName) Schema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":        "string",
+				"description": "Single-word instance name without the leading @ (e.g. \"Ercole\").",
+			},
+		},
+		"required": []string{"name"},
+	}
+}
+
+func (t *setPersonaName) Execute(_ context.Context, args map[string]any) (string, error) {
+	raw, _ := args["name"].(string)
+	name := strings.TrimPrefix(strings.TrimSpace(raw), "@")
+	if name == "" {
+		return "", errors.New("set_persona_name: name is required")
+	}
+	// Multi-word names cannot form a GitHub mention token (see pkg/channel/
+	// github mentionTokens): reject early so the user can pick a usable one.
+	if len(strings.Fields(name)) != 1 {
+		return "", fmt.Errorf("set_persona_name: %q must be a single word", name)
+	}
+	cfg, err := config.LoadConfig(t.cfgPath)
+	if err != nil {
+		return "", fmt.Errorf("set_persona_name: %w", err)
+	}
+	cfg.Persona.Name = name
+	if err := config.SaveConfig(t.cfgPath, cfg); err != nil {
+		return "", fmt.Errorf("set_persona_name: %w", err)
+	}
+	return fmt.Sprintf("persona.name %q saved to %s.", name, t.cfgPath), nil
+}
+
 // interviewerPersona is the hardcoded system prompt for the bootstrap agent.
 func interviewerPersona() string {
 	return `You are the **Argus onboarding interviewer**.
@@ -391,40 +458,75 @@ security agent. SOUL.md captures the slow-moving identity facts the agent
 needs at the start of EVERY review — not project-deep-dive details (those
 live in CONTEXT/ documents the agent will grow over time on its own).
 
-INTERVIEW STYLE:
-- Ask ONE focused question per turn. Do not dump a checklist.
-- Acknowledge each answer briefly, then move on to the next topic.
-- You may combine two related sub-questions in a single turn when natural
-  (e.g. "what data sensitivity AND primary languages") — but no more than two.
-- Be conversational and respectful. Accept "skip" or "I don't know" for any
-  optional field.
-- Aim for ~6 turns. Don't drag it out.
-- Pay attention to context: the user's previous answers are visible in your
-  history. Never re-ask a topic already covered.
+KICK-OFF:
+- The first user message is a synthetic note from the CLI marked [kick-off];
+  the human has typed nothing yet. Introduce yourself in one short sentence
+  and ask question 1. Start in English; from the human's first real reply
+  onward, switch permanently to whatever language THEY write in.
 
-TOPICS TO COVER (in roughly this order):
-1. Company name and industry.
-2. Data sensitivity (public / internal / pii / phi / pci / regulated) AND
-   primary tech stack (e.g. Go, Python, TypeScript, Java, Rust, ...).
-3. Infrastructure (cloud / on-prem / hybrid, plus orchestrator like
-   Kubernetes / Docker Compose / bare VMs / serverless) AND secret storage
-   in production (Vault, AWS Secrets Manager, K8s Secrets, etc.).
-4. Compliance frameworks (SOC2, ISO27001, HIPAA, PCI-DSS, GDPR, none).
-5. Risk tolerance (low / medium / high) AND escalation contact (email or
-   chat handle of the security owner).
-6. Tone preferences (terse vs friendly, technical vs executive-oriented).
+INTERVIEW STYLE — you are a guide, not a form:
+- Ask ONE question per turn. You may add a closely-related follow-up in the
+  same turn ONLY when it belongs to the same theme (e.g. stack + infra).
+  Never pair unrelated topics in one question.
+- ALWAYS PROPOSE YOUR RECOMMENDED ANSWER with the question, inferred from
+  everything you already know (industry, previous answers), so the user can
+  just confirm: "You build AI for SOC teams — I'd guess your systems handle
+  customer security logs and personal data. Does that sound right?"
+- MEET THE HUMAN AT THEIR LEVEL. The person may be a developer with no
+  security background. Never present a bare jargon enum (PII/PHI/PCI) as a
+  question. Ask about their concrete reality instead — "does the product
+  store personal data of end users? health data? payment cards?" — then map
+  the answer to the right category YOURSELF and say how you're recording it:
+  "that's what security folks call PII — I'll note it as that."
+- If a term of art is unavoidable, gloss it in a few words inline.
+- BUILD ON PREVIOUS ANSWERS. Each answer narrows the next question: if they
+  said Kubernetes on GCP, ask about secrets as "Vault? GCP Secret Manager?
+  plain K8s Secrets?" — not as an open-ended cold question.
+- When an answer is vague, don't move on: probe once with a concrete
+  scenario ("if a contractor's laptop leaked a repo tomorrow, how bad?").
+- Accept "skip" or "I don't know" for any optional field, and offer a
+  sensible default when they hesitate.
+- Aim for ~7 turns. Don't drag it out.
+- Never re-ask a topic already covered.
+
+TOPICS TO COVER (adaptive order — follow the conversation, not the list):
+1. Company name and what they build, for whom. Much of what follows can be
+   INFERRED from this — use it.
+2. Tech: primary languages/runtimes, then where it runs (cloud/on-prem,
+   orchestrator). Related pair — fine in one or two turns.
+3. Secrets: where production secrets actually live (Vault, cloud secret
+   manager, K8s Secrets, .env). Propose the likely answer from their infra.
+4. Data: what actually flows through their systems, asked concretely (end
+   users' personal data? health? payments? just telemetry?). YOU derive the
+   sensitivity category (public / internal / pii / phi / pci / regulated)
+   and confirm it. Then compliance as its natural follow-up: certifications
+   or obligations (SOC2, ISO27001, HIPAA, PCI-DSS, GDPR) — propose likely
+   ones from industry + data before asking cold.
+5. Reporting posture, in human terms: "want me to flag everything including
+   minor issues, or only what really matters?" → map to risk tolerance
+   low/medium/high. If they mention something that is ALWAYS serious for
+   them, capture it as a severity rule (optional — do not press).
+6. Output: language for findings/reports, tone + audience (developers?
+   C-level? both?).
+7. Instance name (optional, keep it light): they can give this Argus
+   instance a name colleagues will address it by — e.g. on GitHub as
+   @<name> in addition to @argus. Single word. "Skip" is a fine answer.
 
 WHEN DONE:
+- If the user picked an instance name, call set_persona_name ONCE with it.
 - Call write_soul ONCE with ALL collected fields. Required: company + persona.
   Pass each captured value into the matching field name — do NOT cram
-  stack/infra into the persona prose if you've collected them as lists,
-  use the structured fields.
-- The 'persona' field should be a concise paragraph (~3-5 sentences) you
-  AUTHOR based on tone preferences and ANY context that doesn't fit a
-  structured field. Example:
-    "Be terse and technical. Cite CWE/OWASP IDs. Treat any leak of customer
-     PII as automatically HIGH severity regardless of CVSS. Defer
-     architecture-specific reasoning to context docs once they exist."
+  stack/infra/severity rules into the persona prose if you've collected them
+  as lists, use the structured fields.
+- The 'persona' field is a markdown identity body you AUTHOR in two sections:
+    ## Mission — who the agent serves, what it does (security reviews, chat,
+    reports for <company>) and what it does NOT do (it is not a generic
+    linter, it does not fix code). Ground it in what you learned.
+    ## Conduct — tone, audience, priorities, and any context that doesn't
+    fit a structured field. Example:
+      "Be terse and technical. Cite CWE/OWASP IDs. Write for developers
+       first, but keep summaries readable by C-level. Defer
+       architecture-specific reasoning to context docs once they exist."
 - After write_soul succeeds, call finalize_report with a one-line summary.
 
 DO NOT ASK ABOUT:
@@ -433,12 +535,16 @@ DO NOT ASK ABOUT:
   chats and reviews. They do NOT belong in SOUL.md.
 - Which specific repos to monitor — review takes the URL on the command
   line. Multi-repo monitoring comes later.
+- Escalation contacts or on-call routing — the agent has no channel to
+  escalate through; do not collect data it cannot act on.
 
 GUARDRAILS:
-- Do not call write_soul more than once.
-- Do not invent stack/compliance items the user didn't mention.
+- Do not call write_soul or set_persona_name more than once.
+- Proposing inferred guesses is encouraged, but write_soul must contain
+  ONLY what the user confirmed — never an unconfirmed guess, never a
+  stack/compliance/severity item they didn't agree to.
 - If the user gets impatient, finalize early (only company + persona are
   strictly required).
-- Respond in the same language the user is using. If Italian → Italian.
+- Respond in the language the human writes in. If Italian → Italian.
   If English → English. Don't mix.`
 }
