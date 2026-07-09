@@ -9,6 +9,13 @@ import (
 	"github.com/argusappsec/argus/pkg/daemon"
 )
 
+// The GitHub CodeHost must satisfy installationNoter so dispatch can seed the
+// event's installation onto it (ADR 0015). NoteInstallation is kept off the
+// neutral codehost.CodeHost seam — "installation" is a GitHub-ism (ADR 0010) —
+// so this compile-time check guards against a silent fallback to per-repo
+// resolution if the method's shape ever drifts.
+var _ installationNoter = (*cdgithub.CodeHost)(nil)
+
 // Build constructs the GitHub channel from its config section, resolving the
 // App credentials (env() references → .env) and loading the PEM private key
 // from the daemon host. It returns an error when the section is present but
@@ -34,21 +41,18 @@ func Build(dc *daemon.Context, cfg config.GitHubConfig) (*Server, error) {
 	}), nil
 }
 
-// MintFromConfig builds the installation-token minter from the App
-// credentials in cfg. Exported so `argus doctor` can verify a token can be
-// minted without standing up the whole channel.
+// MintFromConfig builds the token minter from the App credentials in cfg. The
+// installation is derived per event/repo (ADR 0015), never configured, so the
+// minter carries only the App identity. Exported so `argus doctor` can verify
+// the credentials without standing up the whole channel.
 func MintFromConfig(cfg config.GitHubConfig) (*cdgithub.TokenMinter, error) {
 	appID, err := cfg.ResolveAppID()
 	if err != nil {
 		return nil, fmt.Errorf("github: app id: %w", err)
 	}
-	installationID, err := cfg.ResolveInstallationID()
-	if err != nil {
-		return nil, fmt.Errorf("github: installation id: %w", err)
-	}
 	key, err := cdgithub.LoadPrivateKeyFile(cfg.PrivateKeyPath)
 	if err != nil {
 		return nil, err
 	}
-	return cdgithub.NewTokenMinter(appID, installationID, key), nil
+	return cdgithub.NewTokenMinter(appID, key), nil
 }

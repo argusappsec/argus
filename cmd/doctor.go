@@ -176,12 +176,15 @@ func githubDoctorOptions(home string) (*config.GitHubConfig, func(context.Contex
 		e.ApplyToProcess()
 	}
 	gh := cfg.GitHub
-	mint := func(ctx context.Context) error {
+	mint := func(_ context.Context) error {
 		m, err := ghchannel.MintFromConfig(gh)
 		if err != nil {
 			return err
 		}
-		_, err = m.Token(ctx)
+		// The installation is derived per event/repo (ADR 0015); there is no
+		// pinned installation token to mint. Verify the private key can sign an
+		// App JWT — the credential every installation-token mint builds on.
+		_, err = m.AppJWT()
 		return err
 	}
 	return &gh, mint

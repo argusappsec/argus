@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -48,6 +49,11 @@ type Event struct {
 	Commenter string
 	// Body is the comment body (comment events).
 	Body string
+
+	// InstallationID is the App installation the delivery belongs to
+	// (installation.id in the payload). It is the acting installation for this
+	// event — the App is multi-installation, so this varies per org (ADR 0015).
+	InstallationID string
 }
 
 // ErrInvalidSignature is returned when the HMAC does not verify — a forged or
@@ -107,22 +113,24 @@ func parsePullRequest(body []byte) (Event, error) {
 				SHA string `json:"sha"`
 			} `json:"base"`
 		} `json:"pull_request"`
-		Repository repository `json:"repository"`
+		Repository   repository   `json:"repository"`
+		Installation installation `json:"installation"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return Event{}, fmt.Errorf("github: parse pull_request: %w", err)
 	}
 	owner, name, full := p.Repository.canonical()
 	return Event{
-		Kind:    KindPullRequest,
-		Action:  p.Action,
-		Repo:    full,
-		Owner:   owner,
-		Name:    name,
-		Number:  p.Number,
-		BaseSHA: p.PullRequest.Base.SHA,
-		HeadSHA: p.PullRequest.Head.SHA,
-		Author:  p.PullRequest.User.Login,
+		Kind:           KindPullRequest,
+		Action:         p.Action,
+		Repo:           full,
+		Owner:          owner,
+		Name:           name,
+		Number:         p.Number,
+		BaseSHA:        p.PullRequest.Base.SHA,
+		HeadSHA:        p.PullRequest.Head.SHA,
+		Author:         p.PullRequest.User.Login,
+		InstallationID: p.Installation.id(),
 	}, nil
 }
 
@@ -138,21 +146,23 @@ func parseIssueComment(body []byte) (Event, error) {
 				Login string `json:"login"`
 			} `json:"user"`
 		} `json:"comment"`
-		Repository repository `json:"repository"`
+		Repository   repository   `json:"repository"`
+		Installation installation `json:"installation"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return Event{}, fmt.Errorf("github: parse issue_comment: %w", err)
 	}
 	owner, name, full := p.Repository.canonical()
 	return Event{
-		Kind:      KindComment,
-		Action:    p.Action,
-		Repo:      full,
-		Owner:     owner,
-		Name:      name,
-		Number:    p.Issue.Number,
-		Commenter: p.Comment.User.Login,
-		Body:      p.Comment.Body,
+		Kind:           KindComment,
+		Action:         p.Action,
+		Repo:           full,
+		Owner:          owner,
+		Name:           name,
+		Number:         p.Issue.Number,
+		Commenter:      p.Comment.User.Login,
+		Body:           p.Comment.Body,
+		InstallationID: p.Installation.id(),
 	}, nil
 }
 
@@ -168,22 +178,39 @@ func parseReviewComment(body []byte) (Event, error) {
 				Login string `json:"login"`
 			} `json:"user"`
 		} `json:"comment"`
-		Repository repository `json:"repository"`
+		Repository   repository   `json:"repository"`
+		Installation installation `json:"installation"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return Event{}, fmt.Errorf("github: parse review_comment: %w", err)
 	}
 	owner, name, full := p.Repository.canonical()
 	return Event{
-		Kind:      KindComment,
-		Action:    p.Action,
-		Repo:      full,
-		Owner:     owner,
-		Name:      name,
-		Number:    p.PullRequest.Number,
-		Commenter: p.Comment.User.Login,
-		Body:      p.Comment.Body,
+		Kind:           KindComment,
+		Action:         p.Action,
+		Repo:           full,
+		Owner:          owner,
+		Name:           name,
+		Number:         p.PullRequest.Number,
+		Commenter:      p.Comment.User.Login,
+		Body:           p.Comment.Body,
+		InstallationID: p.Installation.id(),
 	}, nil
+}
+
+// installation mirrors the webhook's installation object: the App installation
+// the delivery belongs to (ADR 0015). Absent on deliveries not tied to an
+// installation, in which case id() is "".
+type installation struct {
+	ID int64 `json:"id"`
+}
+
+// id renders the installation id as a string, or "" when there is none.
+func (i installation) id() string {
+	if i.ID == 0 {
+		return ""
+	}
+	return strconv.FormatInt(i.ID, 10)
 }
 
 // repository mirrors the webhook's repository object.

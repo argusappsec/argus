@@ -24,7 +24,8 @@ const openedPR = `{
     "head": {"sha": "headsha111"},
     "base": {"sha": "basesha000"}
   },
-  "repository": {"full_name": "argusappsec/argus", "name": "argus", "owner": {"login": "argusappsec"}}
+  "repository": {"full_name": "argusappsec/argus", "name": "argus", "owner": {"login": "argusappsec"}},
+  "installation": {"id": 987654}
 }`
 
 const issueComment = `{
@@ -57,6 +58,9 @@ func TestParse_ValidPullRequest(t *testing.T) {
 	}
 	if evt.Author != "alice" {
 		t.Errorf("author = %q, want the PR author for metadata", evt.Author)
+	}
+	if evt.InstallationID != "987654" {
+		t.Errorf("installation id = %q, want 987654 (derived from the event)", evt.InstallationID)
 	}
 }
 

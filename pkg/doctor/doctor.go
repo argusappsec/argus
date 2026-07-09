@@ -112,8 +112,10 @@ func Run(opts Options) []Check {
 }
 
 // githubCheck verifies the GitHub App channel is ready: credentials present
-// (env() references resolve, private key file exists) and — when a mint
-// function is supplied — that an installation token can be minted.
+// (env() references resolve, private key file exists) and — when a verify
+// function is supplied — that the private key can sign an App JWT. The
+// installation is derived per event/repo (ADR 0015), so there is no pinned
+// installation token to mint here.
 func githubCheck(cfg config.GitHubConfig, mint func(ctx context.Context) error) Check {
 	c := Check{Name: "github", Severity: SeverityOptional}
 	if !cfg.Configured() {
@@ -127,7 +129,6 @@ func githubCheck(cfg config.GitHubConfig, mint func(ctx context.Context) error) 
 		resolve func() (string, error)
 	}{
 		{"app_id", cfg.ResolveAppID},
-		{"installation_id", cfg.ResolveInstallationID},
 		{"webhook_secret", cfg.ResolveWebhookSecret},
 	} {
 		if _, err := f.resolve(); err != nil {
@@ -148,11 +149,11 @@ func githubCheck(cfg config.GitHubConfig, mint func(ctx context.Context) error) 
 	}
 	if err := mint(context.Background()); err != nil {
 		c.Status = Fail
-		c.Hint = "could not mint installation token: " + err.Error()
+		c.Hint = "could not sign App JWT with the private key: " + err.Error()
 		return c
 	}
 	c.Status = Pass
-	c.Message = "App credentials present, installation token minted"
+	c.Message = "App credentials present, private key signs an App JWT"
 	return c
 }
 

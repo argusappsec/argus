@@ -134,6 +134,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 // rather than stacking a new one (ADR 0009). A comment carrying the @argus
 // mention from a resolved Person becomes a conversational turn in the thread.
 func (s *Server) dispatch(ctx context.Context, evt Event) error {
+	// The installation the App should act as is carried in the event payload
+	// (ADR 0015): seed it so every clone/API call for this repo mints a token
+	// for that installation without an extra App-JWT lookup. Multi-org support
+	// is then free — a different org's event simply carries a different id.
+	if evt.InstallationID != "" {
+		if noter, ok := s.host.(installationNoter); ok {
+			noter.NoteInstallation(repoFromEvent(evt), evt.InstallationID)
+		}
+	}
 	switch evt.Kind {
 	case KindPullRequest:
 		return s.dispatchPullRequest(ctx, evt)
@@ -142,6 +151,13 @@ func (s *Server) dispatch(ctx context.Context, evt Event) error {
 	default:
 		return nil
 	}
+}
+
+// installationNoter is optionally implemented by a CodeHost that can be told a
+// repo's installation up-front (from a webhook event), skipping the per-repo
+// App-JWT resolution. The GitHub CodeHost implements it; a test fake need not.
+type installationNoter interface {
+	NoteInstallation(repo codehost.Repo, installationID string)
 }
 
 // dispatchPullRequest handles an opened/synchronize PR: attribute the trigger
@@ -161,7 +177,7 @@ func (s *Server) dispatchPullRequest(ctx context.Context, evt Event) error {
 		return nil
 	}
 
-	repos, err := s.host.InstallationRepos(ctx)
+	repos, err := s.host.InstallationRepos(ctx, repoFromEvent(evt))
 	if err != nil {
 		return fmt.Errorf("github: installation repos: %w", err)
 	}

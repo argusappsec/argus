@@ -27,19 +27,26 @@ const defaultAPIBase = "https://api.github.com"
 const tokenRefreshBuffer = time.Minute
 
 // TokenMinter mints short-lived installation access tokens for a GitHub App
-// (App JWT → installation token, ADR 0008). It caches the token and refreshes
-// it only when it is near expiry, so repeated clones/API calls reuse one
-// token. Safe for concurrent use.
+// (App JWT → installation token, ADR 0008). A GitHub App is multi-installation
+// by construction (ADR 0015): tokens are minted and cached **per installation**
+// so the same App acts on every organization it is installed on without a
+// pinned installation id. Each installation's token is refreshed only when it
+// is near expiry, so repeated clones/API calls against one installation reuse a
+// single token. Safe for concurrent use.
 type TokenMinter struct {
-	appID          string
-	installationID string
-	key            *rsa.PrivateKey
+	appID string
+	key   *rsa.PrivateKey
 
 	httpClient *http.Client
 	apiBase    string
 	now        func() time.Time
 
-	mu      sync.Mutex
+	mu     sync.Mutex
+	tokens map[string]tokenEntry // installation id → cached token
+}
+
+// tokenEntry is one installation's cached token and its expiry.
+type tokenEntry struct {
 	token   string
 	expires time.Time
 }
@@ -59,16 +66,17 @@ func WithAPIBase(base string) MinterOption {
 // WithClock overrides the clock used for JWT timestamps and cache expiry.
 func WithClock(now func() time.Time) MinterOption { return func(m *TokenMinter) { m.now = now } }
 
-// NewTokenMinter builds a minter for the App identified by appID +
-// installationID, signing JWTs with the given RSA private key.
-func NewTokenMinter(appID, installationID string, key *rsa.PrivateKey, opts ...MinterOption) *TokenMinter {
+// NewTokenMinter builds a minter for the App identified by appID, signing JWTs
+// with the given RSA private key. The installation is chosen per Token call, so
+// one minter serves every organization the App is installed on.
+func NewTokenMinter(appID string, key *rsa.PrivateKey, opts ...MinterOption) *TokenMinter {
 	m := &TokenMinter{
-		appID:          appID,
-		installationID: installationID,
-		key:            key,
-		httpClient:     http.DefaultClient,
-		apiBase:        defaultAPIBase,
-		now:            time.Now,
+		appID:      appID,
+		key:        key,
+		httpClient: http.DefaultClient,
+		apiBase:    defaultAPIBase,
+		now:        time.Now,
+		tokens:     map[string]tokenEntry{},
 	}
 	for _, o := range opts {
 		o(m)
@@ -78,30 +86,40 @@ func NewTokenMinter(appID, installationID string, key *rsa.PrivateKey, opts ...M
 
 // NewTokenMinterFromPEM parses a PEM-encoded RSA private key (the App's .pem)
 // and returns a minter.
-func NewTokenMinterFromPEM(appID, installationID string, pemBytes []byte, opts ...MinterOption) (*TokenMinter, error) {
+func NewTokenMinterFromPEM(appID string, pemBytes []byte, opts ...MinterOption) (*TokenMinter, error) {
 	key, err := parseRSAPrivateKey(pemBytes)
 	if err != nil {
 		return nil, err
 	}
-	return NewTokenMinter(appID, installationID, key, opts...), nil
+	return NewTokenMinter(appID, key, opts...), nil
 }
 
-// Token returns a valid installation token, minting a fresh one only when the
-// cached token is absent or within tokenRefreshBuffer of expiry.
-func (m *TokenMinter) Token(ctx context.Context) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.token != "" && m.now().Add(tokenRefreshBuffer).Before(m.expires) {
-		return m.token, nil
+// Token returns a valid access token for the given installation, minting a
+// fresh one only when the cached token for that installation is absent or
+// within tokenRefreshBuffer of expiry. Each installation is cached separately.
+func (m *TokenMinter) Token(ctx context.Context, installationID string) (string, error) {
+	if installationID == "" {
+		return "", fmt.Errorf("github: token: empty installation id")
 	}
 
-	jwt, err := m.appJWT()
+	// A valid cached token is returned without holding the lock across the
+	// network mint below: one minter is shared across every installation
+	// (ADR 0015), so a slow mint for one org must not block cache hits — or
+	// mints — for another. A rare concurrent double-mint of the same
+	// installation is harmless (both write an equivalent token).
+	m.mu.Lock()
+	e, ok := m.tokens[installationID]
+	m.mu.Unlock()
+	if ok && e.token != "" && m.now().Add(tokenRefreshBuffer).Before(e.expires) {
+		return e.token, nil
+	}
+
+	jwt, err := m.AppJWT()
 	if err != nil {
 		return "", fmt.Errorf("github: app jwt: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/app/installations/%s/access_tokens", m.apiBase, m.installationID)
+	url := fmt.Sprintf("%s/app/installations/%s/access_tokens", m.apiBase, installationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("github: build token request: %w", err)
@@ -130,15 +148,20 @@ func (m *TokenMinter) Token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("github: token response had no token")
 	}
 
-	m.token = out.Token
-	m.expires = out.ExpiresAt
-	return m.token, nil
+	m.mu.Lock()
+	m.tokens[installationID] = tokenEntry{token: out.Token, expires: out.ExpiresAt}
+	m.mu.Unlock()
+	return out.Token, nil
 }
 
-// appJWT builds and signs the short-lived App JWT (RS256) used to mint an
-// installation token. iat is backdated 60s to tolerate clock skew; exp is
-// capped well under GitHub's 10-minute maximum.
-func (m *TokenMinter) appJWT() (string, error) {
+// AppJWT builds and signs the short-lived App JWT (RS256). It authenticates
+// App-level API calls that precede an installation token — minting one, or
+// resolving which installation owns a repository (GET
+// /repos/{o}/{r}/installation) — and lets `argus doctor` verify the private key
+// is usable without a pinned installation. It performs no network I/O. iat is
+// backdated 60s to tolerate clock skew; exp is capped well under GitHub's
+// 10-minute maximum.
+func (m *TokenMinter) AppJWT() (string, error) {
 	now := m.now()
 	header := map[string]any{"alg": "RS256", "typ": "JWT"}
 	claims := map[string]any{
