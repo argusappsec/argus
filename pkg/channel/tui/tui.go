@@ -26,6 +26,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/argusappsec/argus/pkg/provider"
 )
@@ -149,6 +150,10 @@ type Model struct {
 	input   textarea.Model
 	spinner spinner.Model
 
+	// glamourStyle is the markdown style name resolved once at construction
+	// (see detectGlamourStyle) so rendering never queries the terminal mid-run.
+	glamourStyle string
+
 	// State.
 	messages []Message
 	busy     bool
@@ -197,12 +202,29 @@ func New(cfg Config) Model {
 	sp.Spinner = spinner.Dot
 
 	return Model{
-		cfg:     cfg,
-		styles:  newStyles(),
-		input:   ta,
-		spinner: sp,
-		busy:    cfg.StartBusy,
+		cfg:          cfg,
+		styles:       newStyles(),
+		input:        ta,
+		spinner:      sp,
+		busy:         cfg.StartBusy,
+		glamourStyle: detectGlamourStyle(),
 	}
+}
+
+// detectGlamourStyle resolves the glamour style name once, while stdin is
+// still ours: New() runs before tea.Program starts reading input. glamour's
+// WithAutoStyle probes the terminal background (OSC 11 + cursor report) on
+// every renderer construction — issued mid-run, the terminal's reply is
+// swallowed by bubbletea's input reader and lands in the textarea as garbage
+// keystrokes. Resolving the style here keeps runtime rendering query-free.
+func detectGlamourStyle() string {
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		return "notty" // pipes and tests: plain markdown, no ANSI
+	}
+	if lipgloss.HasDarkBackground() {
+		return "dark"
+	}
+	return "light"
 }
 
 // Init satisfies tea.Model. It prints any messages baked in with
@@ -227,9 +249,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		// Inline mode: no layout budget to balance against the terminal
 		// height — bubbletea sizes the footer frame itself. We only need the
-		// width for the input box and for wrapping printed messages.
+		// width for the input box and for wrapping printed messages. A new
+		// width changes how the content soft-wraps, so re-sync the height.
 		m.width = msg.Width
 		m.input.SetWidth(max(msg.Width-2, 20))
+		m = m.syncInputHeight()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -378,8 +402,10 @@ func (m Model) recallNewer() (Model, bool) {
 // syncInputHeight grows and shrinks the input box with its content, capped at
 // six rows. In inline mode this is all the layout there is: the footer frame
 // tracks the input height automatically, so there is nothing else to recompute.
+// The count is soft-wrap aware (displayRows): sizing by logical lines would
+// keep a long wrapped line in a one-row window showing only its last row.
 func (m Model) syncInputHeight() Model {
-	h := min(m.input.LineCount(), 6)
+	h := min(m.displayRows(), 6)
 	if h != m.input.Height() {
 		m.input.SetHeight(h)
 	}
@@ -435,7 +461,7 @@ func (m Model) renderMessage(msg Message) string {
 		if msg.markdown {
 			// glamour supplies its own left margin and wrapping — do NOT also
 			// indent(2), or the body drifts right by four columns.
-			if rendered, ok := renderMarkdown(body, width); ok {
+			if rendered, ok := renderMarkdown(body, width, m.glamourStyle); ok {
 				return header + "\n" + rendered
 			}
 		}
@@ -460,13 +486,17 @@ func (m Model) renderError(err error) string {
 		m.styles.errorBody.Render(indent(wrapText(err.Error(), m.wrapWidth()-2), "  "))
 }
 
-// renderMarkdown renders an agent body as markdown at the given wrap width.
-// It reports ok=false on any failure so the caller can fall back to raw text.
-func renderMarkdown(body string, width int) (string, bool) {
+// renderMarkdown renders an agent body as markdown at the given wrap width,
+// with the style name resolved at construction time (detectGlamourStyle).
+// WithAutoStyle must NOT be used here: it probes the terminal on stdin, which
+// bubbletea owns while running, and the probe reply would leak into the input
+// as keystrokes. It reports ok=false on any failure so the caller can fall
+// back to raw text.
+func renderMarkdown(body string, width int, style string) (string, bool) {
 	if width < 1 {
 		width = 1
 	}
-	r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(width))
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(width))
 	if err != nil {
 		return "", false
 	}
@@ -616,10 +646,11 @@ func (m Model) TokensOut() int { return m.tokensOut }
 func (m Model) CostUSD() float64 { return m.costUSD }
 
 // WithInput returns a new Model with the input box pre-populated. Used by
-// tests to avoid simulating keystroke-by-keystroke entry.
+// tests to avoid simulating keystroke-by-keystroke entry; the height syncs
+// exactly as it would while typing.
 func (m Model) WithInput(s string) Model {
 	m.input.SetValue(s)
-	return m
+	return m.syncInputHeight()
 }
 
 // WithInitialMessages returns a new Model with the supplied history baked in.

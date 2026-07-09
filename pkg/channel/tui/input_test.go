@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/argusappsec/argus/pkg/channel/tui"
 )
@@ -87,6 +88,32 @@ func TestModel_HistoryRecall(t *testing.T) {
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if m.InputValue() != "" {
 		t.Fatalf("Down past newest should restore draft, got %q", m.InputValue())
+	}
+}
+
+// TestModel_InputHeightTracksSoftWrap: a single long logical line wraps into
+// several display rows; the input box must grow to show them all, not sit at
+// one row displaying only the last wrapped row (LineCount counts logical
+// lines, so height math must be soft-wrap aware).
+func TestModel_InputHeightTracksSoftWrap(t *testing.T) {
+	m := tui.New(tui.Config{})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	m = updated.(tui.Model)
+
+	baseline := lipgloss.Height(m.View())
+
+	// ~120 columns of text in a 40-column terminal → at least 3 wrapped rows.
+	m = m.WithInput(strings.Repeat("parola ", 17))
+
+	grown := lipgloss.Height(m.View())
+	if grown < baseline+2 {
+		t.Errorf("footer height %d after soft-wrapped input, want >= %d (input box must grow with wrapped rows)", grown, baseline+2)
+	}
+
+	// Clearing via submit shrinks it back.
+	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if h := lipgloss.Height(m.View()); h != baseline {
+		t.Errorf("footer height %d after submit, want baseline %d", h, baseline)
 	}
 }
 
