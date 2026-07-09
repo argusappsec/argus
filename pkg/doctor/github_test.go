@@ -21,7 +21,7 @@ func findCheck(checks []doctor.Check, name string) *doctor.Check {
 }
 
 func TestGitHubCheck_NotConfiguredIsInfo(t *testing.T) {
-	checks := doctor.Run(doctor.Options{Home: t.TempDir(), GitHub: &config.GitHubConfig{}})
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), GitHub: &config.CodeHostConfig{}})
 	c := findCheck(checks, "github")
 	if c == nil {
 		t.Fatal("no github check")
@@ -38,18 +38,16 @@ func TestGitHubCheck_AbsentSectionSkipped(t *testing.T) {
 	}
 }
 
-func configuredGitHub(t *testing.T) config.GitHubConfig {
+func configuredGitHub(t *testing.T) config.CodeHostConfig {
 	t.Helper()
 	keyPath := filepath.Join(t.TempDir(), "app.pem")
 	if err := os.WriteFile(keyPath, []byte("dummy"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GH_WH", "secret")
-	return config.GitHubConfig{
+	return config.CodeHostConfig{
+		Type:           "github",
 		AppID:          "123",
-		InstallationID: "456",
 		PrivateKeyPath: keyPath,
-		WebhookSecret:  "env(GH_WH)",
 	}
 }
 

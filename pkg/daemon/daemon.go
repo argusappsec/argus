@@ -83,6 +83,11 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 	if cfg.DefaultModel == "" {
 		return nil, fmt.Errorf("daemon: no model configured. Run `argus init` to pick one")
 	}
+	// The integration surface (codehosts:/channels:) is the startup gate: a
+	// misconfigured file fails loudly here, never as a silent dead channel.
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	env, err := config.LoadEnv(filepath.Join(home, ".env"))
 	if err != nil {

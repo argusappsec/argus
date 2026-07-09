@@ -48,11 +48,11 @@ func codehostSetupCmd() *cobra.Command {
 		Use:   "setup",
 		Short: "Configure a code host: select the host, then write its channel config",
 		Long: "Onboard a code host channel. Pick the host (GitHub today), then Argus\n" +
-			"writes everything that host needs in one step. For GitHub (ADR 0008):\n" +
-			"the github: section of argus.yaml, the webhook secret in .env, and the\n" +
-			"private key under ~/.argus. The github-app Service is synthesized by the\n" +
-			"channel — no users.yaml row is written. Missing values are prompted\n" +
-			"interactively.",
+			"writes everything that host needs in one step. For GitHub (ADR 0008/0015):\n" +
+			"the codehosts:/channels: sections of argus.yaml, the webhook secret in\n" +
+			".env, and the private key under ~/.argus. The github-app Service is\n" +
+			"synthesized by the channel — no users.yaml row is written. Missing values\n" +
+			"are prompted interactively.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolveHome(in.Home)
 			if err != nil {
@@ -160,17 +160,24 @@ func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 		return res, fmt.Errorf("github setup: load config: %w", err)
 	}
 	autoEnroll := in.AutoEnroll
-	addr := in.Addr
-	if addr == "" {
-		addr = ":8080"
+	// Config v2 (ADR 0015): the outbound App identity lives under codehosts:,
+	// the inbound webhook binding under channels:. No installation id (derived
+	// per event/repo) and no per-channel addr (the daemon owns one front door).
+	if cfg.CodeHosts == nil {
+		cfg.CodeHosts = map[string]config.CodeHostConfig{}
 	}
-	cfg.GitHub = config.GitHubConfig{
-		Addr:           addr,
-		AppID:          in.AppID,          // non-secret: stored as a literal
-		InstallationID: in.InstallationID, // non-secret: stored as a literal
+	cfg.CodeHosts[config.CodeHostTypeGitHub] = config.CodeHostConfig{
+		Type:           config.CodeHostTypeGitHub,
+		AppID:          in.AppID, // non-secret: stored as a literal
 		PrivateKeyPath: dest,
-		WebhookSecret:  config.EnvRef("GITHUB_WEBHOOK_SECRET"),
-		AutoEnroll:     &autoEnroll,
+	}
+	if cfg.Channels == nil {
+		cfg.Channels = map[string]config.ChannelConfig{}
+	}
+	cfg.Channels[config.ChannelTypeGitHub] = config.ChannelConfig{
+		Type:          config.ChannelTypeGitHub,
+		WebhookSecret: config.EnvRef("GITHUB_WEBHOOK_SECRET"),
+		AutoEnroll:    &autoEnroll,
 	}
 	if err := config.SaveConfig(cfgPath, cfg); err != nil {
 		return res, fmt.Errorf("github setup: save config: %w", err)
@@ -208,7 +215,7 @@ func copyPrivateKey(src, dst string) error {
 
 func printSetupResult(cmd *cobra.Command, home string, res setupResult) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "✓ wrote github: section to %s\n", filepath.Join(home, "argus.yaml"))
+	fmt.Fprintf(&b, "✓ wrote codehosts:/channels: sections to %s\n", filepath.Join(home, "argus.yaml"))
 	fmt.Fprintf(&b, "✓ stored GITHUB_WEBHOOK_SECRET in %s\n", filepath.Join(home, ".env"))
 	fmt.Fprintf(&b, "✓ private key at %s\n", res.PrivateKeyDest)
 	b.WriteString("\nNext: run `argus doctor` — the github line should report a minted token.\n")

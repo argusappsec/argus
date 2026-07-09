@@ -40,25 +40,31 @@ func TestApplyGitHubSetup_WritesEverything(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// argus.yaml github section is configured and parseable.
+	// argus.yaml codehosts:/channels: sections are configured and parseable,
+	// and the whole config passes v2 validation.
 	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if !cfg.GitHub.Configured() {
-		t.Errorf("github section not configured: %+v", cfg.GitHub)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("written config fails validation: %v", err)
 	}
-	if got, _ := cfg.GitHub.ResolveAppID(); got != "123456" {
+	host, ok := cfg.CodeHost(config.CodeHostTypeGitHub)
+	if !ok || !host.Configured() {
+		t.Errorf("github codehost not configured: %+v", host)
+	}
+	if got, _ := host.ResolveAppID(); got != "123456" {
 		t.Errorf("app id = %q", got)
 	}
 
-	// The webhook secret resolves from .env via the env() reference.
+	// The webhook secret resolves from .env via the env() reference on the channel.
 	env, err := config.LoadEnv(filepath.Join(home, ".env"))
 	if err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	env.ApplyToProcess()
-	if got, _ := cfg.GitHub.ResolveWebhookSecret(); got != "shhh" {
+	ch, _ := cfg.Channel(config.ChannelTypeGitHub)
+	if got, _ := ch.ResolveWebhookSecret(); got != "shhh" {
 		t.Errorf("webhook secret resolved to %q", got)
 	}
 
@@ -92,8 +98,9 @@ func TestApplyGitHubSetup_PreservesExistingConfig(t *testing.T) {
 	if cfg.DefaultModel != "gemini-2.5-flash" {
 		t.Errorf("default_model clobbered: %q", cfg.DefaultModel)
 	}
-	if !cfg.GitHub.Configured() {
-		t.Error("github not written alongside existing config")
+	host, ok := cfg.CodeHost(config.CodeHostTypeGitHub)
+	if !ok || !host.Configured() {
+		t.Error("github codehost not written alongside existing config")
 	}
 }
 

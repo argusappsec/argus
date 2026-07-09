@@ -44,14 +44,20 @@ type Config struct {
 	// process-level config is not).
 	Daemon DaemonConfig `yaml:"daemon,omitempty"`
 
-	// GitHub configures the GitHub App channel (ADR 0008). Absent or
-	// unconfigured means the channel does not start.
-	GitHub GitHubConfig `yaml:"github,omitempty"`
+	// CodeHosts declares the outbound integration surface (ADR 0015): one
+	// entry per platform instance, carrying the App identity every channel
+	// clones and calls the API with. Keyed by a free-choice logical name;
+	// the runtime binds by `type` and allows one codehost per type. Absent
+	// means the daemon has no authenticated code host (MCP-only / local use).
+	CodeHosts map[string]CodeHostConfig `yaml:"codehosts,omitempty"`
 
-	// MCP configures the MCP channel (ADR 0011): the HTTP server an external AI
-	// consults Argus through. Absent or unconfigured means the channel does not
-	// start (parity with GitHub: an unconfigured daemon stays socket-only).
-	MCP MCPConfig `yaml:"mcp,omitempty"`
+	// Channels declares the inbound integration surface (ADR 0015): one entry
+	// per transport binding — the GitHub webhook (type: github) or MCP
+	// (type: mcp). Keyed by a free-choice logical name; the runtime binds by
+	// `type` and allows one channel per type. A github channel's outbound
+	// credentials come implicitly from the single github codehost. Absent
+	// leaves the daemon socket-only.
+	Channels map[string]ChannelConfig `yaml:"channels,omitempty"`
 
 	// Persona configures the operator-chosen display name this instance answers
 	// to (e.g. "Ercole"). Optional and additive: an empty persona leaves the
@@ -73,49 +79,54 @@ type PersonaConfig struct {
 	Name string `yaml:"name,omitempty"`
 }
 
-// MCPConfig is the mcp: section of argus.yaml — the MCP channel (ADR 0011).
-// Auth is per-Person bearer tokens provisioned with `argus user mcp-token`, so
-// the only thing the section configures is where to listen; its mere presence
-// (a listen address) is what turns the channel on.
-type MCPConfig struct {
-	// Addr is the HTTP listen address for MCP requests (e.g. ":8090").
-	Addr string `yaml:"addr,omitempty"`
-}
+// Recognised codehost and channel types. The runtime binds config entries by
+// these values (one per type), never by their free-choice map key.
+const (
+	// CodeHostTypeGitHub is the only implemented codehost type (ADR 0010).
+	CodeHostTypeGitHub = "github"
+	// ChannelTypeGitHub is the GitHub App webhook channel (ADR 0008).
+	ChannelTypeGitHub = "github"
+	// ChannelTypeMCP is the MCP channel (ADR 0011).
+	ChannelTypeMCP = "mcp"
+)
 
-// Configured reports whether the mcp: section carries enough to start the
-// channel: a listen address. Bearer tokens live in users.yaml, not here.
-func (m MCPConfig) Configured() bool { return m.Addr != "" }
-
-// ListenAddr returns the configured MCP listen address, defaulting to ":8090"
-// when unset.
-func (m MCPConfig) ListenAddr() string {
-	if m.Addr != "" {
-		return m.Addr
-	}
-	return ":8090"
-}
-
-// GitHubConfig is the github: section of argus.yaml — the GitHub App channel
-// (ADR 0008). The App's secrets stay out of the YAML: webhook_secret is an
-// env() reference resolved from .env, and private_key_path points to the
-// PEM file on the daemon host.
-type GitHubConfig struct {
-	// Addr is the HTTP listen address for webhook deliveries (e.g. ":8080").
-	Addr string `yaml:"addr,omitempty"`
+// CodeHostConfig is one entry under codehosts: — an outbound integration to a
+// code-hosting platform (ADR 0015). It carries the App identity every channel
+// clones and calls the API with; the installation is derived per event/repo,
+// never configured. The private key lives as a PEM on the daemon host; app_id
+// may be a literal or an env() reference.
+type CodeHostConfig struct {
+	// Type selects the platform implementation (only "github" today).
+	Type string `yaml:"type"`
 
 	// AppID is the numeric GitHub App id. Literal or env() reference.
 	AppID string `yaml:"app_id,omitempty"`
 
-	// InstallationID is the App installation id whose token is minted.
-	// Literal or env() reference.
-	InstallationID string `yaml:"installation_id,omitempty"`
-
 	// PrivateKeyPath is the filesystem path to the App's PEM private key on
 	// the daemon host (used to mint the App JWT).
 	PrivateKeyPath string `yaml:"private_key_path,omitempty"`
+}
 
-	// WebhookSecret is the App's webhook secret. env() reference (→ .env);
-	// its SHA-256 must match the github-app Service entry in users.yaml.
+// Configured reports whether the codehost carries the credentials it needs to
+// authenticate: an App id and a private key path.
+func (c CodeHostConfig) Configured() bool {
+	return c.AppID != "" && c.PrivateKeyPath != ""
+}
+
+// ResolveAppID applies the env() reference syntax so the id can live in .env.
+func (c CodeHostConfig) ResolveAppID() (string, error) { return ResolveValue(c.AppID) }
+
+// ChannelConfig is one entry under channels: — an inbound transport binding
+// (ADR 0015). A github channel carries the webhook secret and enrolment
+// policy; its outbound credentials come implicitly from the single github
+// codehost. An mcp channel carries nothing here — auth is per-Person bearer
+// tokens in users.yaml.
+type ChannelConfig struct {
+	// Type selects the transport ("github" webhook, "mcp").
+	Type string `yaml:"type"`
+
+	// WebhookSecret is the GitHub App's webhook secret (github channel only).
+	// env() reference (→ .env).
 	WebhookSecret string `yaml:"webhook_secret,omitempty"`
 
 	// AutoEnroll governs whether an installed repo is reviewed automatically
@@ -129,35 +140,102 @@ type GitHubConfig struct {
 }
 
 // AutoEnrollEnabled reports the effective auto_enroll policy. Unset → true.
-func (g GitHubConfig) AutoEnrollEnabled() bool {
-	return g.AutoEnroll == nil || *g.AutoEnroll
+func (c ChannelConfig) AutoEnrollEnabled() bool {
+	return c.AutoEnroll == nil || *c.AutoEnroll
 }
 
-// Configured reports whether the github: section carries enough to start the
-// channel: an App id, a private key path, and a webhook secret reference.
-func (g GitHubConfig) Configured() bool {
-	return g.AppID != "" && g.PrivateKeyPath != "" && g.WebhookSecret != ""
+// ResolveWebhookSecret applies the env() reference syntax (→ .env).
+func (c ChannelConfig) ResolveWebhookSecret() (string, error) {
+	return ResolveValue(c.WebhookSecret)
 }
 
-// ListenAddr returns the configured webhook listen address, defaulting to
-// ":8080" when unset.
-func (g GitHubConfig) ListenAddr() string {
-	if g.Addr != "" {
-		return g.Addr
+// CodeHost returns the codehost declared with the given type, if any. The
+// runtime allows one codehost per type (enforced by Validate), so the match
+// is unambiguous.
+func (c *Config) CodeHost(hostType string) (CodeHostConfig, bool) {
+	for _, h := range c.CodeHosts {
+		if h.Type == hostType {
+			return h, true
+		}
 	}
-	return ":8080"
+	return CodeHostConfig{}, false
 }
 
-// ResolveAppID / ResolveInstallationID / ResolveWebhookSecret apply the
-// env() reference syntax (see ResolveValue) so credentials can live in .env.
-func (g GitHubConfig) ResolveAppID() (string, error) { return ResolveValue(g.AppID) }
-
-func (g GitHubConfig) ResolveInstallationID() (string, error) {
-	return ResolveValue(g.InstallationID)
+// Channel returns the channel declared with the given type, if any. One
+// channel per type (enforced by Validate) keeps the match unambiguous.
+func (c *Config) Channel(chanType string) (ChannelConfig, bool) {
+	for _, ch := range c.Channels {
+		if ch.Type == chanType {
+			return ch, true
+		}
+	}
+	return ChannelConfig{}, false
 }
 
-func (g GitHubConfig) ResolveWebhookSecret() (string, error) {
-	return ResolveValue(g.WebhookSecret)
+// Validate enforces the config v2 invariants that must hold before the daemon
+// wires channels: every entry has a known type, per-type required fields are
+// present, at most one codehost and one channel exist per type, and a github
+// channel has the github codehost its outbound credentials come from. It is
+// the startup gate — a misconfigured file fails loudly here, never as a silent
+// dead channel at runtime.
+func (c *Config) Validate() error {
+	seenHost := map[string]string{}
+	for name, h := range c.CodeHosts {
+		if prev, dup := seenHost[h.Type]; dup {
+			return fmt.Errorf("config: codehosts %q and %q are both type %q; only one codehost per type is supported", prev, name, h.Type)
+		}
+		seenHost[h.Type] = name
+		if err := h.validate(name); err != nil {
+			return err
+		}
+	}
+	seenChan := map[string]string{}
+	for name, ch := range c.Channels {
+		if prev, dup := seenChan[ch.Type]; dup {
+			return fmt.Errorf("config: channels %q and %q are both type %q; only one channel per type is supported", prev, name, ch.Type)
+		}
+		seenChan[ch.Type] = name
+		if err := ch.validate(name); err != nil {
+			return err
+		}
+	}
+	if _, ok := c.Channel(ChannelTypeGitHub); ok {
+		if _, ok := c.CodeHost(CodeHostTypeGitHub); !ok {
+			return fmt.Errorf("config: a github channel requires a github codehost under `codehosts:` (its clone/API credentials)")
+		}
+	}
+	return nil
+}
+
+// validate checks a single codehost's required fields for its type.
+func (c CodeHostConfig) validate(name string) error {
+	switch c.Type {
+	case CodeHostTypeGitHub:
+		if c.AppID == "" {
+			return fmt.Errorf("config: codehost %q (github): missing `app_id`", name)
+		}
+		if c.PrivateKeyPath == "" {
+			return fmt.Errorf("config: codehost %q (github): missing `private_key_path`", name)
+		}
+	default:
+		return fmt.Errorf("config: codehost %q: unknown type %q (only %q is supported)", name, c.Type, CodeHostTypeGitHub)
+	}
+	return nil
+}
+
+// validate checks a single channel's required fields for its type.
+func (c ChannelConfig) validate(name string) error {
+	switch c.Type {
+	case ChannelTypeGitHub:
+		if c.WebhookSecret == "" {
+			return fmt.Errorf("config: channel %q (github): missing `webhook_secret`", name)
+		}
+	case ChannelTypeMCP:
+		// No required fields: MCP auth is per-Person bearer tokens in users.yaml.
+	default:
+		return fmt.Errorf("config: channel %q: unknown type %q (supported: %q, %q)", name, c.Type, ChannelTypeGitHub, ChannelTypeMCP)
+	}
+	return nil
 }
 
 // DaemonConfig is the daemon: section of argus.yaml.
@@ -165,6 +243,13 @@ type DaemonConfig struct {
 	// Socket overrides the Unix-domain-socket path the local channel
 	// listens on. Empty means "<home>/argusd.sock".
 	Socket string `yaml:"socket,omitempty"`
+
+	// HTTPAddr is the address of the daemon's single HTTP front door (ADR
+	// 0015): HTTP channels register fixed paths on it (/webhooks/github,
+	// /mcp) rather than opening listeners of their own. Empty means the
+	// default (":8080"). Exposure control belongs to the reverse proxy. The
+	// front door slice binds it; the config v2 schema only accepts it here.
+	HTTPAddr string `yaml:"http_addr,omitempty"`
 
 	// MaxConcurrentSessions caps in-flight Sessions across all channels.
 	// Above the cap new Sessions are politely rejected, never queued
@@ -260,11 +345,52 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("config: read %s: %w", path, err)
 	}
+	if err := checkLegacyKeys(b); err != nil {
+		return nil, err
+	}
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	return &c, nil
+}
+
+// checkLegacyKeys rejects config v1 keys with an error naming their v2
+// replacement (ADR 0015). Argus has no installed base, so there is no
+// dual-read: a stale key is a hard startup error, never a silently dead
+// channel. It probes the raw YAML rather than the typed Config because the
+// typed decode simply ignores unknown keys.
+func checkLegacyKeys(b []byte) error {
+	// Decode each section's entries as key→node maps so a removed sub-key is a
+	// plain map lookup; presence of the removed top-level sections is a nil
+	// check on their nodes.
+	var probe struct {
+		GitHub    *yaml.Node                      `yaml:"github"`
+		MCP       *yaml.Node                      `yaml:"mcp"`
+		CodeHosts map[string]map[string]yaml.Node `yaml:"codehosts"`
+		Channels  map[string]map[string]yaml.Node `yaml:"channels"`
+	}
+	if err := yaml.Unmarshal(b, &probe); err != nil {
+		// A genuine parse error surfaces from the typed decode with the path.
+		return nil
+	}
+	if probe.GitHub != nil {
+		return errors.New("config: the top-level `github:` section was removed (config v2, ADR 0015): declare the GitHub App under `codehosts:` (type: github, app_id, private_key_path) and its webhook under `channels:` (type: github, webhook_secret)")
+	}
+	if probe.MCP != nil {
+		return errors.New("config: the top-level `mcp:` section was removed (config v2, ADR 0015): declare it under `channels:` with `type: mcp`")
+	}
+	for name, entry := range probe.CodeHosts {
+		if _, ok := entry["installation_id"]; ok {
+			return fmt.Errorf("config: codehost %q sets `installation_id`, which was removed (config v2, ADR 0015): the installation is derived per event/repository, so none is configured", name)
+		}
+	}
+	for name, entry := range probe.Channels {
+		if _, ok := entry["addr"]; ok {
+			return fmt.Errorf("config: channel %q sets `addr`, which was removed (config v2, ADR 0015): the daemon exposes a single front door at `daemon.http_addr`", name)
+		}
+	}
+	return nil
 }
 
 // SaveConfig serializes c to path, creating parent directories as needed.

@@ -70,9 +70,10 @@ type Options struct {
 	// by any tool (e.g. git).
 	ExtraBinaries []ExtraBinary
 
-	// GitHub, when non-nil, adds a check of the GitHub App channel (ADR 0008):
-	// that the App credentials are present and a token can be minted.
-	GitHub *config.GitHubConfig
+	// GitHub, when non-nil, adds a check of the GitHub codehost (ADR 0015):
+	// that the App credentials are present and the private key can sign an
+	// App JWT.
+	GitHub *config.CodeHostConfig
 
 	// GitHubMint mints an installation token to prove the credentials work.
 	// It is injected (the network call lives in the caller, keeping the
@@ -111,31 +112,23 @@ func Run(opts Options) []Check {
 	return out
 }
 
-// githubCheck verifies the GitHub App channel is ready: credentials present
-// (env() references resolve, private key file exists) and — when a verify
-// function is supplied — that the private key can sign an App JWT. The
-// installation is derived per event/repo (ADR 0015), so there is no pinned
-// installation token to mint here.
-func githubCheck(cfg config.GitHubConfig, mint func(ctx context.Context) error) Check {
+// githubCheck verifies the GitHub codehost is ready: credentials present
+// (the app_id env() reference resolves, the private key file exists) and —
+// when a verify function is supplied — that the private key can sign an App
+// JWT. The installation is derived per event/repo (ADR 0015), so there is no
+// pinned installation token to mint here.
+func githubCheck(cfg config.CodeHostConfig, mint func(ctx context.Context) error) Check {
 	c := Check{Name: "github", Severity: SeverityOptional}
 	if !cfg.Configured() {
 		c.Status = Info
 		c.Severity = SeverityInfo
-		c.Message = "channel not configured (no github: section) — skipping"
+		c.Message = "codehost not configured (no github codehost) — skipping"
 		return c
 	}
-	for _, f := range []struct {
-		name    string
-		resolve func() (string, error)
-	}{
-		{"app_id", cfg.ResolveAppID},
-		{"webhook_secret", cfg.ResolveWebhookSecret},
-	} {
-		if _, err := f.resolve(); err != nil {
-			c.Status = Fail
-			c.Hint = fmt.Sprintf("github.%s: %v", f.name, err)
-			return c
-		}
+	if _, err := cfg.ResolveAppID(); err != nil {
+		c.Status = Fail
+		c.Hint = fmt.Sprintf("codehosts.github.app_id: %v", err)
+		return c
 	}
 	if _, err := os.Stat(cfg.PrivateKeyPath); err != nil {
 		c.Status = Fail

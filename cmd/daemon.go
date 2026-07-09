@@ -58,21 +58,25 @@ func daemonCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: listening on %s\n", dc.SocketPath)
 
 			channels := []daemon.Channel{uds.NewServer(dc)}
-			// The GitHub App channel starts only when configured (ADR 0008):
-			// an unconfigured github: section leaves the daemon socket-only.
-			if cfg.GitHub.Configured() {
-				gh, err := ghchannel.Build(dc, cfg.GitHub)
+			// The GitHub App channel starts only when a github channel is
+			// declared (ADR 0015); its outbound credentials come from the
+			// github codehost. Validate (in daemon.Build) guarantees the
+			// codehost is present, so the lookup cannot miss.
+			if ch, ok := cfg.Channel(config.ChannelTypeGitHub); ok {
+				host, _ := cfg.CodeHost(config.CodeHostTypeGitHub)
+				gh, err := ghchannel.Build(dc, host, ch)
 				if err != nil {
 					return fmt.Errorf("argusd: github channel: %w", err)
 				}
 				channels = append(channels, gh)
-				fmt.Fprintf(cmd.OutOrStdout(), "argusd: github webhook on %s\n", cfg.GitHub.ListenAddr())
+				fmt.Fprintf(cmd.OutOrStdout(), "argusd: github webhook on %s\n", ghchannel.DefaultAddr)
 			}
-			// The MCP channel starts only when configured (ADR 0011): an
-			// unconfigured mcp: section leaves the daemon socket-only.
-			if cfg.MCP.Configured() {
-				channels = append(channels, mcpchannel.Build(dc, cfg.MCP))
-				fmt.Fprintf(cmd.OutOrStdout(), "argusd: mcp on %s\n", cfg.MCP.ListenAddr())
+			// The MCP channel starts only when an mcp channel is declared
+			// (ADR 0011); an absent channels: entry leaves the daemon
+			// socket-only.
+			if _, ok := cfg.Channel(config.ChannelTypeMCP); ok {
+				channels = append(channels, mcpchannel.Build(dc))
+				fmt.Fprintf(cmd.OutOrStdout(), "argusd: mcp on %s\n", mcpchannel.DefaultAddr)
 			}
 
 			daemon.RunChannels(ctx, dc, channels...)

@@ -159,25 +159,26 @@ func doctorRegistry() *tool.Registry {
 	return reg
 }
 
-// githubDoctorOptions loads argus.yaml's github: section and, when it is
-// configured, returns it plus a mint closure that proves a token can be
-// minted (the network call lives here, not in the pure doctor package). When
-// the section is absent, both are nil and doctor skips the check.
-func githubDoctorOptions(home string) (*config.GitHubConfig, func(context.Context) error) {
+// githubDoctorOptions loads the github codehost from argus.yaml and, when it is
+// configured, returns it plus a mint closure that proves the private key can
+// sign an App JWT (the network-adjacent call lives here, not in the pure doctor
+// package). When no github codehost is declared, an unconfigured (Info) row is
+// still surfaced; a config load error skips the check entirely.
+func githubDoctorOptions(home string) (*config.CodeHostConfig, func(context.Context) error) {
 	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
-	if err != nil || !cfg.GitHub.Configured() {
-		if err == nil && cfg != nil {
-			return &cfg.GitHub, nil // present but unconfigured → Info row
-		}
+	if err != nil {
 		return nil, nil
 	}
-	// Load .env so env() references in the github: section resolve.
+	host, _ := cfg.CodeHost(config.CodeHostTypeGitHub)
+	if !host.Configured() {
+		return &host, nil // absent or incomplete → Info/Fail row, no mint
+	}
+	// Load .env so the app_id env() reference resolves.
 	if e, lerr := config.LoadEnv(filepath.Join(home, ".env")); lerr == nil {
 		e.ApplyToProcess()
 	}
-	gh := cfg.GitHub
 	mint := func(_ context.Context) error {
-		m, err := ghchannel.MintFromConfig(gh)
+		m, err := ghchannel.MintFromConfig(host)
 		if err != nil {
 			return err
 		}
@@ -187,7 +188,7 @@ func githubDoctorOptions(home string) (*config.GitHubConfig, func(context.Contex
 		_, err = m.AppJWT()
 		return err
 	}
-	return &gh, mint
+	return &host, mint
 }
 
 // extraBinaries lists binary deps that aren't owned by any Tool (because
