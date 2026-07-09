@@ -15,8 +15,9 @@ model, one audit log, and one knowledge base.
 
 ## Highlights
 
-- **Conversational reviews.** Open an interactive chat or fire a one-shot
-  review against a GitHub repo and get findings explained, not just dumped.
+- **Conversational reviews.** Ask for a review in chat or over MCP and get
+  findings explained, not just dumped; pull-request reviews fire automatically
+  from GitHub webhook events.
 - **Real scanners, no shell escape.** Argus wraps tools like
   [`semgrep`](https://semgrep.dev), [`gitleaks`](https://github.com/gitleaks/gitleaks)
   and [`osv-scanner`](https://github.com/google/osv-scanner)
@@ -82,22 +83,32 @@ make tidy       # go mod tidy
 # 2. Verify dependencies and configuration
 ./argus doctor
 
-# 3. Talk to the agent (running `argus` with no args opens chat)
-./argus chat
+# 3. (optional) Onboard a GitHub code host and webhook channel
+./argus codehost setup
 
-# 4. Run a security review on a repository
-./argus review https://github.com/owner/repo
+# 4. Talk to the agent (running `argus` with no args opens chat)
+./argus chat
 ```
 
+Reviews are requested **through a channel**, not a CLI verb: ask for one
+conversationally in chat, or call the MCP `review` capability (with
+caller-supplied files for a snapshot review, or a `repo` + `ref` for a full
+repo review). Pull-request reviews are triggered automatically by GitHub
+webhook events. See [ADR 0016](docs/adr/0016-review-requested-through-channels.md).
+
 ### Commands
+
+The CLI is deliberately scoped to setup and administration — you talk to Argus
+through channels, you don't execute it as a scanner ([ADR 0016](docs/adr/0016-review-requested-through-channels.md)).
 
 | Command | Description |
 | --- | --- |
 | `argus` | Opens the interactive chat (default UX) |
 | `argus chat` | Open an interactive chat with the Argus agent |
-| `argus review <github-url>` | Run a security review on a repository (interactive by default) |
 | `argus init` | Interactive bootstrap: provider, API key, and `SOUL.md` |
+| `argus codehost setup` | Onboard a GitHub code host + webhook channel (writes `codehosts:` / `channels:`) |
 | `argus doctor` | Check that dependencies and configuration are ready |
+| `argus user ...` | Manage the Person table and MCP tokens |
 | `argus skill ls` / `argus skill rm <name>` | Manage agent skills |
 | `argus daemon` | Run the Argus daemon (`argusd`) |
 
@@ -110,11 +121,39 @@ default_model: gemini-2.5-pro
 providers:
   gemini:
     type: gemini
-    api_key: ${GEMINI_API_KEY}   # or set inline / via env
+    api_key: env(GEMINI_API_KEY)   # or set inline
 daemon:
   socket: ~/.argus/argusd.sock
+  http_addr: :8080                 # single HTTP front door
   max_concurrent_sessions: 4
 ```
+
+Integrations are declared in config (v2, [ADR 0015](docs/adr/0015-integrations-declared-in-configuration.md)):
+`codehosts:` holds the outbound App identity every channel clones and calls the
+API with; `channels:` holds the inbound transport bindings. There is no
+`installation_id` — the acting installation is derived per event and per repo —
+and no per-channel `addr`: the daemon serves every HTTP channel on the one
+front door (`/webhooks/github`, `/mcp`, plus `/healthz`).
+
+```yaml
+codehosts:
+  github:
+    type: github
+    app_id: env(GITHUB_APP_ID)
+    private_key_path: /secrets/github-app.pem
+channels:
+  github:
+    type: github
+    webhook_secret: env(GITHUB_WEBHOOK_SECRET)
+    auto_enroll: true              # + enabled_repos, an explicit allow-list
+  mcp:
+    type: mcp
+```
+
+> **Upgrading from 0.2.x:** the legacy top-level `github:` / `mcp:` keys,
+> `installation_id`, and per-channel `addr` now **fail startup** with an error
+> naming the replacement. Operators with an existing GitHub App must also
+> change its webhook URL from `/webhook` to `/webhooks/github`.
 
 Runtime state lives under `~/.argus/`:
 
@@ -130,7 +169,7 @@ Runtime state lives under `~/.argus/`:
 
 ```
 argus.go            # entrypoint
-cmd/                # cobra command tree (chat, review, init, doctor, skill, daemon)
+cmd/                # cobra command tree (chat, init, codehost, doctor, user, skill, daemon)
 pkg/
   agent/            # agent run loop, dispatch, system prompt assembly
   auth/             # principal/identity resolution, RBAC

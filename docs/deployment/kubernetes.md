@@ -24,7 +24,7 @@ want Argus to live alongside your other bots and ops tooling.
 | Config (`argus.yaml`, `SOUL.md`) | `ConfigMap`, seeded onto the PVC by an init container |
 | Secrets (API keys, GitHub App) | `Secret` → env vars; the App **PEM** mounted as a file |
 | User table (`users.yaml`) | lives on the PVC, managed via `kubectl exec` |
-| Networking | two servers, merged at the `Ingress` by path |
+| Networking | one HTTP front door (`daemon.http_addr`), exposed by path at the `Ingress` |
 
 ### What lives where, and why
 
@@ -61,8 +61,11 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   to — `git` (required, for cloning), `semgrep`, `gitleaks` and `osv-scanner`
   — so the GitHub PR-review Channel works out of the box with no derived image
   or sidecar (see [ADR 0013](../adr/0013-batteries-included-runtime-image.md)).
-  The image runs as nonroot (uid `65532`) and exposes `:8080` (GitHub) and
-  `:8090` (MCP). It is published multi-arch for `linux/amd64` and `linux/arm64`
+  The image runs as nonroot (uid `65532`) and exposes a single HTTP front door
+  on `:8080` — the daemon serves every configured HTTP channel (the GitHub
+  webhook at `/webhooks/github`, MCP at `/mcp`) plus its `/healthz` probe on
+  that one port (see [ADR 0015](../adr/0015-integrations-declared-in-configuration.md)).
+  It is published multi-arch for `linux/amd64` and `linux/arm64`
   with provenance and SBOM attestations.
 
   **Which tag to run:**
@@ -102,17 +105,31 @@ providers:
     api_key: env(GEMINI_API_KEY)
 daemon:
   socket: ~/.argus/argusd.sock
+  http_addr: :8080            # the single HTTP front door
   max_concurrent_sessions: 4
-github:
-  app_id: env(GITHUB_APP_ID)
-  installation_id: env(GITHUB_INSTALLATION_ID)
-  webhook_secret: env(GITHUB_SECRET_WH)
-  private_key_path: /etc/argus/github_app.pem
-  addr: :8080
-  auto_enroll: true
-mcp:
-  addr: :8090
+codehosts:
+  github:                     # outbound App identity: clone + call the API
+    type: github
+    app_id: env(GITHUB_APP_ID)
+    private_key_path: /etc/argus/github_app.pem
+channels:
+  github:                     # inbound webhook binding
+    type: github
+    webhook_secret: env(GITHUB_SECRET_WH)
+    auto_enroll: true
+  mcp:
+    type: mcp
 ```
+
+> **Config v2 (0.3.0):** the integration surface is split into `codehosts:`
+> (outbound App credentials) and `channels:` (inbound transport bindings), and
+> the daemon owns a single front door under `daemon.http_addr`. There is **no
+> `installation_id`** — Argus derives the acting installation from each webhook
+> event (and per repository for on-demand reviews), so installing the App on
+> more organizations needs zero config change. The old top-level `github:` /
+> `mcp:` keys, `installation_id`, and per-channel `addr` are **hard startup
+> errors** whose message names the replacement — there is no dual-read or
+> migration shim.
 
 ## Step 2 — ConfigMap (seed) and Secrets
 
@@ -127,7 +144,6 @@ kubectl create configmap argus-seed \
 kubectl create secret generic argus-secrets \
   --from-literal=GEMINI_API_KEY=... \
   --from-literal=GITHUB_APP_ID=... \
-  --from-literal=GITHUB_INSTALLATION_ID=... \
   --from-literal=GITHUB_SECRET_WH=...
 
 # GitHub App private key, mounted as a file
@@ -186,13 +202,12 @@ spec:
           envFrom:
             - secretRef: { name: argus-secrets }
           ports:
-            - { name: github, containerPort: 8080 }
-            - { name: mcp,    containerPort: 8090 }
+            - { name: http, containerPort: 8080 }   # the single front door
           livenessProbe:
-            tcpSocket: { port: github }   # no /health endpoint; probe the port
+            httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 10
           readinessProbe:
-            tcpSocket: { port: github }
+            httpGet: { path: /healthz, port: http }
           volumeMounts:
             - { name: data, mountPath: /data/.argus }
             - { name: pem,  mountPath: /etc/argus, readOnly: true }
@@ -220,8 +235,7 @@ spec:
   clusterIP: None
   selector: { app: argus }
   ports:
-    - { name: github, port: 8080, targetPort: github }
-    - { name: mcp,    port: 8090, targetPort: mcp }
+    - { name: http, port: 8080, targetPort: http }
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -237,17 +251,25 @@ spec:
     - host: argus.example.com
       http:
         paths:
-          - path: /webhook            # GitHub App webhook → must be public
+          - path: /webhooks/github    # GitHub App webhook → must be public
             pathType: Prefix
-            backend: { service: { name: argus, port: { name: github } } }
+            backend: { service: { name: argus, port: { name: http } } }
           - path: /mcp                # drop this path to keep MCP internal
             pathType: Prefix
-            backend: { service: { name: argus, port: { name: mcp } } }
+            backend: { service: { name: argus, port: { name: http } } }
 ```
 
-Point the GitHub App's webhook URL at `https://argus.example.com/webhook`.
-Keep MCP internal by omitting its Ingress path and reaching it via the
-in-cluster Service or a port-forward.
+Both channels sit behind the one front-door port; **exposure is a routing
+decision at the Ingress**, not a matter of separate listeners. Publish
+`/webhooks/github` (the GitHub App must reach it) and keep MCP internal by
+omitting the `/mcp` path — reach MCP via the in-cluster Service or a
+port-forward. Leave `/healthz` unrouted; it is for in-cluster probes.
+
+Point the GitHub App's webhook URL at `https://argus.example.com/webhooks/github`.
+
+> **Upgrading from 0.2.x:** the webhook path changed from `/webhook` to
+> `/webhooks/github`. Update the GitHub App's webhook URL to match, or
+> deliveries will 404.
 
 ## Step 4 — Bootstrap users
 
@@ -259,6 +281,11 @@ first operator administers the daemon over `kubectl exec`:
 kubectl exec -it argus-0 -- argus user add davide --role admin --email davide@example.com
 kubectl exec -it argus-0 -- argus user mcp-token add davide
 ```
+
+> Only **Persons** are bootstrapped here. The `github-app` Service principal
+> that automatic PR reviews are attributed to is **synthesized** by the GitHub
+> channel from the fact of being configured — there is no service row to
+> provision and no `argus service` step (config v2, ADR 0015/0016).
 
 > **Security:** in this model, anyone who can `kubectl exec` into the pod is
 > an Argus admin. Lock down `exec` with Kubernetes RBAC the same way you
