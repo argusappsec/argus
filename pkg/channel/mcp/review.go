@@ -18,16 +18,22 @@ const toolReview = "review"
 // reviewDescription is what the external AI reads to decide when to call
 // review. It frames Argus as a colleague who applies the organization's own
 // context, which is the boundary the MVP relies on (the surface advertises
-// org-aware review; generic linting is the caller's own job — ADR 0011).
-const reviewDescription = "Ask Argus — your organization's own security engineer — for a security review of code " +
-	"you are working on, judged through YOUR organization's lens (its stack, conventions, infra, compliance " +
-	"posture, and the false positives already accepted), not generic security advice. Hand over the changed " +
-	"files from the developer's working tree as {path, content} pairs; Argus runs its real scanners and skills " +
-	"over them and returns findings (severity, rule, file/line, snippet, remediation). Use this whenever the " +
-	"developer asks \"is what I just wrote safe given how we build things?\" — not for textbook questions you " +
-	"can already answer yourself."
+// org-aware review; generic linting is the caller's own job — ADR 0011). The
+// one tool accepts two mutually exclusive targets: caller-supplied files (a
+// Snapshot review) or a codehost repo reference (a Repo review — ADR 0016).
+const reviewDescription = "Ask Argus — your organization's own security engineer — for a security review of code, " +
+	"judged through YOUR organization's lens (its stack, conventions, infra, compliance posture, and the false " +
+	"positives already accepted), not generic security advice. Argus runs its real scanners and skills and " +
+	"returns findings (severity, rule, file/line, snippet, remediation). Give it EITHER `files` — the changed " +
+	"files from the developer's working tree as {path, content} pairs, for a Snapshot review — OR `repo` + `ref` " +
+	"to review a whole repository the App can access (private repos included). Use `files` whenever the developer " +
+	"asks \"is what I just wrote safe given how we build things?\"; use `repo` to review code you do not hold " +
+	"locally. Not for textbook questions you can already answer yourself."
 
-// reviewToolDecl is the review tool's wire declaration for tools/list.
+// reviewToolDecl is the review tool's wire declaration for tools/list. The
+// schema advertises both target forms; mutual exclusion is enforced at the tool
+// layer (JSON Schema cannot express "exactly one of these") and reported as a
+// clear validation error.
 func reviewToolDecl() toolDecl {
 	return toolDecl{
 		Name:        toolReview,
@@ -37,7 +43,7 @@ func reviewToolDecl() toolDecl {
 			"properties": map[string]any{
 				"files": map[string]any{
 					"type":        "array",
-					"description": "The files to review — typically the changed files from the developer's working tree.",
+					"description": "Snapshot target: the files to review as {path, content} pairs — typically the changed files from the developer's working tree. Mutually exclusive with repo/ref.",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -47,8 +53,15 @@ func reviewToolDecl() toolDecl {
 						"required": []string{"path", "content"},
 					},
 				},
+				"repo": map[string]any{
+					"type":        "string",
+					"description": "Repo target: a codehost repository URL (https://github.com/owner/repo) or short form (github.com/owner/repo) to review in full. Mutually exclusive with files.",
+				},
+				"ref": map[string]any{
+					"type":        "string",
+					"description": "Optional branch, tag, or commit SHA for the repo target. Default: the repository's default branch.",
+				},
 			},
-			"required": []string{"files"},
 		},
 	}
 }
@@ -98,16 +111,10 @@ type reviewResult struct {
 	FilesNeeded []string         `json:"files_needed,omitempty"`
 }
 
-// handleReview is the review capability: enforce RBAC at the tool layer,
-// materialize the caller-supplied files into a Snapshot workspace, run the
-// org-aware agent loop pointed at that workspace, and return either findings or
-// a structured files_needed request (the collaborative Snapshot review, ADR
-// 0011).
-//
-// When the caller carries an MCP session, the workspace lives on that session so
-// a follow-up review accumulates the newly supplied files onto it (no resend)
-// and a previously-missing path is satisfied. A sessionless one-shot client gets
-// a workspace created and cleaned up within the call.
+// handleReview is the review capability: enforce RBAC at the tool layer, then
+// route to the target the caller named — caller-supplied files (a Snapshot
+// review) or a codehost repo reference (a Repo review, ADR 0016). The two forms
+// are mutually exclusive; supplying both or neither is a validation error.
 func (s *Server) handleReview(ctx context.Context, principal auth.Principal, sessionID string, req rpcRequest, rawArgs json.RawMessage) rpcResponse {
 	// RBAC at the tool layer so the channel cannot escalate a caller's role and
 	// the refusal is uniform however the external AI phrases the request.
@@ -118,14 +125,41 @@ func (s *Server) handleReview(ctx context.Context, principal auth.Principal, ses
 
 	var args struct {
 		Files []reviewFile `json:"files"`
+		Repo  string       `json:"repo"`
+		Ref   string       `json:"ref"`
 	}
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return result(req.ID, toolError("invalid review arguments: "+err.Error()))
 	}
-	if len(args.Files) == 0 {
-		return result(req.ID, toolError("review requires at least one file (path + content) to review"))
-	}
 
+	// Exactly one target form. The two are mutually exclusive (a Snapshot review
+	// materializes caller content; a Repo review clones a real checkout), so the
+	// caller must pick one — an ambiguous request is refused rather than guessed.
+	hasSnapshot := len(args.Files) > 0
+	repoRef := strings.TrimSpace(args.Repo)
+	hasRepo := repoRef != ""
+	switch {
+	case hasSnapshot && hasRepo:
+		return result(req.ID, toolError("review accepts either files (a snapshot) or repo (a repository), not both — pick one target"))
+	case !hasSnapshot && !hasRepo:
+		return result(req.ID, toolError("review requires a target: either files (path + content pairs) to review, or a repo reference to review in full"))
+	case hasRepo:
+		return s.handleRepoReview(ctx, principal, req, repoRef, strings.TrimSpace(args.Ref))
+	default:
+		return s.handleSnapshotReview(ctx, principal, sessionID, req, args.Files)
+	}
+}
+
+// handleSnapshotReview materializes the caller-supplied files into a Snapshot
+// workspace, runs the org-aware agent loop pointed at that workspace, and
+// returns either findings or a structured files_needed request (the
+// collaborative Snapshot review, ADR 0011).
+//
+// When the caller carries an MCP session, the workspace lives on that session so
+// a follow-up review accumulates the newly supplied files onto it (no resend)
+// and a previously-missing path is satisfied. A sessionless one-shot client gets
+// a workspace created and cleaned up within the call.
+func (s *Server) handleSnapshotReview(ctx context.Context, principal auth.Principal, sessionID string, req rpcRequest, reviewFiles []reviewFile) rpcResponse {
 	// The workspace is session-scoped when the caller has an MCP session, so
 	// follow-up calls accumulate; otherwise it is one-shot. Serialize calls on the
 	// same session so a follow-up does not race the prior call's workspace/run.
@@ -143,8 +177,8 @@ func (s *Server) handleReview(ctx context.Context, principal auth.Principal, ses
 		defer func() { _ = ws.Close() }()
 	}
 
-	files := make([]snapshot.File, len(args.Files))
-	for i, f := range args.Files {
+	files := make([]snapshot.File, len(reviewFiles))
+	for i, f := range reviewFiles {
 		files[i] = snapshot.File{Path: f.Path, Content: f.Content}
 	}
 	if err := ws.Add(files); err != nil {
@@ -177,11 +211,63 @@ func (s *Server) handleReview(ctx context.Context, principal auth.Principal, ses
 
 	missing := ws.Missing()
 	s.audit("mcp_review", principal, map[string]any{
-		"files":        len(args.Files),
+		"files":        len(reviewFiles),
 		"findings":     len(rep.Findings),
 		"files_needed": len(missing),
 	})
 	return result(req.ID, reviewToolResult(rep, missing))
+}
+
+// handleRepoReview clones the named codehost repository through the shared
+// authenticated codehost client and runs a full-tree Repo review (ADR 0016).
+// The dispatch is deterministic (not model-mediated): the target is parsed and
+// cloned here, then handed straight to the Session's review spine. A repo target
+// requires a configured codehost of the matching host; with none it fails with a
+// clear error naming what the operator must enable. Unlike a Snapshot review the
+// checkout is complete, so there is no files_needed accumulation and no MCP
+// session workspace to carry across calls.
+func (s *Server) handleRepoReview(ctx context.Context, principal auth.Principal, req rpcRequest, repoRef, ref string) rpcResponse {
+	host := s.dc.CodeHost
+	if host == nil {
+		return result(req.ID, toolError("review of a repository requires a configured codehost — add a github entry under `codehosts:` in argus.yaml, or supply the changed files directly for a snapshot review"))
+	}
+
+	repo, err := host.ParseURL(repoRef)
+	if err != nil {
+		return result(req.ID, toolError("could not parse repo reference: "+err.Error()))
+	}
+
+	co, err := host.Clone(ctx, repo, ref)
+	if err != nil {
+		s.audit("mcp_review_failed", principal, map[string]any{"repo": repo.FullName, "error": err.Error()})
+		return result(req.ID, toolError("could not clone repository: "+err.Error()))
+	}
+
+	// A repo review is one-shot and stateless across MCP sessions (the full tree
+	// is present), so an ephemeral daemon session keyed to this repo checkout is
+	// enough — no workspace accumulation to preserve.
+	sess, _, err := s.dc.Sessions.GetOrCreate(ctx, s.Name(), daemon.NewConversationKey(), principal, daemon.SessionOptions{Ephemeral: true})
+	if err != nil {
+		return errorResponse(req.ID, codeInvalidRequest, "could not start review session")
+	}
+	defer s.dc.Sessions.Release(sess)
+
+	rep, _, err := sess.HandleRepoReview(ctx, daemon.RepoReviewTarget{
+		Repo: repo.FullName,
+		SHA:  co.SHA,
+		Path: co.Path,
+	}, daemon.RunCallbacks{})
+	if err != nil {
+		s.audit("mcp_review_failed", principal, map[string]any{"repo": repo.FullName, "error": err.Error()})
+		return result(req.ID, toolError("review failed: "+err.Error()))
+	}
+
+	s.audit("mcp_review", principal, map[string]any{
+		"repo":     repo.FullName,
+		"ref":      co.SHA,
+		"findings": len(rep.Findings),
+	})
+	return result(req.ID, reviewToolResult(rep, nil))
 }
 
 // canReview reports whether role may request a Snapshot review. Review is an

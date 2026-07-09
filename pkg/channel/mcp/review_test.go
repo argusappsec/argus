@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -12,12 +13,58 @@ import (
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/codehost"
+	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/daemon"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
 	"github.com/argusappsec/argus/pkg/soul"
 )
+
+// fakeCodeHost stands in for the shared authenticated codehost: it parses a
+// github reference like the real client and "clones" by materializing a tiny
+// checkout, so the repo-target path (parse → clone → review) is exercised
+// without network or an App identity. The remaining CodeHost methods are unused
+// by the MCP repo target and left as no-ops. A cloneErr simulates a repo the
+// App cannot see.
+type fakeCodeHost struct {
+	root     string
+	cloneErr error
+}
+
+func (f *fakeCodeHost) ParseURL(raw string) (codehost.Repo, error) {
+	u, err := cdgithub.ParseURL(raw)
+	if err != nil {
+		return codehost.Repo{}, err
+	}
+	return codehost.Repo{Host: u.Host, Owner: u.Owner, Name: u.Name, FullName: u.FullName}, nil
+}
+
+func (f *fakeCodeHost) Clone(_ context.Context, repo codehost.Repo, _ string) (codehost.Checkout, error) {
+	if f.cloneErr != nil {
+		return codehost.Checkout{}, f.cloneErr
+	}
+	dir := filepath.Join(f.root, repo.Owner+"__"+repo.Name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return codehost.Checkout{}, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		return codehost.Checkout{}, err
+	}
+	return codehost.Checkout{Path: dir, SHA: "abc1234567890"}, nil
+}
+
+func (f *fakeCodeHost) PostComment(context.Context, codehost.Repo, int, string) error { return nil }
+func (f *fakeCodeHost) FetchPRDiff(context.Context, codehost.Repo, int) (codehost.PRDiff, error) {
+	return codehost.PRDiff{}, nil
+}
+func (f *fakeCodeHost) PostReview(context.Context, codehost.Repo, int, codehost.Review, bool) error {
+	return nil
+}
+func (f *fakeCodeHost) InstallationRepos(context.Context, codehost.Repo) ([]string, error) {
+	return nil, nil
+}
 
 // scriptedProvider returns canned responses in order, repeating the last one.
 type scriptedProvider struct {
@@ -212,13 +259,101 @@ func TestReview_ViewerIsDeniedAtToolLayer(t *testing.T) {
 	}
 }
 
-func TestReview_NoFilesIsToolError(t *testing.T) {
+func TestReview_NoTargetIsToolError(t *testing.T) {
 	s, _ := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleAnalyst)
 	body := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"review","arguments":{"files":[]}}}`
 	rec := post(t, s, testToken, body)
 	res := callResult(t, rec.Body.Bytes())
 	if !res.IsError {
-		t.Fatal("review with no files must be a tool error")
+		t.Fatal("review with neither target must be a tool error")
+	}
+}
+
+func TestReview_BothTargetsIsToolError(t *testing.T) {
+	s, _ := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleAnalyst)
+	s.dc.CodeHost = &fakeCodeHost{root: t.TempDir()}
+	body := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"review","arguments":{"files":[{"path":"a.go","content":"x"}],"repo":"github.com/example/repo"}}}`
+	res := callResult(t, post(t, s, testToken, body).Body.Bytes())
+	if !res.IsError {
+		t.Fatal("passing both a snapshot and a repo target must be a validation error")
+	}
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "not both") {
+		t.Errorf("error must explain the two targets are mutually exclusive: %+v", res.Content)
+	}
+}
+
+func TestReview_RepoTargetWithNoCodeHostIsToolError(t *testing.T) {
+	// A GitHub-free install (dc.CodeHost nil) must refuse a repo target with a
+	// clear error naming what to enable, not silently do nothing.
+	s, _ := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleAnalyst)
+	body := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"review","arguments":{"repo":"github.com/example/repo"}}}`
+	res := callResult(t, post(t, s, testToken, body).Body.Bytes())
+	if !res.IsError {
+		t.Fatal("a repo target with no codehost configured must be a tool error")
+	}
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "codehosts:") {
+		t.Errorf("error must name codehosts: as what to enable: %+v", res.Content)
+	}
+}
+
+func TestReview_RepoTargetDispatchesRepoReview(t *testing.T) {
+	// A repo target clones through the shared codehost and returns findings like
+	// any other Repo review — deterministically, not model-mediated.
+	prov := &scriptedProvider{responses: []provider.Response{
+		addFindingCall("main.go"),
+		finalizeCall("One issue found in the repository."),
+	}}
+	s, auditPath := reviewServer(t, prov, auth.RoleAnalyst)
+	s.dc.CodeHost = &fakeCodeHost{root: t.TempDir()}
+
+	body := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"review","arguments":{"repo":"github.com/example/repo","ref":"main"}}}`
+	res := callResult(t, post(t, s, testToken, body).Body.Bytes())
+	if res.IsError {
+		t.Fatalf("repo review reported an error: %+v", res.Content)
+	}
+
+	rr := structuredReview(t, res)
+	if len(rr.Findings) != 1 || rr.Findings[0].RuleID != "BOLA-1" {
+		t.Fatalf("repo review findings = %+v, want the one scripted finding", rr.Findings)
+	}
+	// A full checkout is complete: there is no files_needed on a repo review.
+	if len(rr.FilesNeeded) != 0 {
+		t.Errorf("a repo review has the whole tree; files_needed must be empty, got %v", rr.FilesNeeded)
+	}
+
+	e := findEvent(t, auditPath, "mcp_review")
+	if e == nil || e.Data["repo"] != "github.com/example/repo" {
+		t.Errorf("expected an mcp_review event carrying the repo, got %+v", e)
+	}
+}
+
+func TestReview_RepoTargetCloneErrorSurfaces(t *testing.T) {
+	prov := &scriptedProvider{responses: findingThenFinalize()}
+	s, _ := reviewServer(t, prov, auth.RoleAnalyst)
+	s.dc.CodeHost = &fakeCodeHost{root: t.TempDir(), cloneErr: errors.New("the App is not installed on github.com/example/repo")}
+
+	body := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"review","arguments":{"repo":"github.com/example/repo"}}}`
+	res := callResult(t, post(t, s, testToken, body).Body.Bytes())
+	if !res.IsError {
+		t.Fatal("a clone failure must surface as a tool error")
+	}
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "not installed") {
+		t.Errorf("clone error must reach the caller: %+v", res.Content)
+	}
+}
+
+func TestReview_RepoTargetViewerIsDenied(t *testing.T) {
+	// RBAC is enforced before the target routes: a viewer cannot review a repo
+	// any more than a snapshot.
+	s, auditPath := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleViewer)
+	s.dc.CodeHost = &fakeCodeHost{root: t.TempDir()}
+	body := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"review","arguments":{"repo":"github.com/example/repo"}}}`
+	res := callResult(t, post(t, s, testToken, body).Body.Bytes())
+	if !res.IsError {
+		t.Fatal("a viewer's repo review must be denied")
+	}
+	if findEvent(t, auditPath, "mcp_review_denied") == nil {
+		t.Error("expected an mcp_review_denied audit event")
 	}
 }
 

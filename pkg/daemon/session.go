@@ -183,6 +183,48 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 	}, seedPrompt, cb)
 }
 
+// RepoReviewTarget describes an on-demand full-repository review of a codehost
+// repo (ADR 0016). The caller clones the repo at the requested ref through the
+// shared authenticated codehost and hands the checkout to the Session, which
+// reviews the WHOLE tree (there is no PR to scope to, so no diff constraint)
+// and returns the findings. Unlike a Snapshot review the tree is complete, so
+// there is no files_needed accumulation — every file the agent reaches for is
+// already on disk.
+type RepoReviewTarget struct {
+	Repo string // canonical "github.com/<owner>/<name>"
+	SHA  string // resolved commit SHA the checkout is pinned at
+	Path string // local checkout (cloned by the caller)
+}
+
+// HandleRepoReview runs one org-aware full-repository review against an
+// already-cloned checkout: pin the Session root, seed a whole-tree review
+// prompt, run. It reuses the review spine so the findings come back through the
+// normal report pipeline and a report file is persisted (a Repo review has a
+// repo + SHA to key it by, unlike a transient Snapshot review). Returns the
+// report and the path of the report file when one was written.
+func (s *Session) HandleRepoReview(ctx context.Context, target RepoReviewTarget, cb RunCallbacks) (*report.Report, string, error) {
+	if err := s.beginRun(); err != nil {
+		return nil, "", err
+	}
+	defer s.endRun()
+
+	seedPrompt := fmt.Sprintf(
+		"You are running an organization-aware security review of the repository %s, checked out "+
+			"locally at commit %s. Use list_files / read_file / grep / run_semgrep / run_gitleaks / "+
+			"run_osv_scanner freely over the WHOLE tree for accuracy — the full repository is present, so "+
+			"follow the call chain wherever it leads. Judge the code through THIS organization's lens (its "+
+			"stack, conventions, risk tolerance, and the false positives already accepted in SOUL/MEMORY), "+
+			"not a generic checklist. Record each issue you confirm via add_finding (set file and line), then "+
+			"call finalize_report with a concise summary. Proceed autonomously.",
+		target.Repo, target.SHA,
+	)
+	return s.runReviewTarget(ctx, agent.Target{
+		Repo: target.Repo,
+		SHA:  target.SHA,
+		Path: target.Path,
+	}, seedPrompt, cb)
+}
+
 // HandleSnapshotReview runs an org-aware Snapshot review (ADR 0011) over a
 // scratch workspace of caller-supplied files. Unlike HandlePRReview the daemon
 // never clones: the workspace is materialized by the
