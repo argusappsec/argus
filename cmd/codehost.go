@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/config"
 )
 
@@ -36,16 +35,11 @@ type setupInput struct {
 	PrivateKeyPath string // source PEM; copied under home
 	Addr           string
 	AutoEnroll     bool
-	ServiceID      string
-	SkipService    bool
 }
 
 // setupResult reports what applyGitHubSetup did, for the caller to print.
 type setupResult struct {
 	PrivateKeyDest string
-	ServiceCreated bool
-	ServiceExisted bool
-	SecretMismatch bool // an existing service's secret hash != the one provided
 }
 
 func codehostSetupCmd() *cobra.Command {
@@ -55,9 +49,10 @@ func codehostSetupCmd() *cobra.Command {
 		Short: "Configure a code host: select the host, then write its channel config",
 		Long: "Onboard a code host channel. Pick the host (GitHub today), then Argus\n" +
 			"writes everything that host needs in one step. For GitHub (ADR 0008):\n" +
-			"the github: section of argus.yaml, the webhook secret in .env, the\n" +
-			"private key under ~/.argus, and the App-installation Service in\n" +
-			"users.yaml. Missing values are prompted interactively.",
+			"the github: section of argus.yaml, the webhook secret in .env, and the\n" +
+			"private key under ~/.argus. The github-app Service is synthesized by the\n" +
+			"channel — no users.yaml row is written. Missing values are prompted\n" +
+			"interactively.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolveHome(in.Home)
 			if err != nil {
@@ -89,8 +84,6 @@ func codehostSetupCmd() *cobra.Command {
 	f.StringVar(&in.PrivateKeyPath, "private-key", "", "Path to the App's PEM private key (copied under ~/.argus)")
 	f.StringVar(&in.Addr, "addr", ":8080", "HTTP listen address for webhook deliveries")
 	f.BoolVar(&in.AutoEnroll, "auto-enroll", true, "Review every installed repo automatically")
-	f.StringVar(&in.ServiceID, "service-id", "github-app", "Service id recorded in users.yaml")
-	f.BoolVar(&in.SkipService, "skip-service", false, "Do not create/verify the Service entry in users.yaml")
 	return c
 }
 
@@ -146,8 +139,9 @@ func nonEmpty(what string) func(string) error {
 }
 
 // applyGitHubSetup writes the GitHub channel configuration across argus.yaml,
-// .env, the private key file, and (unless skipped) the users.yaml Service. It
-// is the testable core, free of prompts and cobra.
+// .env, and the private key file. No users.yaml Service row is written: the
+// github-app Service is synthesized by the channel from the fact of being
+// configured (ADR 0015). It is the testable core, free of prompts and cobra.
 func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 	var res setupResult
 	if in.AppID == "" || in.InstallationID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == "" {
@@ -192,41 +186,7 @@ func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 		return res, fmt.Errorf("github setup: save .env: %w", err)
 	}
 
-	if !in.SkipService {
-		if err := upsertGitHubService(home, in, &res); err != nil {
-			return res, err
-		}
-	}
 	return res, nil
-}
-
-// upsertGitHubService creates the App-installation Service, or — if one with
-// the same id already exists — verifies its secret hash matches the one being
-// configured, flagging a mismatch (which would silently drop every event).
-func upsertGitHubService(home string, in setupInput, res *setupResult) error {
-	store := auth.NewStore(filepath.Join(home, "users.yaml"))
-	wantHash := auth.SHA256Hex(in.WebhookSecret)
-	services, err := store.Services()
-	if err != nil {
-		return fmt.Errorf("github setup: read services: %w", err)
-	}
-	for _, s := range services {
-		if s.ID == in.ServiceID {
-			res.ServiceExisted = true
-			res.SecretMismatch = s.SecretSHA256 != wantHash
-			return nil
-		}
-	}
-	if err := store.AddService(auth.Service{
-		ID:           in.ServiceID,
-		Role:         auth.RoleCITrigger,
-		Kind:         "github-app",
-		SecretSHA256: wantHash,
-	}); err != nil {
-		return fmt.Errorf("github setup: create service: %w", err)
-	}
-	res.ServiceCreated = true
-	return nil
 }
 
 func copyPrivateKey(src, dst string) error {
@@ -251,15 +211,6 @@ func printSetupResult(cmd *cobra.Command, home string, res setupResult) error {
 	fmt.Fprintf(&b, "✓ wrote github: section to %s\n", filepath.Join(home, "argus.yaml"))
 	fmt.Fprintf(&b, "✓ stored GITHUB_WEBHOOK_SECRET in %s\n", filepath.Join(home, ".env"))
 	fmt.Fprintf(&b, "✓ private key at %s\n", res.PrivateKeyDest)
-	switch {
-	case res.ServiceCreated:
-		b.WriteString("✓ created the github-app Service in users.yaml\n")
-	case res.SecretMismatch:
-		b.WriteString("⚠ a github-app Service already exists but its secret hash does NOT match —\n")
-		b.WriteString("  events will be dropped. Re-create it: `argus service rm <id>` then re-run setup.\n")
-	case res.ServiceExisted:
-		b.WriteString("✓ github-app Service already present and its secret matches\n")
-	}
 	b.WriteString("\nNext: run `argus doctor` — the github line should report a minted token.\n")
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err

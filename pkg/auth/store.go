@@ -14,7 +14,7 @@ import (
 
 // Store is the write side of the user table whose read side is Resolver
 // (ADR 0003: storage is a hand-editable users.yaml; bootstrap and mutation
-// are the local `argus user` / `argus service` CLIs, never an HTTP API).
+// are the local `argus user` CLI, never an HTTP API).
 //
 // Every mutation is read-modify-write of the whole file, persisted
 // atomically via a temp file + rename in the same directory, so a concurrent
@@ -49,19 +49,9 @@ type MCPTokenInfo struct {
 	CreatedAt time.Time
 }
 
-// Service is the exported view of a service entry.
-type Service struct {
-	ID           string
-	Role         Role
-	Kind         string
-	Repo         string
-	SecretSHA256 string
-	CreatedAt    time.Time
-}
-
 // SHA256Hex returns the lowercase hex SHA-256 of s. It is how a shared secret
-// (a service's webhook/CI secret, an MCP token) is reduced to the hash stored
-// in users.yaml — the same reduction ResolveService compares against.
+// (an MCP token) is reduced to the hash stored in users.yaml — the same
+// reduction ResolveMCPToken compares against.
 func SHA256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
@@ -76,15 +66,6 @@ func ValidPersonRole(role Role) bool {
 	return false
 }
 
-// ValidServiceRole reports whether role is a role a Service may hold (ADR 0002).
-func ValidServiceRole(role Role) bool {
-	switch role {
-	case RoleCITrigger, RoleMirrorRead:
-		return true
-	}
-	return false
-}
-
 // Persons returns the persons in the table.
 func (s *Store) Persons() ([]Person, error) {
 	uf, err := loadUsers(s.path)
@@ -94,19 +75,6 @@ func (s *Store) Persons() ([]Person, error) {
 	out := make([]Person, 0, len(uf.Persons))
 	for _, p := range uf.Persons {
 		out = append(out, toPerson(p))
-	}
-	return out, nil
-}
-
-// Services returns the services in the table.
-func (s *Store) Services() ([]Service, error) {
-	uf, err := loadUsers(s.path)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Service, 0, len(uf.Services))
-	for _, e := range uf.Services {
-		out = append(out, toService(e))
 	}
 	return out, nil
 }
@@ -210,45 +178,6 @@ func (s *Store) RemoveMCPToken(personID, name string) error {
 	})
 }
 
-// AddService adds a new service. The id must be unique and the role valid. For
-// a github-app Service, SecretSHA256 is the App webhook secret's hash and Repo
-// is empty (its repo set is the installation's, read from the API, ADR 0008);
-// a legacy ci-trigger sets Repo and a per-repo secret hash.
-func (s *Store) AddService(svc Service) error {
-	if svc.ID == "" {
-		return fmt.Errorf("auth: service id is required")
-	}
-	if !ValidServiceRole(svc.Role) {
-		return fmt.Errorf("auth: invalid service role %q (want ci-trigger|mirror-read)", svc.Role)
-	}
-	return s.mutate(func(uf *usersFile) error {
-		if findService(uf, svc.ID) >= 0 {
-			return fmt.Errorf("auth: service %q already exists", svc.ID)
-		}
-		uf.Services = append(uf.Services, serviceEntry{
-			ID:           svc.ID,
-			Role:         svc.Role,
-			Kind:         svc.Kind,
-			Repo:         svc.Repo,
-			SecretSHA256: svc.SecretSHA256,
-			CreatedAt:    s.now(),
-		})
-		return nil
-	})
-}
-
-// RemoveService deletes a service by id.
-func (s *Store) RemoveService(id string) error {
-	return s.mutate(func(uf *usersFile) error {
-		i := findService(uf, id)
-		if i < 0 {
-			return fmt.Errorf("auth: service %q not found", id)
-		}
-		uf.Services = append(uf.Services[:i], uf.Services[i+1:]...)
-		return nil
-	})
-}
-
 // mutate loads the table, applies fn, and writes the result atomically.
 func (s *Store) mutate(fn func(*usersFile) error) error {
 	uf, err := loadUsers(s.path)
@@ -306,15 +235,6 @@ func findPerson(uf *usersFile, id string) int {
 	return -1
 }
 
-func findService(uf *usersFile, id string) int {
-	for i, s := range uf.Services {
-		if s.ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
 func toPerson(p personEntry) Person {
 	toks := make([]MCPTokenInfo, 0, len(p.MCPTokens))
 	for _, t := range p.MCPTokens {
@@ -328,5 +248,3 @@ func toPerson(p personEntry) Person {
 		MCPTokens:  toks,
 	}
 }
-
-func toService(e serviceEntry) Service { return Service(e) }

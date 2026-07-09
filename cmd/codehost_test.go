@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/config"
 )
 
@@ -29,7 +30,6 @@ func baseInput(t *testing.T) setupInput {
 		PrivateKeyPath: fakePEM(t),
 		Addr:           ":8080",
 		AutoEnroll:     true,
-		ServiceID:      "github-app",
 	}
 }
 
@@ -71,16 +71,10 @@ func TestApplyGitHubSetup_WritesEverything(t *testing.T) {
 		t.Errorf("key perms = %o", info.Mode().Perm())
 	}
 
-	// The Service resolves by the wire secret's hash — the channel's path.
-	if !res.ServiceCreated {
-		t.Error("expected the service to be created")
-	}
-	p, err := auth.NewResolver(filepath.Join(home, "users.yaml")).ResolveService(auth.SHA256Hex("shhh"))
-	if err != nil {
-		t.Fatalf("resolve service: %v", err)
-	}
-	if p.ID != "github-app" || p.Kind != auth.KindService {
-		t.Errorf("resolved %+v", p)
+	// Setup writes no users.yaml Service row: the github-app Service is
+	// synthesized by the channel (ADR 0015), not stored.
+	if _, err := os.Stat(filepath.Join(home, "users.yaml")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("setup must not write users.yaml; stat err = %v", err)
 	}
 }
 
@@ -100,25 +94,6 @@ func TestApplyGitHubSetup_PreservesExistingConfig(t *testing.T) {
 	}
 	if !cfg.GitHub.Configured() {
 		t.Error("github not written alongside existing config")
-	}
-}
-
-func TestApplyGitHubSetup_DetectsSecretMismatch(t *testing.T) {
-	home := t.TempDir()
-	// A service with the id already exists, but with a different secret.
-	store := auth.NewStore(filepath.Join(home, "users.yaml"))
-	if err := store.AddService(auth.Service{
-		ID: "github-app", Role: auth.RoleCITrigger, Kind: "github-app",
-		SecretSHA256: auth.SHA256Hex("a-different-secret"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	res, err := applyGitHubSetup(home, baseInput(t))
-	if err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	if !res.ServiceExisted || !res.SecretMismatch {
-		t.Errorf("expected an existing service with a mismatched secret: %+v", res)
 	}
 }
 

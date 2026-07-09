@@ -93,39 +93,39 @@ func TestMCPToken_AddAndRevoke(t *testing.T) {
 	}
 }
 
-func TestAddService_GithubAppResolvesBySecretHash(t *testing.T) {
-	store, path := newStore(t)
-	secret := "webhook-secret"
-	if err := store.AddService(Service{
-		ID:           "argus-github-app",
-		Role:         RoleCITrigger,
-		Kind:         "github-app",
-		SecretSHA256: SHA256Hex(secret),
-	}); err != nil {
-		t.Fatalf("add service: %v", err)
-	}
+// A users.yaml left by an older Argus still carries a services: section. It
+// must load without error — its entries are an unknown key, silently ignored —
+// so a PVC's runtime state never blocks an upgrade (ADR 0015).
+func TestLoadUsers_IgnoresLegacyServicesSection(t *testing.T) {
+	legacy := `services:
+  - id: github-app
+    role: ci-trigger
+    kind: github-app
+    secret_sha256: abc123
+persons:
+  - id: davide
+    role: admin
+    identities:
+      - github:davideimola
+`
+	path := writeUsers(t, legacy)
 
-	// The channel hashes the wire secret and asks the Resolver — the stored
-	// hash must match that path.
-	p, err := NewResolver(path).ResolveService(SHA256Hex(secret))
+	// Persons still load.
+	persons, err := NewStore(path).Persons()
 	if err != nil {
-		t.Fatalf("resolve service: %v", err)
+		t.Fatalf("persons: %v", err)
 	}
-	if p.ID != "argus-github-app" || p.Kind != KindService || p.Role != RoleCITrigger {
-		t.Errorf("resolved %+v", p)
+	if len(persons) != 1 || persons[0].ID != "davide" {
+		t.Errorf("persons = %+v, want the single davide entry", persons)
 	}
-}
 
-func TestAddService_RejectsBadRoleAndDuplicate(t *testing.T) {
-	store, _ := newStore(t)
-	if err := store.AddService(Service{ID: "s", Role: RoleAdmin}); err == nil {
-		t.Error("expected an admin role to be invalid for a service")
+	// The Person's identity resolves; the ignored services: section is invisible.
+	p, err := NewResolver(path).Resolve("github:davideimola")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
-	if err := store.AddService(Service{ID: "s", Role: RoleCITrigger, Repo: "github.com/x/y"}); err != nil {
-		t.Fatalf("add: %v", err)
-	}
-	if err := store.AddService(Service{ID: "s", Role: RoleCITrigger}); err == nil {
-		t.Error("expected duplicate service id to fail")
+	if p.ID != "davide" || p.Kind != KindPerson {
+		t.Errorf("resolved %+v", p)
 	}
 }
 

@@ -2,8 +2,6 @@ package github
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -155,15 +153,14 @@ func reviewScript() *scriptedProvider {
 	}}
 }
 
-// testChannel builds a channel over a temp home with a github-app Service whose
-// secret hash matches testSecret, and a full daemon Context (scripted provider,
-// session manager, report writer) so dispatch can run a real review.
+// testChannel builds a channel over a temp home with a Persons-only users.yaml
+// (no service row — the github-app Service is synthesized by the channel, ADR
+// 0015), and a full daemon Context (scripted provider, session manager, report
+// writer) so dispatch can run a real review.
 func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, autoEnroll bool, enabledRepos []string) (*Server, *daemon.Context, string) {
 	t.Helper()
 	home := t.TempDir()
-	sum := sha256.Sum256([]byte(testSecret))
-	users := "services:\n  - id: github-app\n    role: ci-trigger\n    kind: github-app\n    secret_sha256: " + hex.EncodeToString(sum[:]) + "\n" +
-		"persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n" +
+	users := "persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n" +
 		"  - id: carol\n    role: viewer\n    identities:\n      - github:carol\n"
 	usersPath := filepath.Join(home, "users.yaml")
 	if err := os.WriteFile(usersPath, []byte(users), 0o600); err != nil {
