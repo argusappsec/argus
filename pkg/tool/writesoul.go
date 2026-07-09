@@ -24,7 +24,7 @@ func (w *writeSoul) Description() string {
 		"Call exactly once at the end of the bootstrap interview, after collecting " +
 		"company, industry, the data sensitivity of what they handle, their primary " +
 		"tech stack, their infrastructure, how they store secrets, compliance " +
-		"frameworks, risk tolerance, escalation contact, and a persona paragraph."
+		"frameworks, risk tolerance, severity rules, output language, and a persona body."
 }
 
 func (w *writeSoul) Schema() map[string]any {
@@ -68,13 +68,18 @@ func (w *writeSoul) Schema() map[string]any {
 				"enum":        []string{"low", "medium", "high"},
 				"description": "How aggressively to surface findings.",
 			},
-			"escalation": map[string]any{
+			"language": map[string]any{
 				"type":        "string",
-				"description": "Email or chat handle for the security owner to escalate to.",
+				"description": "Language the agent writes findings, reports and replies in (e.g. \"italian\", \"english\"). Omit to mirror whatever language the agent is addressed in.",
+			},
+			"severity_rules": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Non-negotiable severity policies, one rule per entry (e.g. \"Any leak of customer PII is High regardless of CVSS\"). Only rules the user actually stated.",
 			},
 			"persona": map[string]any{
 				"type":        "string",
-				"description": "Free-form prose paragraph (~3-5 sentences) describing tone, priorities, and any extra context that doesn't fit a structured field.",
+				"description": "Markdown identity body in two sections: \"## Mission\" — who the agent serves, what it does and does not do — and \"## Conduct\" — tone, audience, priorities, plus any context that doesn't fit a structured field.",
 			},
 		},
 		"required": []string{"company", "persona"},
@@ -100,7 +105,8 @@ func (w *writeSoul) Execute(_ context.Context, args map[string]any) (string, err
 		SecretStorage:   stringOpt(args, "secret_storage"),
 		Compliance:      stringSliceOpt(args, "compliance"),
 		RiskTolerance:   stringOpt(args, "risk_tolerance"),
-		Escalation:      stringOpt(args, "escalation"),
+		Language:        stringOpt(args, "language"),
+		SeverityRules:   stringSliceOpt(args, "severity_rules"),
 		Persona:         persona,
 	}
 

@@ -24,6 +24,9 @@ compliance:
   - SOC2
   - ISO27001
 risk_tolerance: low
+language: italian
+severity_rules:
+  - Any leak of customer PII is High regardless of CVSS
 escalation: ciso@redcarbon.ai
 ---
 You are the security agent for RedCarbon. Tone: technical, terse.
@@ -45,8 +48,12 @@ Always cite CWE/OWASP IDs. Prioritize findings by real-world impact.
 	if s.RiskTolerance != "low" {
 		t.Errorf("risk_tolerance = %q", s.RiskTolerance)
 	}
-	if s.Escalation != "ciso@redcarbon.ai" {
-		t.Errorf("escalation = %q", s.Escalation)
+	// The legacy `escalation:` key above must parse without error (ignored).
+	if s.Language != "italian" {
+		t.Errorf("language = %q", s.Language)
+	}
+	if len(s.SeverityRules) != 1 || !strings.Contains(s.SeverityRules[0], "PII") {
+		t.Errorf("severity_rules = %v", s.SeverityRules)
 	}
 	if s.DataSensitivity != "pii" {
 		t.Errorf("data_sensitivity = %q", s.DataSensitivity)
@@ -100,7 +107,8 @@ func TestWriteAndLoad_Roundtrip(t *testing.T) {
 		SecretStorage:   "GCP Secret Manager",
 		Compliance:      []string{"SOC2"},
 		RiskTolerance:   "medium",
-		Escalation:      "sec@acme.io",
+		Language:        "english",
+		SeverityRules:   []string{"Auth bypass is always Critical"},
 		Persona:         "You are Acme's security copilot.",
 	}
 	if err := soul.Write(path, in); err != nil {
@@ -121,6 +129,27 @@ func TestWriteAndLoad_Roundtrip(t *testing.T) {
 	}
 	if len(got.Compliance) != 1 || got.Compliance[0] != "SOC2" {
 		t.Errorf("compliance lost: %v", got.Compliance)
+	}
+	if got.Language != "english" {
+		t.Errorf("language lost: %q", got.Language)
+	}
+	if len(got.SeverityRules) != 1 || got.SeverityRules[0] != "Auth bypass is always Critical" {
+		t.Errorf("severity_rules lost: %v", got.SeverityRules)
+	}
+}
+
+func TestSystemPrompt_RendersLanguageAndSeverityRules(t *testing.T) {
+	s := &soul.Soul{
+		Company:       "Acme",
+		Language:      "italian",
+		SeverityRules: []string{"Any leak of customer PII is High regardless of CVSS"},
+	}
+	prompt := s.SystemPrompt()
+	if !strings.Contains(prompt, "italian") {
+		t.Errorf("system prompt missing language: %q", prompt)
+	}
+	if !strings.Contains(prompt, "# Severity rules") || !strings.Contains(prompt, "PII is High") {
+		t.Errorf("system prompt missing severity rules: %q", prompt)
 	}
 }
 
