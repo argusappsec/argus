@@ -1,6 +1,9 @@
 # ADR 0012 — Kubernetes deployment: single-replica StatefulSet, PVC-owned state, declarative config
 
-**Status:** Accepted
+**Status:** Accepted — amended by
+[ADR 0015](0015-integrations-declared-in-configuration.md): one HTTP port,
+probes on `/healthz`, webhook URL at `/webhooks/github`, no service
+bootstrap step
 **Date:** 2026-06-30
 **Builds on:** [ADR 0001](0001-single-shared-daemon-per-organization.md),
 [ADR 0004](0004-single-process-channel-goroutines.md),
