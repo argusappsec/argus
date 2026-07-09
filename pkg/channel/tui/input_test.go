@@ -117,6 +117,32 @@ func TestModel_InputHeightTracksSoftWrap(t *testing.T) {
 	}
 }
 
+// TestModel_SoftWrapGrowthKeepsFirstRowVisible: the keystroke that wraps onto
+// a new row is processed while the box is still one row short, so the textarea
+// scrolls internally; growing the box afterwards must also reset that scroll,
+// or the first row (and its ▷ prompt) stays hidden with a phantom blank row at
+// the bottom.
+func TestModel_SoftWrapGrowthKeepsFirstRowVisible(t *testing.T) {
+	m := tui.New(tui.Config{})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	m = updated.(tui.Model)
+
+	long := "questa e una riga molto lunga che va a capo piu volte nel box di input"
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(long)})
+	m = updated.(tui.Model)
+
+	view := m.View()
+	if !strings.Contains(view, "▷") {
+		t.Errorf("first input row (with the ▷ prompt) hidden by a stale internal scroll:\n%s", view)
+	}
+	if !strings.Contains(view, "questa e una") {
+		t.Errorf("start of the typed text not visible in the input box:\n%s", view)
+	}
+	if m.InputValue() != long {
+		t.Errorf("input value corrupted by the scroll repair: %q", m.InputValue())
+	}
+}
+
 // TestModel_ViewRendersWithGrownInput: after a real resize, growing the input
 // past one line (Alt+Enter) must relayout and render without panicking — the
 // regression guard for the dynamic input-height / viewport-height math.

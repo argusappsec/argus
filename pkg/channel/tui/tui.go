@@ -405,10 +405,36 @@ func (m Model) recallNewer() (Model, bool) {
 // The count is soft-wrap aware (displayRows): sizing by logical lines would
 // keep a long wrapped line in a one-row window showing only its last row.
 func (m Model) syncInputHeight() Model {
-	h := min(m.displayRows(), 6)
+	rows := m.displayRows()
+	h := min(rows, 6)
 	if h != m.input.Height() {
 		m.input.SetHeight(h)
 	}
+	// SetHeight cannot un-scroll the textarea: the keystroke that wrapped
+	// onto a new row was processed while the box was still one row short, so
+	// the textarea scrolled its internal viewport and that offset survives
+	// the growth — first row (and its ▷ prompt) hidden above the window, a
+	// phantom blank row at the bottom. When the content fits the box the
+	// offset must be zero; the ▷ prompt, rendered only on display row 0,
+	// doubles as the sentinel for a stale offset.
+	if rows <= h && !strings.Contains(m.input.View(), "▷") {
+		m = m.rebuildInput()
+	}
+	return m
+}
+
+// rebuildInput resets the textarea's internal scroll offset — Reset (called
+// by SetValue) is the only public path to its viewport's GotoTop — while
+// preserving value and cursor position.
+func (m Model) rebuildInput() Model {
+	row := m.input.Line()
+	li := m.input.LineInfo()
+	col := li.StartColumn + li.ColumnOffset
+	m.input.SetValue(m.input.Value()) // cursor lands at the end, offset at 0
+	for m.input.Line() > row {
+		m.input.CursorUp()
+	}
+	m.input.SetCursor(col)
 	return m
 }
 
