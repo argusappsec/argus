@@ -1,12 +1,17 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
 	"github.com/argusappsec/argus/pkg/config"
 )
 
@@ -25,10 +30,8 @@ func baseInput(t *testing.T) setupInput {
 	return setupInput{
 		Host:           "github",
 		AppID:          "123456",
-		InstallationID: "7890",
 		WebhookSecret:  "shhh",
 		PrivateKeyPath: fakePEM(t),
-		Addr:           ":8080",
 		AutoEnroll:     true,
 	}
 }
@@ -101,6 +104,38 @@ func TestApplyGitHubSetup_PreservesExistingConfig(t *testing.T) {
 	host, ok := cfg.CodeHost(config.CodeHostTypeGitHub)
 	if !ok || !host.Configured() {
 		t.Error("github codehost not written alongside existing config")
+	}
+}
+
+func TestApplyGitHubSetup_WritesNoInstallationIDOrAddr(t *testing.T) {
+	home := t.TempDir()
+	if _, err := applyGitHubSetup(home, baseInput(t)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// Config v2 (ADR 0015): setup must never pin an installation id (derived
+	// per event/repo) or a per-channel addr (the daemon owns one front door).
+	// LoadConfig hard-errors on either legacy key, so a clean load is the proof.
+	raw, err := os.ReadFile(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(raw); strings.Contains(s, "installation_id") || strings.Contains(s, "addr") {
+		t.Errorf("written config carries a removed v2 key:\n%s", s)
+	}
+	if _, err := config.LoadConfig(filepath.Join(home, "argus.yaml")); err != nil {
+		t.Errorf("config with a legacy key would fail to load: %v", err)
+	}
+}
+
+func TestPrintSetupResult_PrintsWebhookURLPath(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printSetupResult(cmd, t.TempDir(), setupResult{PrivateKeyDest: "/x/key.pem"}); err != nil {
+		t.Fatalf("print: %v", err)
+	}
+	if !strings.Contains(buf.String(), ghchannel.WebhookPath) {
+		t.Errorf("setup output does not name the webhook URL path %q:\n%s", ghchannel.WebhookPath, buf.String())
 	}
 }
 

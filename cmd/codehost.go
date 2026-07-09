@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
 	"github.com/argusappsec/argus/pkg/config"
 )
 
@@ -25,15 +26,16 @@ func codehostCmd() *cobra.Command {
 	return c
 }
 
-// setupInput is the resolved configuration applyGitHubSetup writes.
+// setupInput is the resolved configuration applyGitHubSetup writes. Config v2
+// (ADR 0015) removed the installation id (derived per event/repo) and the
+// per-channel addr (the daemon owns one front door), so setup never collects
+// either.
 type setupInput struct {
 	Home           string
 	Host           string
 	AppID          string
-	InstallationID string
 	WebhookSecret  string
 	PrivateKeyPath string // source PEM; copied under home
-	Addr           string
 	AutoEnroll     bool
 }
 
@@ -59,7 +61,7 @@ func codehostSetupCmd() *cobra.Command {
 				return err
 			}
 			needForm := in.Host == "" ||
-				(in.Host == "github" && (in.AppID == "" || in.InstallationID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == ""))
+				(in.Host == "github" && (in.AppID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == ""))
 			if needForm {
 				if err := in.runForm(); err != nil {
 					return fmt.Errorf("interactive setup needs a terminal; otherwise pass --host and the host's flags: %w", err)
@@ -79,10 +81,8 @@ func codehostSetupCmd() *cobra.Command {
 	f.StringVar(&in.Home, "home", "", "Override ~/.argus home directory")
 	f.StringVar(&in.Host, "host", "", "Code host: github (gitlab/bitbucket not yet implemented)")
 	f.StringVar(&in.AppID, "app-id", "", "GitHub App id")
-	f.StringVar(&in.InstallationID, "installation-id", "", "App installation id")
-	f.StringVar(&in.WebhookSecret, "webhook-secret", "", "App webhook secret (stored in .env, its hash in users.yaml)")
+	f.StringVar(&in.WebhookSecret, "webhook-secret", "", "App webhook secret (stored in .env, referenced from channels: as env(GITHUB_WEBHOOK_SECRET))")
 	f.StringVar(&in.PrivateKeyPath, "private-key", "", "Path to the App's PEM private key (copied under ~/.argus)")
-	f.StringVar(&in.Addr, "addr", ":8080", "HTTP listen address for webhook deliveries")
 	f.BoolVar(&in.AutoEnroll, "auto-enroll", true, "Review every installed repo automatically")
 	return c
 }
@@ -111,7 +111,6 @@ func (in *setupInput) runForm() error {
 
 	githubGroup := huh.NewGroup(
 		huh.NewInput().Title("GitHub App ID").Value(&in.AppID).Validate(nonEmpty("App ID")),
-		huh.NewInput().Title("Installation ID").Value(&in.InstallationID).Validate(nonEmpty("installation ID")),
 		huh.NewInput().Title("Webhook secret").EchoMode(huh.EchoModePassword).
 			Value(&in.WebhookSecret).Validate(nonEmpty("webhook secret")),
 		huh.NewInput().Title("Private key path").Description("Path to the App's .pem file").
@@ -144,8 +143,8 @@ func nonEmpty(what string) func(string) error {
 // configured (ADR 0015). It is the testable core, free of prompts and cobra.
 func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 	var res setupResult
-	if in.AppID == "" || in.InstallationID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == "" {
-		return res, errors.New("github setup: app-id, installation-id, webhook-secret and private-key are all required")
+	if in.AppID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == "" {
+		return res, errors.New("github setup: app-id, webhook-secret and private-key are all required")
 	}
 
 	dest := filepath.Join(home, "github-app.pem")
@@ -218,7 +217,11 @@ func printSetupResult(cmd *cobra.Command, home string, res setupResult) error {
 	fmt.Fprintf(&b, "✓ wrote codehosts:/channels: sections to %s\n", filepath.Join(home, "argus.yaml"))
 	fmt.Fprintf(&b, "✓ stored GITHUB_WEBHOOK_SECRET in %s\n", filepath.Join(home, ".env"))
 	fmt.Fprintf(&b, "✓ private key at %s\n", res.PrivateKeyDest)
-	b.WriteString("\nNext: run `argus doctor` — the github line should report a minted token.\n")
+	// The daemon serves the webhook on one fixed front-door path (ADR 0015);
+	// the operator sets this exact URL on the GitHub App. No installation id is
+	// pinned — GitHub tells Argus which installation each delivery belongs to.
+	fmt.Fprintf(&b, "\nSet the GitHub App's webhook URL to https://<your-daemon-host>%s\n", ghchannel.WebhookPath)
+	b.WriteString("Next: run `argus doctor` — the github line should report a minted App JWT.\n")
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -53,6 +55,7 @@ func doctorCmd() *cobra.Command {
 			}
 			if !binariesOnly {
 				opts.GitHub, opts.GitHubMint = githubDoctorOptions(home)
+				opts.FrontDoorAddr, opts.FrontDoorProbe = frontDoorDoctorOptions(home)
 			}
 			checks := doctor.Run(opts)
 			renderChecks(cmd.OutOrStdout(), checks)
@@ -189,6 +192,52 @@ func githubDoctorOptions(home string) (*config.CodeHostConfig, func(context.Cont
 		return err
 	}
 	return &host, mint
+}
+
+// frontDoorDoctorOptions inspects argus.yaml for a configured HTTP channel
+// (github webhook or MCP). When one is present the daemon owns a single HTTP
+// front door (ADR 0015), so it returns its address plus a probe that GETs
+// /healthz to prove the front door is up. A socket-only install (no HTTP
+// channel) returns an empty address so doctor grows no front-door row; a config
+// load error skips the check entirely (the argus.yaml row already reports it).
+func frontDoorDoctorOptions(home string) (string, func(context.Context) error) {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		return "", nil
+	}
+	_, hasGitHub := cfg.Channel(config.ChannelTypeGitHub)
+	_, hasMCP := cfg.Channel(config.ChannelTypeMCP)
+	if !hasGitHub && !hasMCP {
+		return "", nil
+	}
+	addr := cfg.Daemon.HTTPAddress()
+	probe := func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+healthHost(addr)+"/healthz", nil)
+		if err != nil {
+			return err
+		}
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("GET /healthz returned %s", resp.Status)
+		}
+		return nil
+	}
+	return addr, probe
+}
+
+// healthHost turns a listen address into a dialable host:port. A bare ":8080"
+// (bind every interface) is probed on localhost — doctor runs on the daemon
+// host, so loopback reaches the same front door the proxy fronts.
+func healthHost(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "localhost" + addr
+	}
+	return addr
 }
 
 // extraBinaries lists binary deps that aren't owned by any Tool (because

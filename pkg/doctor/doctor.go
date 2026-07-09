@@ -81,6 +81,18 @@ type Options struct {
 	// only credential presence is checked.
 	GitHubMint func(ctx context.Context) error
 
+	// FrontDoorAddr, when non-empty, adds a check that the daemon's single HTTP
+	// front door (ADR 0015) answers its /healthz probe. It is set only when at
+	// least one HTTP channel is configured — the front door exists only then, so
+	// a socket-only install grows no front-door row.
+	FrontDoorAddr string
+
+	// FrontDoorProbe reports whether the front door answers its health check at
+	// FrontDoorAddr. Injected so the network call lives in the caller, keeping
+	// the doctor package pure. Nil means the address is reported (Info) but not
+	// probed.
+	FrontDoorProbe func(ctx context.Context) error
+
 	// BinariesOnly restricts Run to the image-contract check (ADR 0013):
 	// only binary checks execute, and every binary is treated as blocking
 	// (Required) regardless of its per-tool "optional" severity. This is the
@@ -109,7 +121,32 @@ func Run(opts Options) []Check {
 	if opts.GitHub != nil {
 		out = append(out, githubCheck(*opts.GitHub, opts.GitHubMint))
 	}
+	if opts.FrontDoorAddr != "" {
+		out = append(out, frontDoorCheck(opts.FrontDoorAddr, opts.FrontDoorProbe))
+	}
 	return out
+}
+
+// frontDoorCheck verifies the daemon's single HTTP front door (ADR 0015) is
+// reachable: a GET /healthz on daemon.http_addr answers 200. The probe is
+// injected so the network call lives in the caller (keeping doctor pure); a nil
+// probe reports the configured address without contacting it.
+func frontDoorCheck(addr string, probe func(ctx context.Context) error) Check {
+	c := Check{Name: "front door", Severity: SeverityOptional}
+	if probe == nil {
+		c.Status = Info
+		c.Severity = SeverityInfo
+		c.Message = "configured at " + addr + " (not probed)"
+		return c
+	}
+	if err := probe(context.Background()); err != nil {
+		c.Status = Fail
+		c.Hint = fmt.Sprintf("not reachable at %s: %v — is `argus daemon` running and is %s the address your reverse proxy targets?", addr, err, addr)
+		return c
+	}
+	c.Status = Pass
+	c.Message = "reachable at " + addr + " (/healthz → 200)"
+	return c
 }
 
 // githubCheck verifies the GitHub codehost is ready: credentials present
@@ -217,8 +254,12 @@ func configChecks(home string) []Check {
 	yamlCheck := Check{Name: "argus.yaml", Severity: SeverityOptional}
 	switch {
 	case err != nil:
+		// LoadConfig treats a missing file as an empty config, so a non-nil
+		// error is a real problem: a legacy v2 key (whose message names the
+		// replacement) or a parse error. Surface it verbatim rather than a
+		// generic "run init" — the config's own message is the actionable one.
 		yamlCheck.Status = Fail
-		yamlCheck.Hint = "run `argus init` to populate it"
+		yamlCheck.Hint = err.Error()
 	case cfg.DefaultModel == "" || len(cfg.Providers) == 0:
 		yamlCheck.Status = Fail
 		yamlCheck.Hint = "incomplete config; run `argus init` to (re-)populate"

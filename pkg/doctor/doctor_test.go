@@ -125,6 +125,24 @@ func TestRun_DetectsConfiguredProvider(t *testing.T) {
 	t.Error("no argus.yaml check produced")
 }
 
+func TestRun_SurfacesLegacyConfigKeyError(t *testing.T) {
+	home := t.TempDir()
+	// A config v2 legacy key: LoadConfig hard-errors with a message naming the
+	// replacement. Doctor must surface that message, not a generic "run init".
+	legacy := "github:\n  app_id: \"123\"\n"
+	if err := os.WriteFile(filepath.Join(home, "argus.yaml"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks := doctor.Run(doctor.Options{Home: home})
+	c := findCheck(checks, "argus.yaml")
+	if c == nil || c.Status != doctor.Fail {
+		t.Fatalf("check = %+v, want Fail for a legacy key", c)
+	}
+	if !strings.Contains(c.Hint, "codehosts:") {
+		t.Errorf("hint should name the v2 replacement, got %q", c.Hint)
+	}
+}
+
 func TestRun_FlagsMissingAPIKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PATH", "")
