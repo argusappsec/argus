@@ -191,7 +191,6 @@ func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, a
 	t.Cleanup(func() { dc.Sessions.Drain(2 * time.Second) })
 
 	srv := NewServer(dc, host, Options{
-		Addr:          ":0",
 		WebhookSecret: testSecret,
 		AutoEnroll:    autoEnroll,
 		EnabledRepos:  enabledRepos,
@@ -496,7 +495,6 @@ func TestChannel_PersonaNameMentionGetsThreadedReply(t *testing.T) {
 	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
 	_, dc, _ := testChannel(t, host, replyScript("Move that key to an env var."), true, nil)
 	s := NewServer(dc, host, Options{
-		Addr:          ":0",
 		WebhookSecret: testSecret,
 		AutoEnroll:    true,
 		PersonaName:   "Ercole",

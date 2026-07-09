@@ -16,11 +16,6 @@ import (
 // resolution if the method's shape ever drifts.
 var _ installationNoter = (*cdgithub.CodeHost)(nil)
 
-// DefaultAddr is the interim webhook listen address used until the front door
-// slice (ADR 0015) collapses all HTTP channels onto daemon.http_addr. The
-// channel keeps its own listener for now (config v2 scaffolding).
-const DefaultAddr = ":8080"
-
 // Build constructs the GitHub channel from the config v2 sections: the outbound
 // App identity comes from the github codehost, the webhook secret and enrolment
 // policy from the github channel. env() references resolve from .env and the PEM
@@ -37,7 +32,6 @@ func Build(dc *daemon.Context, host config.CodeHostConfig, ch config.ChannelConf
 	}
 	cdhost := cdgithub.NewCodeHost(filepath.Join(dc.Home, "cache"), minter)
 	return NewServer(dc, cdhost, Options{
-		Addr:          DefaultAddr,
 		WebhookSecret: secret,
 		AutoEnroll:    ch.AutoEnrollEnabled(),
 		EnabledRepos:  ch.EnabledRepos,

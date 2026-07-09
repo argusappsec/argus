@@ -262,3 +262,13 @@ func TestResolveValue_EnvIndirection(t *testing.T) {
 		t.Error("unset env var must produce an error")
 	}
 }
+
+func TestDaemonConfig_HTTPAddress(t *testing.T) {
+	// Unset falls back to the front-door default; a configured value wins.
+	if got := (DaemonConfig{}).HTTPAddress(); got != DefaultHTTPAddr {
+		t.Errorf("unset http_addr = %q, want %q", got, DefaultHTTPAddr)
+	}
+	if got := (DaemonConfig{HTTPAddr: ":9000"}).HTTPAddress(); got != ":9000" {
+		t.Errorf("configured http_addr = %q, want :9000", got)
+	}
+}

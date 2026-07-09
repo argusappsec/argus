@@ -95,7 +95,7 @@ func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server
 		LoadMemory:   func() (string, error) { return "", nil },
 	}
 	dc.Sessions = daemon.NewSessionManager(dc, 4)
-	return NewServer(dc, Options{Addr: ":0"}), auditPath
+	return NewServer(dc), auditPath
 }
 
 // callResult parses a tools/call response into its CallToolResult.

@@ -2,14 +2,12 @@ package github
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
@@ -23,9 +21,13 @@ import (
 // maxBodyBytes bounds the webhook payload we read into memory.
 const maxBodyBytes = 8 << 20 // 8 MiB
 
+// WebhookPath is the fixed front-door path GitHub webhook deliveries arrive on
+// (ADR 0015). Operators point the GitHub App's webhook URL at it; the channel
+// never opens a listener of its own.
+const WebhookPath = "/webhooks/github"
+
 // Options carries the channel's resolved configuration.
 type Options struct {
-	Addr          string   // HTTP listen address
 	WebhookSecret string   // resolved App webhook secret (raw)
 	AutoEnroll    bool     // effective github.auto_enroll
 	EnabledRepos  []string // explicit allow-list when AutoEnroll is false
@@ -80,23 +82,11 @@ func appPrincipal() auth.Principal {
 // Name implements daemon.Channel.
 func (s *Server) Name() string { return "github" }
 
-// Start listens for webhook deliveries until ctx is cancelled.
-func (s *Server) Start(ctx context.Context) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/webhook", s.handle)
-	srv := &http.Server{Addr: s.opts.Addr, Handler: mux}
-
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutCtx)
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("github: listen %s: %w", s.opts.Addr, err)
-	}
-	return nil
+// Routes implements daemon.HTTPChannel: the GitHub channel serves webhook
+// deliveries at the single well-known path on the daemon's shared front door
+// (ADR 0015), never opening a listener of its own.
+func (s *Server) Routes() []daemon.Route {
+	return []daemon.Route{{Pattern: WebhookPath, Handler: http.HandlerFunc(s.handle)}}
 }
 
 // handle is the webhook entrypoint: verify → de-dup → dispatch.
@@ -528,5 +518,6 @@ func (s *Server) audit(typ string, evt Event, extra map[string]any) {
 	_ = s.dc.Audit.Log(audit.Event{Type: typ, Data: data})
 }
 
-// compile-time check that the channel satisfies daemon.Channel.
-var _ daemon.Channel = (*Server)(nil)
+// compile-time check that the channel satisfies daemon.HTTPChannel: it binds a
+// path on the front door rather than owning a listener (ADR 0015).
+var _ daemon.HTTPChannel = (*Server)(nil)

@@ -54,6 +54,16 @@ func (s *Server) serveToolCallSSE(ctx context.Context, w http.ResponseWriter, pr
 	// already returned on context cancellation.
 	done := make(chan rpcResponse, 1)
 	go func() {
+		// The worker runs on its own goroutine, so the front door's per-request
+		// panic fence (which only guards the handler goroutine) cannot catch a
+		// panic here. Recover it into a clean JSON-RPC error so a tool/scanner
+		// panic degrades this one call, never the daemon (ADR 0004 / ADR 0015).
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.audit("channel_panic", principal, map[string]any{"method": req.Method, "panic": fmt.Sprint(rec)})
+				done <- errorResponse(req.ID, codeInternalError, "internal error")
+			}
+		}()
 		// A tools/call always responds and never mints a session, so the respond
 		// bool and the new-session id are not needed here.
 		resp, _, _ := s.dispatch(ctx, principal, sessionID, req)

@@ -260,6 +260,21 @@ type DaemonConfig struct {
 // DefaultMaxConcurrentSessions is used when the config leaves the cap unset.
 const DefaultMaxConcurrentSessions = 4
 
+// DefaultHTTPAddr is the front-door address used when daemon.http_addr is
+// unset (ADR 0015). Exposure control belongs to the reverse proxy, so the
+// default binds every interface on the conventional port.
+const DefaultHTTPAddr = ":8080"
+
+// HTTPAddress returns the configured front-door address, or the default when
+// unset. The daemon owns one HTTP listener here; HTTP channels register fixed
+// paths on it rather than opening ports of their own.
+func (d DaemonConfig) HTTPAddress() string {
+	if d.HTTPAddr != "" {
+		return d.HTTPAddr
+	}
+	return DefaultHTTPAddr
+}
+
 // SocketPath returns the configured socket path, or the default under home.
 func (d DaemonConfig) SocketPath(home string) string {
 	if d.Socket != "" {
