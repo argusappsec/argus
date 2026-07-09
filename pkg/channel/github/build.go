@@ -2,7 +2,6 @@ package github
 
 import (
 	"fmt"
-	"path/filepath"
 
 	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
@@ -16,22 +15,21 @@ import (
 // resolution if the method's shape ever drifts.
 var _ installationNoter = (*cdgithub.CodeHost)(nil)
 
-// Build constructs the GitHub channel from the config v2 sections: the outbound
-// App identity comes from the github codehost, the webhook secret and enrolment
-// policy from the github channel. env() references resolve from .env and the PEM
-// private key is loaded from the daemon host. It returns an error when the
-// credentials are incomplete or cannot be loaded.
-func Build(dc *daemon.Context, host config.CodeHostConfig, ch config.ChannelConfig) (*Server, error) {
-	minter, err := MintFromConfig(host)
-	if err != nil {
-		return nil, err
+// Build constructs the GitHub channel around the shared authenticated CodeHost
+// (dc.CodeHost, built once from codehosts: — ADR 0015): the channel clones and
+// calls the API through the same client the chat review tool and the MCP repo
+// target use, so a private repo works from every trigger. The webhook secret
+// and enrolment policy come from the github channel config. It returns an error
+// when the codehost is absent or the secret cannot be resolved.
+func Build(dc *daemon.Context, ch config.ChannelConfig) (*Server, error) {
+	if dc.CodeHost == nil {
+		return nil, fmt.Errorf("github: channel requires a github codehost under `codehosts:`")
 	}
 	secret, err := ch.ResolveWebhookSecret()
 	if err != nil {
 		return nil, fmt.Errorf("github: webhook secret: %w", err)
 	}
-	cdhost := cdgithub.NewCodeHost(filepath.Join(dc.Home, "cache"), minter)
-	return NewServer(dc, cdhost, Options{
+	return NewServer(dc, dc.CodeHost, Options{
 		WebhookSecret: secret,
 		AutoEnroll:    ch.AutoEnrollEnabled(),
 		EnabledRepos:  ch.EnabledRepos,
@@ -39,20 +37,4 @@ func Build(dc *daemon.Context, host config.CodeHostConfig, ch config.ChannelConf
 		// channel), so it reaches the channel via the shared daemon Context.
 		PersonaName: dc.PersonaName,
 	}), nil
-}
-
-// MintFromConfig builds the token minter from the codehost's App credentials.
-// The installation is derived per event/repo (ADR 0015), never configured, so
-// the minter carries only the App identity. Exported so `argus doctor` can
-// verify the credentials without standing up the whole channel.
-func MintFromConfig(host config.CodeHostConfig) (*cdgithub.TokenMinter, error) {
-	appID, err := host.ResolveAppID()
-	if err != nil {
-		return nil, fmt.Errorf("github: app id: %w", err)
-	}
-	key, err := cdgithub.LoadPrivateKeyFile(host.PrivateKeyPath)
-	if err != nil {
-		return nil, err
-	}
-	return cdgithub.NewTokenMinter(appID, key), nil
 }

@@ -64,8 +64,8 @@ type Config struct {
 	Title string
 
 	// AutoSubmit, if non-empty, is submitted as the first user message after
-	// the TUI starts. Used by `argus review <url>` to drop the user straight
-	// into a chat where the agent is already working on the requested review.
+	// the TUI starts, dropping the user straight into a chat where the agent is
+	// already working on a seeded request.
 	AutoSubmit string
 
 	// AutoSubmitHidden dispatches AutoSubmit to the agent without echoing it
@@ -93,11 +93,6 @@ type Config struct {
 	// can abort the in-flight run at its source (the daemon) instead of
 	// merely clearing the local busy flag.
 	Cancel func()
-
-	// StartBusy marks the model busy from the first frame. Used by
-	// `argus review`, where the run is started by the command itself
-	// (structured review target) rather than by a typed message.
-	StartBusy bool
 }
 
 // --- tea.Msg types emitted by the dispatcher ---
@@ -206,7 +201,6 @@ func New(cfg Config) Model {
 		styles:       newStyles(),
 		input:        ta,
 		spinner:      sp,
-		busy:         cfg.StartBusy,
 		glamourStyle: detectGlamourStyle(),
 	}
 }

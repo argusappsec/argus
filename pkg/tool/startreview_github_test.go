@@ -2,38 +2,56 @@ package tool_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/session"
 	"github.com/argusappsec/argus/pkg/tool"
 )
 
-// fakeGitRunner simulates `git ls-remote` and `git clone` without network.
-type fakeGitRunner struct{}
+// fakeCodeHost stands in for the shared authenticated CodeHost: it parses a
+// github reference like the real client and "clones" by materializing a tiny
+// checkout under root, so the tool's parse → clone → set-root path is exercised
+// without network or an App identity. A cloneErr simulates a repo the App
+// cannot see.
+type fakeCodeHost struct {
+	root     string
+	cloneErr error
+}
 
-func (fakeGitRunner) Run(_ context.Context, _ string, args ...string) (string, error) {
-	if len(args) > 0 && args[0] == "ls-remote" {
-		return "abc1234567890abcdef0000000000000000000000\tHEAD\n", nil
+func (f fakeCodeHost) ParseURL(raw string) (codehost.Repo, error) {
+	u, err := github.ParseURL(raw)
+	if err != nil {
+		return codehost.Repo{}, err
 	}
-	if len(args) >= 2 && args[0] == "clone" {
-		target := args[len(args)-1]
-		_ = os.MkdirAll(target, 0o700)
-		_ = os.WriteFile(filepath.Join(target, "main.go"), []byte("package main\n"), 0o600)
-		return "", nil
+	return codehost.Repo{Host: u.Host, Owner: u.Owner, Name: u.Name, FullName: u.FullName}, nil
+}
+
+func (f fakeCodeHost) Clone(_ context.Context, repo codehost.Repo, _ string) (codehost.Checkout, error) {
+	if f.cloneErr != nil {
+		return codehost.Checkout{}, f.cloneErr
 	}
-	return "", nil
+	dir := filepath.Join(f.root, repo.Owner+"__"+repo.Name, "abc1234567890")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return codehost.Checkout{}, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		return codehost.Checkout{}, err
+	}
+	return codehost.Checkout{Path: dir, SHA: "abc1234567890"}, nil
 }
 
 func TestStartReviewGitHub_ClonesAndSetsRoot(t *testing.T) {
 	cacheDir := t.TempDir()
-	cloner := github.NewClonerWithRunner(cacheDir, fakeGitRunner{})
+	host := fakeCodeHost{root: cacheDir}
 
 	sess := session.New()
-	srg := tool.NewStartReviewGitHub(sess, cloner)
+	srg := tool.NewStartReviewGitHub(sess, host)
 
 	out, err := srg.Execute(context.Background(), map[string]any{
 		"url": "https://github.com/example/repo",
@@ -53,10 +71,29 @@ func TestStartReviewGitHub_ClonesAndSetsRoot(t *testing.T) {
 }
 
 func TestStartReviewGitHub_RejectsInvalidURL(t *testing.T) {
-	cloner := github.NewClonerWithRunner(t.TempDir(), fakeGitRunner{})
-	srg := tool.NewStartReviewGitHub(session.New(), cloner)
+	srg := tool.NewStartReviewGitHub(session.New(), fakeCodeHost{root: t.TempDir()})
 	if _, err := srg.Execute(context.Background(), map[string]any{"url": "https://gitlab.com/x/y"}); err == nil {
 		t.Error("expected error for non-github URL")
+	}
+}
+
+// A repo the App cannot see surfaces the codehost's clear error to the caller.
+func TestStartReviewGitHub_CloneErrorSurfaces(t *testing.T) {
+	host := fakeCodeHost{root: t.TempDir(), cloneErr: errors.New("github: the App is not installed on github.com/example/repo")}
+	srg := tool.NewStartReviewGitHub(session.New(), host)
+	_, err := srg.Execute(context.Background(), map[string]any{"url": "github.com/example/repo"})
+	if err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("expected an installation error, got %v", err)
+	}
+}
+
+// With no codehost configured the tool fails with a clear, user-facing message
+// naming what to enable rather than silently doing nothing.
+func TestStartReviewGitHub_NoCodeHost(t *testing.T) {
+	srg := tool.NewStartReviewGitHub(session.New(), nil)
+	_, err := srg.Execute(context.Background(), map[string]any{"url": "github.com/example/repo"})
+	if err == nil || !strings.Contains(err.Error(), "codehosts:") {
+		t.Fatalf("expected a no-codehost error naming codehosts:, got %v", err)
 	}
 }
 

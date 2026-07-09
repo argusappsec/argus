@@ -24,6 +24,7 @@ import (
 type CodeHost struct {
 	minter     *TokenMinter
 	cloner     *Cloner
+	cloneRun   Runner // git runner for clones; nil means the system git binary
 	httpClient *http.Client
 	apiBase    string
 
@@ -33,7 +34,7 @@ type CodeHost struct {
 
 // NewCodeHost builds a GitHub CodeHost. cacheRoot is where clones are cached;
 // the minter authenticates clones and API calls. Functional options mirror
-// the minter's test seams (HTTP transport, API base).
+// the minter's test seams (HTTP transport, API base, git runner).
 func NewCodeHost(cacheRoot string, minter *TokenMinter, opts ...CodeHostOption) *CodeHost {
 	h := &CodeHost{
 		minter:     minter,
@@ -46,7 +47,11 @@ func NewCodeHost(cacheRoot string, minter *TokenMinter, opts ...CodeHostOption) 
 	}
 	// The cloner carries no fixed auth: Clone binds it to the repo's resolved
 	// installation per call, since one CodeHost spans many installations.
-	h.cloner = NewCloner(cacheRoot)
+	if h.cloneRun != nil {
+		h.cloner = NewClonerWithRunner(cacheRoot, h.cloneRun)
+	} else {
+		h.cloner = NewCloner(cacheRoot)
+	}
 	return h
 }
 
@@ -113,6 +118,12 @@ func WithCodeHostHTTPClient(c *http.Client) CodeHostOption {
 // WithCodeHostAPIBase overrides the API root.
 func WithCodeHostAPIBase(base string) CodeHostOption {
 	return func(h *CodeHost) { h.apiBase = strings.TrimRight(base, "/") }
+}
+
+// WithCloneRunner overrides the git runner used for clones so tests can drive
+// the authenticated clone path without shelling out to git or hitting network.
+func WithCloneRunner(r Runner) CodeHostOption {
+	return func(h *CodeHost) { h.cloneRun = r }
 }
 
 // ParseURL implements codehost.CodeHost.

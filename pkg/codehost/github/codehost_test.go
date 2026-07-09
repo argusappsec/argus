@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -154,6 +155,54 @@ func TestCodeHost_NotInstalledError(t *testing.T) {
 	_, err := host.InstallationRepos(context.Background(), repo)
 	if err == nil || !strings.Contains(err.Error(), "github.com/octo/private") {
 		t.Fatalf("err = %v, want a not-installed error naming the repo", err)
+	}
+}
+
+// TestCodeHost_CloneEmbedsInstallationToken proves the shared client clones a
+// (private) repo authenticated: it resolves the repo's installation via the App
+// JWT, mints that installation's token, and embeds it into the git remote as
+// the x-access-token basic-auth user — the wiring that makes a chat- or
+// webhook-triggered clone of a private repo succeed (ADR 0015).
+func TestCodeHost_CloneEmbedsInstallationToken(t *testing.T) {
+	srv, _ := apiServer(t)
+	runs := &fakeRunner{
+		onRun: func(args ...string) (string, error) {
+			if len(args) > 0 && args[0] == "ls-remote" {
+				return "fakesha1234567890abcdef0000000000000000000\tHEAD\n", nil
+			}
+			if len(args) >= 2 && args[0] == "clone" {
+				_ = os.MkdirAll(args[len(args)-1], 0o700)
+			}
+			return "", nil
+		},
+	}
+	minter, err := github.NewTokenMinterFromPEM("123", testKeyPEM(t),
+		github.WithAPIBase(srv.URL), github.WithHTTPClient(srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := github.NewCodeHost(t.TempDir(), minter,
+		github.WithCodeHostAPIBase(srv.URL), github.WithCodeHostHTTPClient(srv.Client()),
+		github.WithCloneRunner(runs))
+
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
+	co, err := host.Clone(context.Background(), repo, "")
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if co.SHA != "fakesha1234567890abcdef0000000000000000000" {
+		t.Errorf("sha = %q", co.SHA)
+	}
+	sawToken := false
+	for _, call := range runs.calls {
+		for _, tok := range call {
+			if strings.Contains(tok, "x-access-token:ghs_x@github.com/argusappsec/argus") {
+				sawToken = true
+			}
+		}
+	}
+	if !sawToken {
+		t.Errorf("expected git remote to embed the minted installation token, got: %v", runs.calls)
 	}
 }
 

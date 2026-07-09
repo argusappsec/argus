@@ -66,12 +66,11 @@ func daemonCmd() *cobra.Command {
 			// ones, then stand up one HTTP server for all of them.
 			var httpChannels []daemon.HTTPChannel
 			// The GitHub App channel is present only when a github channel is
-			// declared; its outbound credentials come from the github codehost.
-			// Validate (in daemon.Build) guarantees the codehost is present, so
-			// the lookup cannot miss.
+			// declared; it clones and calls the API through the shared
+			// authenticated codehost (dc.CodeHost), which daemon.Build built from
+			// codehosts:. Validate guarantees that codehost is present.
 			if ch, ok := cfg.Channel(config.ChannelTypeGitHub); ok {
-				host, _ := cfg.CodeHost(config.CodeHostTypeGitHub)
-				gh, err := ghchannel.Build(dc, host, ch)
+				gh, err := ghchannel.Build(dc, ch)
 				if err != nil {
 					return fmt.Errorf("argusd: github channel: %w", err)
 				}

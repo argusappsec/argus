@@ -14,7 +14,6 @@ import (
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/codehost"
-	"github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/conversation"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
@@ -40,15 +39,6 @@ type RunCallbacks struct {
 	// OnUsage receives per-LLM-call token usage with the daemon-computed
 	// USD cost (clients never see the pricing table).
 	OnUsage func(u provider.Usage, costUSD float64)
-}
-
-// ReviewTarget is the structured, deterministic way to start a review:
-// the daemon clones and pins the Session's root itself — starting a review
-// never depends on the model choosing to call a tool. `argus review`
-// exercises it today; the webhook channel will rely on it.
-type ReviewTarget struct {
-	GitHubURL string
-	Ref       string
 }
 
 // Session is one running conversation between a Principal and the agent.
@@ -143,39 +133,9 @@ func (s *Session) handleMessage(ctx context.Context, text string, registry *tool
 	return s.run(ctx, seed, agent.Target{}, registry, s.dc.Reports, cb)
 }
 
-// HandleReview deterministically starts a review: clone on the daemon host,
-// pin the Session root, seed the standard review prompt, run. Returns the
-// report and the path of the report file when one was written.
-func (s *Session) HandleReview(ctx context.Context, target ReviewTarget, cb RunCallbacks) (*report.Report, string, error) {
-	if err := s.beginRun(); err != nil {
-		return nil, "", err
-	}
-	defer s.endRun()
-
-	u, err := github.ParseURL(target.GitHubURL)
-	if err != nil {
-		return nil, "", fmt.Errorf("daemon: review target: %w", err)
-	}
-	co, err := s.dc.Cloner.Clone(ctx, u, target.Ref)
-	if err != nil {
-		return nil, "", fmt.Errorf("daemon: clone: %w", err)
-	}
-
-	seedPrompt := fmt.Sprintf(
-		"Please run a thorough security review of %s at commit %s. "+
-			"The repository is already checked out locally — use list_files / read_file / "+
-			"grep / run_semgrep / run_gitleaks / run_osv_scanner freely. Record each issue you confirm via "+
-			"add_finding, then call finalize_report with a concise summary when you are done. "+
-			"If something is genuinely ambiguous, ask me; otherwise proceed autonomously.",
-		u.FullName, co.SHA,
-	)
-	return s.runReviewTarget(ctx, agent.Target{Repo: u.FullName, SHA: co.SHA, Path: co.Path}, seedPrompt, cb)
-}
-
 // PRReviewTarget describes an automatic pull-request review. The channel
 // clones at the PR head with the installation token (so private repos work)
-// and hands the checkout to the Session — unlike HandleReview, which clones
-// anonymously on the daemon host. The Session pins the checkout, stashes the
+// and hands the checkout to the Session. The Session pins the checkout, stashes the
 // pre-fetched PR diff for the pr_diff tool, seeds a prompt that signals "PR
 // review", and runs. The scanners cover the whole head checkout for accuracy;
 // the agent judges PR-relevance from the diff (ADR 0009).
@@ -224,8 +184,8 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 }
 
 // HandleSnapshotReview runs an org-aware Snapshot review (ADR 0011) over a
-// scratch workspace of caller-supplied files. Unlike HandleReview /
-// HandlePRReview the daemon never clones: the workspace is materialized by the
+// scratch workspace of caller-supplied files. Unlike HandlePRReview the daemon
+// never clones: the workspace is materialized by the
 // MCP channel from content the external AI handed over, and pointed at the
 // agent's file-scoped tools and scanners as agent.Target.Path with empty
 // Repo/SHA — a Snapshot review has no repo or commit. The agent runs the same
@@ -306,12 +266,10 @@ func (s *Session) HandleConsult(ctx context.Context, question string, cb RunCall
 	return s.run(ctx, seed, agent.Target{}, s.registry, nil, cb)
 }
 
-// runReviewTarget is the shared review spine for HandleReview and
-// HandlePRReview: pin the checkout as the tool root, seed and persist the
-// prompt, run one agent loop, and resolve the report file path the run may have
-// written. The callers differ only in where the checkout comes from (anonymous
-// daemon clone vs. the channel's installation-token clone), the PR-awareness of
-// the Target, and the seed prompt.
+// runReviewTarget is the review spine for HandlePRReview: pin the checkout as
+// the tool root, seed and persist the prompt, run one agent loop, and resolve
+// the report file path the run may have written. The channel clones at the PR
+// head with the shared codehost's installation token before calling in.
 func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seedPrompt string, cb RunCallbacks) (*report.Report, string, error) {
 	s.toolState.SetRoot(target.Path)
 
@@ -453,7 +411,7 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(tool.NewReadContext(contextDir(dc)))
 	reg.Register(tool.NewWriteContext(contextDir(dc)))
 	reg.Register(tool.NewStartReviewLocal(toolState))
-	reg.Register(tool.NewStartReviewGitHub(toolState, dc.Cloner))
+	reg.Register(tool.NewStartReviewGitHub(toolState, dc.CodeHost))
 	reg.Register(tool.NewPRDiff(toolState))
 	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))

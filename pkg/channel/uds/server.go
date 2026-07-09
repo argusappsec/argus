@@ -197,24 +197,8 @@ func (s *Server) serve(ctx context.Context, sess *daemon.Session, w *frameWriter
 			go func(text string) {
 				defer endRun()
 				_, err := sess.HandleMessage(runCtx, text, s.runCallbacks(w))
-				s.finishRun(w, err, "", 0)
+				s.finishRun(w, err)
 			}(f.Text)
-
-		case TypeReview:
-			runCtx, ok := beginRun()
-			if !ok {
-				_ = w.write(Frame{Type: TypeError, Reason: daemon.ErrRunInProgress.Error()})
-				continue
-			}
-			go func(target daemon.ReviewTarget) {
-				defer endRun()
-				rep, reportPath, err := sess.HandleReview(runCtx, target, s.runCallbacks(w))
-				findings := 0
-				if rep != nil {
-					findings = len(rep.Findings)
-				}
-				s.finishRun(w, err, reportPath, findings)
-			}(daemon.ReviewTarget{GitHubURL: f.GitHubURL, Ref: f.Ref})
 
 		case TypeCancel:
 			runMu.Lock()
@@ -240,10 +224,10 @@ func (s *Server) runCallbacks(w *frameWriter) daemon.RunCallbacks {
 }
 
 // finishRun reports the terminal frame for one dispatch.
-func (s *Server) finishRun(w *frameWriter, err error, reportPath string, findings int) {
+func (s *Server) finishRun(w *frameWriter, err error) {
 	switch {
 	case err == nil:
-		_ = w.write(Frame{Type: TypeDone, ReportPath: reportPath, Findings: findings})
+		_ = w.write(Frame{Type: TypeDone})
 	case errors.Is(err, context.Canceled):
 		_ = w.write(Frame{Type: TypeError, Reason: "cancelled"})
 	default:

@@ -131,7 +131,7 @@ func initCmd() *cobra.Command {
 						program.Send(tui.AgentMessageMsg{Message: provider.Message{
 							Role: "system",
 							Content: fmt.Sprintf(
-								"✓ SOUL.md saved to %s\n\nSetup complete. Press Esc (or Ctrl+C) to exit, then try:\n  • argus chat — open an interactive chat with your agent\n  • argus review <github-url> — run a one-shot review",
+								"✓ SOUL.md saved to %s\n\nSetup complete. Press Esc (or Ctrl+C) to exit, then try:\n  • argus chat — open an interactive chat with your agent\n    (ask it to review a github.com/owner/repo right in the conversation)",
 								soulPath,
 							),
 						}})

@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
+	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/security"
@@ -178,7 +178,7 @@ func githubDoctorOptions(home string) (*config.CodeHostConfig, func(context.Cont
 		e.ApplyToProcess()
 	}
 	mint := func(_ context.Context) error {
-		m, err := ghchannel.MintFromConfig(host)
+		m, err := cdgithub.MintFromConfig(host)
 		if err != nil {
 			return err
 		}

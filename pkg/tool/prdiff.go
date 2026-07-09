@@ -12,8 +12,8 @@ import (
 // from the GitHub API (pulls/{n}/files) and stashed on the Session; the agent
 // uses it to judge PR-relevance (ADR 0009): report a finding only when it is on
 // a changed line OR causally tied to the change, never the repo's pre-existing
-// issues. Outside a PR review (e.g. `argus review`) no diff is set and the tool
-// says so.
+// issues. Outside a PR review (e.g. a chat-requested repo review) no diff is
+// set and the tool says so.
 func NewPRDiff(s *session.Session) Tool {
 	return &prDiff{sess: s}
 }

@@ -1,6 +1,7 @@
 // Package uds implements the local Unix-domain-socket Channel: the transport
-// behind `argus chat` / `argus review` (both against a long-running argusd
-// and against the in-process fallback daemon).
+// behind `argus chat` (both against a long-running argusd and against the
+// in-process fallback daemon). A review is requested conversationally, like any
+// other message — there is no dedicated review frame (ADR 0016).
 //
 // Wire format: JSON-lines — one JSON object per \n-terminated line, with a
 // `type` discriminator. Internal to this channel only (Slack/MCP/webhook
@@ -29,7 +30,6 @@ const ProtocolVersion = 1
 const (
 	TypeHello   = "hello"
 	TypeMessage = "message"
-	TypeReview  = "review"
 	TypeCancel  = "cancel"
 )
 
@@ -57,10 +57,6 @@ type Frame struct {
 	// message
 	Text string `json:"text,omitempty"`
 
-	// review — the structured target; the daemon clones deterministically
-	GitHubURL string `json:"github_url,omitempty"`
-	Ref       string `json:"ref,omitempty"`
-
 	// hello_ok
 	SessionID string `json:"session_id,omitempty"`
 
@@ -74,10 +70,6 @@ type Frame struct {
 	InputTokens  int     `json:"input_tokens,omitempty"`
 	OutputTokens int     `json:"output_tokens,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
-
-	// done
-	ReportPath string `json:"report_path,omitempty"`
-	Findings   int    `json:"findings,omitempty"`
 }
 
 // frameWriter serializes frames onto a connection. Safe for concurrent use:

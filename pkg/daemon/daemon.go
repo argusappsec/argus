@@ -22,6 +22,7 @@ import (
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/budget"
+	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/provider"
@@ -58,7 +59,14 @@ type Context struct {
 	Audit   *audit.Logger
 	Reports *report.Writer
 	Skills  *skill.Catalog
-	Cloner  *github.Cloner
+
+	// CodeHost is the single authenticated codehost client, built once from
+	// codehosts: at daemon start and shared by every consumer that clones or
+	// calls the host API: the GitHub channel, the chat review tool, and the MCP
+	// repo target (ADR 0015). It is nil when no codehost is configured — a
+	// GitHub-free install (MCP-only, snapshot reviews, consult) is legitimate,
+	// so consumers must guard for nil with a clear, user-facing error.
+	CodeHost codehost.CodeHost
 
 	// NewProvider builds a provider for modelID, validating it against the
 	// configured providers. Called once per Session (cheap), so a --model
@@ -110,7 +118,6 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
 		Skills:       skill.NewCatalog(skill.Builtin(), filepath.Join(home, "skills")),
-		Cloner:       github.NewCloner(filepath.Join(home, "cache")),
 
 		NewProvider: providerFactory(cfg),
 		LoadSoul: func() (*soul.Soul, error) {
@@ -127,6 +134,17 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 			return string(b), nil
 		},
 	}
+	// Build the one authenticated codehost client from codehosts: and share it
+	// (ADR 0015). Validate has already guaranteed a github channel has its
+	// github codehost, so any consumer that needs the client finds it here.
+	if host, ok := cfg.CodeHost(config.CodeHostTypeGitHub); ok {
+		ch, err := github.BuildCodeHost(filepath.Join(home, "cache"), host)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: github codehost: %w", err)
+		}
+		dc.CodeHost = ch
+	}
+
 	dc.Sessions = NewSessionManager(dc, cfg.Daemon.SessionCap())
 	return dc, nil
 }
