@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/config"
@@ -21,7 +22,7 @@ func findCheck(checks []doctor.Check, name string) *doctor.Check {
 }
 
 func TestGitHubCheck_NotConfiguredIsInfo(t *testing.T) {
-	checks := doctor.Run(doctor.Options{Home: t.TempDir(), GitHub: &config.GitHubConfig{}})
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), GitHub: &config.CodeHostConfig{}})
 	c := findCheck(checks, "github")
 	if c == nil {
 		t.Fatal("no github check")
@@ -38,18 +39,16 @@ func TestGitHubCheck_AbsentSectionSkipped(t *testing.T) {
 	}
 }
 
-func configuredGitHub(t *testing.T) config.GitHubConfig {
+func configuredGitHub(t *testing.T) config.CodeHostConfig {
 	t.Helper()
 	keyPath := filepath.Join(t.TempDir(), "app.pem")
 	if err := os.WriteFile(keyPath, []byte("dummy"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GH_WH", "secret")
-	return config.GitHubConfig{
+	return config.CodeHostConfig{
+		Type:           "github",
 		AppID:          "123",
-		InstallationID: "456",
 		PrivateKeyPath: keyPath,
-		WebhookSecret:  "env(GH_WH)",
 	}
 }
 
@@ -86,5 +85,47 @@ func TestGitHubCheck_MissingPrivateKeyFails(t *testing.T) {
 	c := findCheck(checks, "github")
 	if c == nil || c.Status != doctor.Fail {
 		t.Fatalf("check = %+v, want Fail for missing key", c)
+	}
+}
+
+func TestFrontDoorCheck_AbsentWhenNoAddr(t *testing.T) {
+	checks := doctor.Run(doctor.Options{Home: t.TempDir()}) // FrontDoorAddr ""
+	if findCheck(checks, "front door") != nil {
+		t.Error("front-door check must be absent for a socket-only install")
+	}
+}
+
+func TestFrontDoorCheck_ReachablePasses(t *testing.T) {
+	checks := doctor.Run(doctor.Options{
+		Home:           t.TempDir(),
+		FrontDoorAddr:  ":8080",
+		FrontDoorProbe: func(context.Context) error { return nil },
+	})
+	c := findCheck(checks, "front door")
+	if c == nil || c.Status != doctor.Pass {
+		t.Fatalf("check = %+v, want Pass when the front door answers", c)
+	}
+}
+
+func TestFrontDoorCheck_UnreachableFails(t *testing.T) {
+	checks := doctor.Run(doctor.Options{
+		Home:           t.TempDir(),
+		FrontDoorAddr:  ":8080",
+		FrontDoorProbe: func(context.Context) error { return errors.New("connection refused") },
+	})
+	c := findCheck(checks, "front door")
+	if c == nil || c.Status != doctor.Fail {
+		t.Fatalf("check = %+v, want Fail when the front door is unreachable", c)
+	}
+	if !strings.Contains(c.Hint, ":8080") {
+		t.Errorf("hint should name the address: %q", c.Hint)
+	}
+}
+
+func TestFrontDoorCheck_NoProbeIsInfo(t *testing.T) {
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), FrontDoorAddr: ":8080"})
+	c := findCheck(checks, "front door")
+	if c == nil || c.Status != doctor.Info {
+		t.Fatalf("check = %+v, want Info when the address is reported but not probed", c)
 	}
 }

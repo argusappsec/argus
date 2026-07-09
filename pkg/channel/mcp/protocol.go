@@ -22,6 +22,7 @@ const (
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
+	codeInternalError  = -32603
 
 	// codeResourceNotFound is the MCP-defined code for an unknown/unreadable
 	// resource URI (resources/read).

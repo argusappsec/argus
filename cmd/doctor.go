@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
+	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/security"
@@ -53,6 +55,7 @@ func doctorCmd() *cobra.Command {
 			}
 			if !binariesOnly {
 				opts.GitHub, opts.GitHubMint = githubDoctorOptions(home)
+				opts.FrontDoorAddr, opts.FrontDoorProbe = frontDoorDoctorOptions(home)
 			}
 			checks := doctor.Run(opts)
 			renderChecks(cmd.OutOrStdout(), checks)
@@ -159,32 +162,82 @@ func doctorRegistry() *tool.Registry {
 	return reg
 }
 
-// githubDoctorOptions loads argus.yaml's github: section and, when it is
-// configured, returns it plus a mint closure that proves a token can be
-// minted (the network call lives here, not in the pure doctor package). When
-// the section is absent, both are nil and doctor skips the check.
-func githubDoctorOptions(home string) (*config.GitHubConfig, func(context.Context) error) {
+// githubDoctorOptions loads the github codehost from argus.yaml and, when it is
+// configured, returns it plus a mint closure that proves the private key can
+// sign an App JWT (the network-adjacent call lives here, not in the pure doctor
+// package). When no github codehost is declared, an unconfigured (Info) row is
+// still surfaced; a config load error skips the check entirely.
+func githubDoctorOptions(home string) (*config.CodeHostConfig, func(context.Context) error) {
 	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
-	if err != nil || !cfg.GitHub.Configured() {
-		if err == nil && cfg != nil {
-			return &cfg.GitHub, nil // present but unconfigured → Info row
-		}
+	if err != nil {
 		return nil, nil
 	}
-	// Load .env so env() references in the github: section resolve.
+	host, _ := cfg.CodeHost(config.CodeHostTypeGitHub)
+	if !host.Configured() {
+		return &host, nil // absent or incomplete → Info/Fail row, no mint
+	}
+	// Load .env so the app_id env() reference resolves.
 	if e, lerr := config.LoadEnv(filepath.Join(home, ".env")); lerr == nil {
 		e.ApplyToProcess()
 	}
-	gh := cfg.GitHub
-	mint := func(ctx context.Context) error {
-		m, err := ghchannel.MintFromConfig(gh)
+	mint := func(_ context.Context) error {
+		m, err := cdgithub.MintFromConfig(host)
 		if err != nil {
 			return err
 		}
-		_, err = m.Token(ctx)
+		// The installation is derived per event/repo (ADR 0015); there is no
+		// pinned installation token to mint. Verify the private key can sign an
+		// App JWT — the credential every installation-token mint builds on.
+		_, err = m.AppJWT()
 		return err
 	}
-	return &gh, mint
+	return &host, mint
+}
+
+// frontDoorDoctorOptions inspects argus.yaml for a configured HTTP channel
+// (github webhook or MCP). When one is present the daemon owns a single HTTP
+// front door (ADR 0015), so it returns its address plus a probe that GETs
+// /healthz to prove the front door is up. A socket-only install (no HTTP
+// channel) returns an empty address so doctor grows no front-door row; a config
+// load error skips the check entirely (the argus.yaml row already reports it).
+func frontDoorDoctorOptions(home string) (string, func(context.Context) error) {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		return "", nil
+	}
+	_, hasGitHub := cfg.Channel(config.ChannelTypeGitHub)
+	_, hasMCP := cfg.Channel(config.ChannelTypeMCP)
+	if !hasGitHub && !hasMCP {
+		return "", nil
+	}
+	addr := cfg.Daemon.HTTPAddress()
+	probe := func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+healthHost(addr)+"/healthz", nil)
+		if err != nil {
+			return err
+		}
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("GET /healthz returned %s", resp.Status)
+		}
+		return nil
+	}
+	return addr, probe
+}
+
+// healthHost turns a listen address into a dialable host:port. A bare ":8080"
+// (bind every interface) is probed on localhost — doctor runs on the daemon
+// host, so loopback reaches the same front door the proxy fronts.
+func healthHost(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "localhost" + addr
+	}
+	return addr
 }
 
 // extraBinaries lists binary deps that aren't owned by any Tool (because

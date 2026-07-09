@@ -1,12 +1,14 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 // A tools/call from an SSE-capable client streams: the response comes back as an
@@ -32,6 +34,38 @@ func TestServeSSE_DeliversFinalResponseAsEvent(t *testing.T) {
 	}
 	if !strings.Contains(body, `"id":7`) || !strings.Contains(body, "Log4Shell") {
 		t.Fatalf("SSE stream missing the tool response: %q", body)
+	}
+}
+
+// panicProvider aborts the agent run mid-flight. The SSE worker runs on its own
+// goroutine, outside the front door's per-request panic fence, so the channel
+// must recover the panic itself or the whole daemon goes down (ADR 0015).
+type panicProvider struct{}
+
+func (panicProvider) Generate(context.Context, provider.Request) (provider.Response, error) {
+	panic("scanner exploded mid-review")
+}
+
+// A panic inside a streaming tools/call is recovered into a clean JSON-RPC
+// error rather than crashing the daemon: the test process surviving is the
+// isolation guarantee, and the client still gets a well-formed error frame.
+func TestServeSSE_PanicIsRecoveredNotFatal(t *testing.T) {
+	s, _ := reviewServer(t, panicProvider{}, auth.RoleAnalyst)
+
+	req := httptest.NewRequest("POST", endpointPath, strings.NewReader(
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"consult","arguments":{"question":"boom?"}}}`))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Accept", "text/event-stream")
+	rec := httptest.NewRecorder()
+
+	s.handle(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: message") || !strings.Contains(body, `"error"`) {
+		t.Fatalf("expected a JSON-RPC error delivered over SSE, got: %q", body)
+	}
+	if !strings.Contains(body, `"id":9`) {
+		t.Fatalf("error must echo the request id: %q", body)
 	}
 }
 

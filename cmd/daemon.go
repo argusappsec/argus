@@ -57,22 +57,43 @@ func daemonCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: home %s\n", home)
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: listening on %s\n", dc.SocketPath)
 
+			// The UDS channel owns its own transport (a Unix socket); it runs
+			// as a loop-owning Channel with restart-with-backoff (ADR 0004).
 			channels := []daemon.Channel{uds.NewServer(dc)}
-			// The GitHub App channel starts only when configured (ADR 0008):
-			// an unconfigured github: section leaves the daemon socket-only.
-			if cfg.GitHub.Configured() {
-				gh, err := ghchannel.Build(dc, cfg.GitHub)
+
+			// HTTP channels don't own listeners: they register fixed paths on
+			// the daemon's single front door (ADR 0015). Collect the configured
+			// ones, then stand up one HTTP server for all of them.
+			var httpChannels []daemon.HTTPChannel
+			// The GitHub App channel is present only when a github channel is
+			// declared; it clones and calls the API through the shared
+			// authenticated codehost (dc.CodeHost), which daemon.Build built from
+			// codehosts:. Validate guarantees that codehost is present.
+			if ch, ok := cfg.Channel(config.ChannelTypeGitHub); ok {
+				gh, err := ghchannel.Build(dc, ch)
 				if err != nil {
 					return fmt.Errorf("argusd: github channel: %w", err)
 				}
-				channels = append(channels, gh)
-				fmt.Fprintf(cmd.OutOrStdout(), "argusd: github webhook on %s\n", cfg.GitHub.ListenAddr())
+				httpChannels = append(httpChannels, gh)
 			}
-			// The MCP channel starts only when configured (ADR 0011): an
-			// unconfigured mcp: section leaves the daemon socket-only.
-			if cfg.MCP.Configured() {
-				channels = append(channels, mcpchannel.Build(dc, cfg.MCP))
-				fmt.Fprintf(cmd.OutOrStdout(), "argusd: mcp on %s\n", cfg.MCP.ListenAddr())
+			// The MCP channel is present only when an mcp channel is declared
+			// (ADR 0011).
+			if _, ok := cfg.Channel(config.ChannelTypeMCP); ok {
+				httpChannels = append(httpChannels, mcpchannel.NewServer(dc))
+			}
+
+			// The front door starts only when at least one HTTP channel is
+			// configured; a minimal install stays socket-only, listening on
+			// nothing it doesn't use.
+			if len(httpChannels) > 0 {
+				addr := cfg.Daemon.HTTPAddress()
+				channels = append(channels, daemon.NewFrontDoor(dc, addr, httpChannels...))
+				fmt.Fprintf(cmd.OutOrStdout(), "argusd: http front door on %s\n", addr)
+				for _, hc := range httpChannels {
+					for _, rt := range hc.Routes() {
+						fmt.Fprintf(cmd.OutOrStdout(), "argusd:   %s → %s\n", rt.Pattern, hc.Name())
+					}
+				}
 			}
 
 			daemon.RunChannels(ctx, dc, channels...)

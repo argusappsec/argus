@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/argusappsec/argus/pkg/auth"
+	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
 	"github.com/argusappsec/argus/pkg/config"
 )
 
@@ -26,26 +26,22 @@ func codehostCmd() *cobra.Command {
 	return c
 }
 
-// setupInput is the resolved configuration applyGitHubSetup writes.
+// setupInput is the resolved configuration applyGitHubSetup writes. Config v2
+// (ADR 0015) removed the installation id (derived per event/repo) and the
+// per-channel addr (the daemon owns one front door), so setup never collects
+// either.
 type setupInput struct {
 	Home           string
 	Host           string
 	AppID          string
-	InstallationID string
 	WebhookSecret  string
 	PrivateKeyPath string // source PEM; copied under home
-	Addr           string
 	AutoEnroll     bool
-	ServiceID      string
-	SkipService    bool
 }
 
 // setupResult reports what applyGitHubSetup did, for the caller to print.
 type setupResult struct {
 	PrivateKeyDest string
-	ServiceCreated bool
-	ServiceExisted bool
-	SecretMismatch bool // an existing service's secret hash != the one provided
 }
 
 func codehostSetupCmd() *cobra.Command {
@@ -54,17 +50,18 @@ func codehostSetupCmd() *cobra.Command {
 		Use:   "setup",
 		Short: "Configure a code host: select the host, then write its channel config",
 		Long: "Onboard a code host channel. Pick the host (GitHub today), then Argus\n" +
-			"writes everything that host needs in one step. For GitHub (ADR 0008):\n" +
-			"the github: section of argus.yaml, the webhook secret in .env, the\n" +
-			"private key under ~/.argus, and the App-installation Service in\n" +
-			"users.yaml. Missing values are prompted interactively.",
+			"writes everything that host needs in one step. For GitHub (ADR 0008/0015):\n" +
+			"the codehosts:/channels: sections of argus.yaml, the webhook secret in\n" +
+			".env, and the private key under ~/.argus. The github-app Service is\n" +
+			"synthesized by the channel — no users.yaml row is written. Missing values\n" +
+			"are prompted interactively.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolveHome(in.Home)
 			if err != nil {
 				return err
 			}
 			needForm := in.Host == "" ||
-				(in.Host == "github" && (in.AppID == "" || in.InstallationID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == ""))
+				(in.Host == "github" && (in.AppID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == ""))
 			if needForm {
 				if err := in.runForm(); err != nil {
 					return fmt.Errorf("interactive setup needs a terminal; otherwise pass --host and the host's flags: %w", err)
@@ -84,13 +81,9 @@ func codehostSetupCmd() *cobra.Command {
 	f.StringVar(&in.Home, "home", "", "Override ~/.argus home directory")
 	f.StringVar(&in.Host, "host", "", "Code host: github (gitlab/bitbucket not yet implemented)")
 	f.StringVar(&in.AppID, "app-id", "", "GitHub App id")
-	f.StringVar(&in.InstallationID, "installation-id", "", "App installation id")
-	f.StringVar(&in.WebhookSecret, "webhook-secret", "", "App webhook secret (stored in .env, its hash in users.yaml)")
+	f.StringVar(&in.WebhookSecret, "webhook-secret", "", "App webhook secret (stored in .env, referenced from channels: as env(GITHUB_WEBHOOK_SECRET))")
 	f.StringVar(&in.PrivateKeyPath, "private-key", "", "Path to the App's PEM private key (copied under ~/.argus)")
-	f.StringVar(&in.Addr, "addr", ":8080", "HTTP listen address for webhook deliveries")
 	f.BoolVar(&in.AutoEnroll, "auto-enroll", true, "Review every installed repo automatically")
-	f.StringVar(&in.ServiceID, "service-id", "github-app", "Service id recorded in users.yaml")
-	f.BoolVar(&in.SkipService, "skip-service", false, "Do not create/verify the Service entry in users.yaml")
 	return c
 }
 
@@ -118,7 +111,6 @@ func (in *setupInput) runForm() error {
 
 	githubGroup := huh.NewGroup(
 		huh.NewInput().Title("GitHub App ID").Value(&in.AppID).Validate(nonEmpty("App ID")),
-		huh.NewInput().Title("Installation ID").Value(&in.InstallationID).Validate(nonEmpty("installation ID")),
 		huh.NewInput().Title("Webhook secret").EchoMode(huh.EchoModePassword).
 			Value(&in.WebhookSecret).Validate(nonEmpty("webhook secret")),
 		huh.NewInput().Title("Private key path").Description("Path to the App's .pem file").
@@ -146,12 +138,13 @@ func nonEmpty(what string) func(string) error {
 }
 
 // applyGitHubSetup writes the GitHub channel configuration across argus.yaml,
-// .env, the private key file, and (unless skipped) the users.yaml Service. It
-// is the testable core, free of prompts and cobra.
+// .env, and the private key file. No users.yaml Service row is written: the
+// github-app Service is synthesized by the channel from the fact of being
+// configured (ADR 0015). It is the testable core, free of prompts and cobra.
 func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 	var res setupResult
-	if in.AppID == "" || in.InstallationID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == "" {
-		return res, errors.New("github setup: app-id, installation-id, webhook-secret and private-key are all required")
+	if in.AppID == "" || in.WebhookSecret == "" || in.PrivateKeyPath == "" {
+		return res, errors.New("github setup: app-id, webhook-secret and private-key are all required")
 	}
 
 	dest := filepath.Join(home, "github-app.pem")
@@ -166,17 +159,24 @@ func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 		return res, fmt.Errorf("github setup: load config: %w", err)
 	}
 	autoEnroll := in.AutoEnroll
-	addr := in.Addr
-	if addr == "" {
-		addr = ":8080"
+	// Config v2 (ADR 0015): the outbound App identity lives under codehosts:,
+	// the inbound webhook binding under channels:. No installation id (derived
+	// per event/repo) and no per-channel addr (the daemon owns one front door).
+	if cfg.CodeHosts == nil {
+		cfg.CodeHosts = map[string]config.CodeHostConfig{}
 	}
-	cfg.GitHub = config.GitHubConfig{
-		Addr:           addr,
-		AppID:          in.AppID,          // non-secret: stored as a literal
-		InstallationID: in.InstallationID, // non-secret: stored as a literal
+	cfg.CodeHosts[config.CodeHostTypeGitHub] = config.CodeHostConfig{
+		Type:           config.CodeHostTypeGitHub,
+		AppID:          in.AppID, // non-secret: stored as a literal
 		PrivateKeyPath: dest,
-		WebhookSecret:  config.EnvRef("GITHUB_WEBHOOK_SECRET"),
-		AutoEnroll:     &autoEnroll,
+	}
+	if cfg.Channels == nil {
+		cfg.Channels = map[string]config.ChannelConfig{}
+	}
+	cfg.Channels[config.ChannelTypeGitHub] = config.ChannelConfig{
+		Type:          config.ChannelTypeGitHub,
+		WebhookSecret: config.EnvRef("GITHUB_WEBHOOK_SECRET"),
+		AutoEnroll:    &autoEnroll,
 	}
 	if err := config.SaveConfig(cfgPath, cfg); err != nil {
 		return res, fmt.Errorf("github setup: save config: %w", err)
@@ -192,41 +192,7 @@ func applyGitHubSetup(home string, in setupInput) (setupResult, error) {
 		return res, fmt.Errorf("github setup: save .env: %w", err)
 	}
 
-	if !in.SkipService {
-		if err := upsertGitHubService(home, in, &res); err != nil {
-			return res, err
-		}
-	}
 	return res, nil
-}
-
-// upsertGitHubService creates the App-installation Service, or — if one with
-// the same id already exists — verifies its secret hash matches the one being
-// configured, flagging a mismatch (which would silently drop every event).
-func upsertGitHubService(home string, in setupInput, res *setupResult) error {
-	store := auth.NewStore(filepath.Join(home, "users.yaml"))
-	wantHash := auth.SHA256Hex(in.WebhookSecret)
-	services, err := store.Services()
-	if err != nil {
-		return fmt.Errorf("github setup: read services: %w", err)
-	}
-	for _, s := range services {
-		if s.ID == in.ServiceID {
-			res.ServiceExisted = true
-			res.SecretMismatch = s.SecretSHA256 != wantHash
-			return nil
-		}
-	}
-	if err := store.AddService(auth.Service{
-		ID:           in.ServiceID,
-		Role:         auth.RoleCITrigger,
-		Kind:         "github-app",
-		SecretSHA256: wantHash,
-	}); err != nil {
-		return fmt.Errorf("github setup: create service: %w", err)
-	}
-	res.ServiceCreated = true
-	return nil
 }
 
 func copyPrivateKey(src, dst string) error {
@@ -248,19 +214,14 @@ func copyPrivateKey(src, dst string) error {
 
 func printSetupResult(cmd *cobra.Command, home string, res setupResult) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "✓ wrote github: section to %s\n", filepath.Join(home, "argus.yaml"))
+	fmt.Fprintf(&b, "✓ wrote codehosts:/channels: sections to %s\n", filepath.Join(home, "argus.yaml"))
 	fmt.Fprintf(&b, "✓ stored GITHUB_WEBHOOK_SECRET in %s\n", filepath.Join(home, ".env"))
 	fmt.Fprintf(&b, "✓ private key at %s\n", res.PrivateKeyDest)
-	switch {
-	case res.ServiceCreated:
-		b.WriteString("✓ created the github-app Service in users.yaml\n")
-	case res.SecretMismatch:
-		b.WriteString("⚠ a github-app Service already exists but its secret hash does NOT match —\n")
-		b.WriteString("  events will be dropped. Re-create it: `argus service rm <id>` then re-run setup.\n")
-	case res.ServiceExisted:
-		b.WriteString("✓ github-app Service already present and its secret matches\n")
-	}
-	b.WriteString("\nNext: run `argus doctor` — the github line should report a minted token.\n")
+	// The daemon serves the webhook on one fixed front-door path (ADR 0015);
+	// the operator sets this exact URL on the GitHub App. No installation id is
+	// pinned — GitHub tells Argus which installation each delivery belongs to.
+	fmt.Fprintf(&b, "\nSet the GitHub App's webhook URL to https://<your-daemon-host>%s\n", ghchannel.WebhookPath)
+	b.WriteString("Next: run `argus doctor` — the github line should report a minted App JWT.\n")
 	_, err := fmt.Fprint(cmd.OutOrStdout(), b.String())
 	return err
 }

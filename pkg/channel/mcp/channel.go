@@ -12,14 +12,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
@@ -29,55 +26,38 @@ import (
 // maxBodyBytes bounds the JSON-RPC payload we read into memory.
 const maxBodyBytes = 8 << 20 // 8 MiB
 
-// endpointPath is the single MCP endpoint (Streamable HTTP transport).
+// endpointPath is the single MCP endpoint (Streamable HTTP transport). It is
+// the fixed path the channel binds on the daemon's shared front door
+// (ADR 0015); the channel never opens a listener of its own.
 const endpointPath = "/mcp"
 
-// Options carries the channel's resolved configuration.
-type Options struct {
-	Addr string // HTTP listen address
-}
-
-// Server is the MCP channel. It holds the shared DaemonContext, its listen
-// options, and the live MCP sessions (each carrying a Snapshot workspace so
-// follow-up reviews accumulate). Per-request identity is resolved on the wire,
-// never cached.
+// Server is the MCP channel. It holds the shared DaemonContext and the live
+// MCP sessions (each carrying a Snapshot workspace so follow-up reviews
+// accumulate). Per-request identity is resolved on the wire, never cached.
 type Server struct {
-	dc   *daemon.Context
-	opts Options
+	dc *daemon.Context
 
 	mu       sync.Mutex
 	sessions map[string]*mcpSession
 }
 
-// NewServer builds the channel over the shared DaemonContext.
-func NewServer(dc *daemon.Context, opts Options) *Server {
-	return &Server{dc: dc, opts: opts, sessions: map[string]*mcpSession{}}
+// NewServer builds the channel over the shared DaemonContext. Auth is
+// per-Person bearer tokens resolved at request time, so there is nothing to
+// configure here.
+func NewServer(dc *daemon.Context) *Server {
+	return &Server{dc: dc, sessions: map[string]*mcpSession{}}
 }
 
 // Name implements daemon.Channel.
 func (s *Server) Name() string { return "mcp" }
 
-// Start listens for MCP requests until ctx is cancelled.
-func (s *Server) Start(ctx context.Context) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc(endpointPath, s.handle)
-	// ReadHeaderTimeout bounds slow-header clients without capping the request
-	// body or the response: a Snapshot review is a long synchronous run, so a
-	// WriteTimeout would cut it off — deliberately left unset (long reviews
-	// stream over SSE instead, see serveToolCallSSE).
-	srv := &http.Server{Addr: s.opts.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutCtx)
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("mcp: listen %s: %w", s.opts.Addr, err)
-	}
-	return nil
+// Routes implements daemon.HTTPChannel: MCP requests are served at the single
+// well-known path on the daemon's shared front door (ADR 0015). The front door
+// sets ReadHeaderTimeout and deliberately leaves WriteTimeout unset — a
+// Snapshot/Repo review is a long synchronous run a write deadline would cut
+// off (long reviews stream over SSE instead, see serveToolCallSSE).
+func (s *Server) Routes() []daemon.Route {
+	return []daemon.Route{{Pattern: endpointPath, Handler: http.HandlerFunc(s.handle)}}
 }
 
 // handle is the MCP endpoint: authenticate → parse JSON-RPC → dispatch. Auth
@@ -263,5 +243,6 @@ func writeResponse(w http.ResponseWriter, resp rpcResponse) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// compile-time check that the channel satisfies daemon.Channel.
-var _ daemon.Channel = (*Server)(nil)
+// compile-time check that the channel satisfies daemon.HTTPChannel: it binds a
+// path on the front door rather than owning a listener (ADR 0015).
+var _ daemon.HTTPChannel = (*Server)(nil)

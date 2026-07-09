@@ -1,11 +1,17 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/spf13/cobra"
+
+	ghchannel "github.com/argusappsec/argus/pkg/channel/github"
 	"github.com/argusappsec/argus/pkg/config"
 )
 
@@ -24,12 +30,9 @@ func baseInput(t *testing.T) setupInput {
 	return setupInput{
 		Host:           "github",
 		AppID:          "123456",
-		InstallationID: "7890",
 		WebhookSecret:  "shhh",
 		PrivateKeyPath: fakePEM(t),
-		Addr:           ":8080",
 		AutoEnroll:     true,
-		ServiceID:      "github-app",
 	}
 }
 
@@ -40,25 +43,31 @@ func TestApplyGitHubSetup_WritesEverything(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// argus.yaml github section is configured and parseable.
+	// argus.yaml codehosts:/channels: sections are configured and parseable,
+	// and the whole config passes v2 validation.
 	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if !cfg.GitHub.Configured() {
-		t.Errorf("github section not configured: %+v", cfg.GitHub)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("written config fails validation: %v", err)
 	}
-	if got, _ := cfg.GitHub.ResolveAppID(); got != "123456" {
+	host, ok := cfg.CodeHost(config.CodeHostTypeGitHub)
+	if !ok || !host.Configured() {
+		t.Errorf("github codehost not configured: %+v", host)
+	}
+	if got, _ := host.ResolveAppID(); got != "123456" {
 		t.Errorf("app id = %q", got)
 	}
 
-	// The webhook secret resolves from .env via the env() reference.
+	// The webhook secret resolves from .env via the env() reference on the channel.
 	env, err := config.LoadEnv(filepath.Join(home, ".env"))
 	if err != nil {
 		t.Fatalf("load env: %v", err)
 	}
 	env.ApplyToProcess()
-	if got, _ := cfg.GitHub.ResolveWebhookSecret(); got != "shhh" {
+	ch, _ := cfg.Channel(config.ChannelTypeGitHub)
+	if got, _ := ch.ResolveWebhookSecret(); got != "shhh" {
 		t.Errorf("webhook secret resolved to %q", got)
 	}
 
@@ -71,16 +80,10 @@ func TestApplyGitHubSetup_WritesEverything(t *testing.T) {
 		t.Errorf("key perms = %o", info.Mode().Perm())
 	}
 
-	// The Service resolves by the wire secret's hash — the channel's path.
-	if !res.ServiceCreated {
-		t.Error("expected the service to be created")
-	}
-	p, err := auth.NewResolver(filepath.Join(home, "users.yaml")).ResolveService(auth.SHA256Hex("shhh"))
-	if err != nil {
-		t.Fatalf("resolve service: %v", err)
-	}
-	if p.ID != "github-app" || p.Kind != auth.KindService {
-		t.Errorf("resolved %+v", p)
+	// Setup writes no users.yaml Service row: the github-app Service is
+	// synthesized by the channel (ADR 0015), not stored.
+	if _, err := os.Stat(filepath.Join(home, "users.yaml")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("setup must not write users.yaml; stat err = %v", err)
 	}
 }
 
@@ -98,27 +101,41 @@ func TestApplyGitHubSetup_PreservesExistingConfig(t *testing.T) {
 	if cfg.DefaultModel != "gemini-2.5-flash" {
 		t.Errorf("default_model clobbered: %q", cfg.DefaultModel)
 	}
-	if !cfg.GitHub.Configured() {
-		t.Error("github not written alongside existing config")
+	host, ok := cfg.CodeHost(config.CodeHostTypeGitHub)
+	if !ok || !host.Configured() {
+		t.Error("github codehost not written alongside existing config")
 	}
 }
 
-func TestApplyGitHubSetup_DetectsSecretMismatch(t *testing.T) {
+func TestApplyGitHubSetup_WritesNoInstallationIDOrAddr(t *testing.T) {
 	home := t.TempDir()
-	// A service with the id already exists, but with a different secret.
-	store := auth.NewStore(filepath.Join(home, "users.yaml"))
-	if err := store.AddService(auth.Service{
-		ID: "github-app", Role: auth.RoleCITrigger, Kind: "github-app",
-		SecretSHA256: auth.SHA256Hex("a-different-secret"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	res, err := applyGitHubSetup(home, baseInput(t))
-	if err != nil {
+	if _, err := applyGitHubSetup(home, baseInput(t)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if !res.ServiceExisted || !res.SecretMismatch {
-		t.Errorf("expected an existing service with a mismatched secret: %+v", res)
+	// Config v2 (ADR 0015): setup must never pin an installation id (derived
+	// per event/repo) or a per-channel addr (the daemon owns one front door).
+	// LoadConfig hard-errors on either legacy key, so a clean load is the proof.
+	raw, err := os.ReadFile(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(raw); strings.Contains(s, "installation_id") || strings.Contains(s, "addr") {
+		t.Errorf("written config carries a removed v2 key:\n%s", s)
+	}
+	if _, err := config.LoadConfig(filepath.Join(home, "argus.yaml")); err != nil {
+		t.Errorf("config with a legacy key would fail to load: %v", err)
+	}
+}
+
+func TestPrintSetupResult_PrintsWebhookURLPath(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printSetupResult(cmd, t.TempDir(), setupResult{PrivateKeyDest: "/x/key.pem"}); err != nil {
+		t.Fatalf("print: %v", err)
+	}
+	if !strings.Contains(buf.String(), ghchannel.WebhookPath) {
+		t.Errorf("setup output does not name the webhook URL path %q:\n%s", ghchannel.WebhookPath, buf.String())
 	}
 }
 

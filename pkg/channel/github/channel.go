@@ -2,16 +2,12 @@ package github
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
@@ -25,9 +21,13 @@ import (
 // maxBodyBytes bounds the webhook payload we read into memory.
 const maxBodyBytes = 8 << 20 // 8 MiB
 
+// WebhookPath is the fixed front-door path GitHub webhook deliveries arrive on
+// (ADR 0015). Operators point the GitHub App's webhook URL at it; the channel
+// never opens a listener of its own.
+const WebhookPath = "/webhooks/github"
+
 // Options carries the channel's resolved configuration.
 type Options struct {
-	Addr          string   // HTTP listen address
 	WebhookSecret string   // resolved App webhook secret (raw)
 	AutoEnroll    bool     // effective github.auto_enroll
 	EnabledRepos  []string // explicit allow-list when AutoEnroll is false
@@ -42,9 +42,8 @@ type Server struct {
 	host codehost.CodeHost
 	opts Options
 
-	secretSHA string
-	dedup     *deliveryCache
-	reviews   *prReviewStore
+	dedup   *deliveryCache
+	reviews *prReviewStore
 
 	// mentions is the set of @-handles a comment may use to address this
 	// instance (@argus plus any configured persona handle), computed once at
@@ -55,38 +54,39 @@ type Server struct {
 // NewServer builds the channel. host is the authenticated CodeHost the ack is
 // posted through; opts carries the resolved secret and gating policy.
 func NewServer(dc *daemon.Context, host codehost.CodeHost, opts Options) *Server {
-	sum := sha256.Sum256([]byte(opts.WebhookSecret))
 	return &Server{
-		dc:        dc,
-		host:      host,
-		opts:      opts,
-		secretSHA: hex.EncodeToString(sum[:]),
-		dedup:     newDeliveryCache(2048),
-		reviews:   newPRReviewStore(dc.Home),
-		mentions:  mentionTokens(opts.PersonaName),
+		dc:       dc,
+		host:     host,
+		opts:     opts,
+		dedup:    newDeliveryCache(2048),
+		reviews:  newPRReviewStore(dc.Home),
+		mentions: mentionTokens(opts.PersonaName),
+	}
+}
+
+// appPrincipal is the Service Principal the GitHub channel acts as. It is
+// synthesized from the fact that the channel is configured (ADR 0015): the
+// glossary defines a Service as "declared by the configuration of the Channel
+// that carries it", so there is no users.yaml row and no webhook-secret hash to
+// look up. A Service carries no Role — its capabilities are fixed by the channel
+// type that declares it (CONTEXT.md) — so the Role is left unset. Automatic PR
+// reviews are attributed to it, with the PR author kept as metadata.
+func appPrincipal() auth.Principal {
+	return auth.Principal{
+		ID:       "github-app",
+		Kind:     auth.KindService,
+		Identity: "service:github-app",
 	}
 }
 
 // Name implements daemon.Channel.
 func (s *Server) Name() string { return "github" }
 
-// Start listens for webhook deliveries until ctx is cancelled.
-func (s *Server) Start(ctx context.Context) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/webhook", s.handle)
-	srv := &http.Server{Addr: s.opts.Addr, Handler: mux}
-
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutCtx)
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("github: listen %s: %w", s.opts.Addr, err)
-	}
-	return nil
+// Routes implements daemon.HTTPChannel: the GitHub channel serves webhook
+// deliveries at the single well-known path on the daemon's shared front door
+// (ADR 0015), never opening a listener of its own.
+func (s *Server) Routes() []daemon.Route {
+	return []daemon.Route{{Pattern: WebhookPath, Handler: http.HandlerFunc(s.handle)}}
 }
 
 // handle is the webhook entrypoint: verify → de-dup → dispatch.
@@ -134,6 +134,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 // rather than stacking a new one (ADR 0009). A comment carrying the @argus
 // mention from a resolved Person becomes a conversational turn in the thread.
 func (s *Server) dispatch(ctx context.Context, evt Event) error {
+	// The installation the App should act as is carried in the event payload
+	// (ADR 0015): seed it so every clone/API call for this repo mints a token
+	// for that installation without an extra App-JWT lookup. Multi-org support
+	// is then free — a different org's event simply carries a different id.
+	if evt.InstallationID != "" {
+		if noter, ok := s.host.(installationNoter); ok {
+			noter.NoteInstallation(repoFromEvent(evt), evt.InstallationID)
+		}
+	}
 	switch evt.Kind {
 	case KindPullRequest:
 		return s.dispatchPullRequest(ctx, evt)
@@ -144,6 +153,13 @@ func (s *Server) dispatch(ctx context.Context, evt Event) error {
 	}
 }
 
+// installationNoter is optionally implemented by a CodeHost that can be told a
+// repo's installation up-front (from a webhook event), skipping the per-repo
+// App-JWT resolution. The GitHub CodeHost implements it; a test fake need not.
+type installationNoter interface {
+	NoteInstallation(repo codehost.Repo, installationID string)
+}
+
 // dispatchPullRequest handles an opened/synchronize PR: attribute the trigger
 // to the App-installation Service, gate on the enabled-repo policy, then run
 // the automatic review.
@@ -152,16 +168,12 @@ func (s *Server) dispatchPullRequest(ctx context.Context, evt Event) error {
 		return nil
 	}
 
-	// Attribute the trigger to the App-installation Service (the secret that
-	// just verified the HMAC). An unregistered App is a misconfiguration: log
-	// and ignore rather than act unattributed.
-	principal, err := s.dc.Auth.ResolveService(s.secretSHA)
-	if err != nil {
-		s.audit("github_event_unattributed", evt, map[string]any{"reason": "no service for webhook secret"})
-		return nil
-	}
+	// Attribute the trigger to the synthesized github-app Service (ADR 0015):
+	// the channel is configured, so the Service exists — no user-table lookup,
+	// no unattributed path.
+	principal := appPrincipal()
 
-	repos, err := s.host.InstallationRepos(ctx)
+	repos, err := s.host.InstallationRepos(ctx, repoFromEvent(evt))
 	if err != nil {
 		return fmt.Errorf("github: installation repos: %w", err)
 	}
@@ -506,5 +518,6 @@ func (s *Server) audit(typ string, evt Event, extra map[string]any) {
 	_ = s.dc.Audit.Log(audit.Event{Type: typ, Data: data})
 }
 
-// compile-time check that the channel satisfies daemon.Channel.
-var _ daemon.Channel = (*Server)(nil)
+// compile-time check that the channel satisfies daemon.HTTPChannel: it binds a
+// path on the front door rather than owning a listener (ADR 0015).
+var _ daemon.HTTPChannel = (*Server)(nil)

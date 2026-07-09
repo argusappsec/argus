@@ -42,7 +42,7 @@ func testServer(t *testing.T) (*Server, string) {
 		Auth:  auth.NewResolver(usersPath),
 		Audit: aud,
 	}
-	return NewServer(dc, Options{Addr: ":0"}), auditPath
+	return NewServer(dc), auditPath
 }
 
 // post sends a JSON-RPC body to the MCP endpoint with the given bearer token

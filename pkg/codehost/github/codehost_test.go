@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,11 +15,16 @@ import (
 )
 
 // tokenEndpoint registers the App installation-token mint endpoint the minter
-// calls before every authenticated request.
+// calls before every authenticated request, plus the App-JWT installation
+// resolution the CodeHost performs to learn which installation owns a repo
+// (ADR 0015): argusappsec/argus resolves to installation 456.
 func tokenEndpoint(mux *http.ServeMux) {
 	mux.HandleFunc("/app/installations/456/access_tokens", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"})
+	})
+	mux.HandleFunc("/repos/argusappsec/argus/installation", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 456})
 	})
 }
 
@@ -56,7 +62,7 @@ func apiServer(t *testing.T) (*httptest.Server, *string) {
 
 func newTestHost(t *testing.T, srv *httptest.Server) *github.CodeHost {
 	t.Helper()
-	minter, err := github.NewTokenMinterFromPEM("123", "456", testKeyPEM(t),
+	minter, err := github.NewTokenMinterFromPEM("123", testKeyPEM(t),
 		github.WithAPIBase(srv.URL), github.WithHTTPClient(srv.Client()))
 	if err != nil {
 		t.Fatal(err)
@@ -82,13 +88,150 @@ func TestCodeHost_InstallationRepos(t *testing.T) {
 	srv, _ := apiServer(t)
 	host := newTestHost(t, srv)
 
-	repos, err := host.InstallationRepos(context.Background())
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
+	repos, err := host.InstallationRepos(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("installation repos: %v", err)
 	}
 	want := []string{"github.com/argusappsec/argus", "github.com/argusappsec/other"}
 	if strings.Join(repos, ",") != strings.Join(want, ",") {
 		t.Errorf("repos = %v, want %v", repos, want)
+	}
+}
+
+// TestCodeHost_ResolvesInstallationPerRepo proves on-demand work derives the
+// installation for a repo via the App JWT (GET /repos/{o}/{r}/installation),
+// then mints that installation's token — no pinned installation id (ADR 0015).
+func TestCodeHost_ResolvesInstallationPerRepo(t *testing.T) {
+	var resolvedWithJWT bool
+	var tokenPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/octo/app/installation", func(w http.ResponseWriter, r *http.Request) {
+		// Resolution is authenticated with the App JWT, not an installation token.
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			t.Errorf("resolution auth = %q, want App JWT bearer", r.Header.Get("Authorization"))
+		}
+		resolvedWithJWT = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 789})
+	})
+	mux.HandleFunc("/app/installations/789/access_tokens", func(w http.ResponseWriter, _ *http.Request) {
+		tokenPath = "789"
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_789", "expires_at": "2099-01-01T00:00:00Z"})
+	})
+	mux.HandleFunc("/repos/octo/app/issues/9/comments", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer ghs_789" {
+			t.Errorf("comment auth = %q, want the resolved installation's token", got)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host := newTestHost(t, srv)
+
+	repo := codehost.Repo{Host: "github.com", Owner: "octo", Name: "app", FullName: "github.com/octo/app"}
+	if err := host.PostComment(context.Background(), repo, 9, "hi"); err != nil {
+		t.Fatalf("post comment: %v", err)
+	}
+	if !resolvedWithJWT || tokenPath != "789" {
+		t.Errorf("resolvedWithJWT=%v tokenPath=%q, want resolution then installation 789", resolvedWithJWT, tokenPath)
+	}
+}
+
+// TestCodeHost_NotInstalledError surfaces a clear, repo-named error when the
+// App is not installed on the target repo (404 on resolution).
+func TestCodeHost_NotInstalledError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/octo/private/installation", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host := newTestHost(t, srv)
+
+	repo := codehost.Repo{Host: "github.com", Owner: "octo", Name: "private", FullName: "github.com/octo/private"}
+	_, err := host.InstallationRepos(context.Background(), repo)
+	if err == nil || !strings.Contains(err.Error(), "github.com/octo/private") {
+		t.Fatalf("err = %v, want a not-installed error naming the repo", err)
+	}
+}
+
+// TestCodeHost_CloneEmbedsInstallationToken proves the shared client clones a
+// (private) repo authenticated: it resolves the repo's installation via the App
+// JWT, mints that installation's token, and embeds it into the git remote as
+// the x-access-token basic-auth user — the wiring that makes a chat- or
+// webhook-triggered clone of a private repo succeed (ADR 0015).
+func TestCodeHost_CloneEmbedsInstallationToken(t *testing.T) {
+	srv, _ := apiServer(t)
+	runs := &fakeRunner{
+		onRun: func(args ...string) (string, error) {
+			if len(args) > 0 && args[0] == "ls-remote" {
+				return "fakesha1234567890abcdef0000000000000000000\tHEAD\n", nil
+			}
+			if len(args) >= 2 && args[0] == "clone" {
+				_ = os.MkdirAll(args[len(args)-1], 0o700)
+			}
+			return "", nil
+		},
+	}
+	minter, err := github.NewTokenMinterFromPEM("123", testKeyPEM(t),
+		github.WithAPIBase(srv.URL), github.WithHTTPClient(srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := github.NewCodeHost(t.TempDir(), minter,
+		github.WithCodeHostAPIBase(srv.URL), github.WithCodeHostHTTPClient(srv.Client()),
+		github.WithCloneRunner(runs))
+
+	repo := codehost.Repo{Host: "github.com", Owner: "argusappsec", Name: "argus", FullName: "github.com/argusappsec/argus"}
+	co, err := host.Clone(context.Background(), repo, "")
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if co.SHA != "fakesha1234567890abcdef0000000000000000000" {
+		t.Errorf("sha = %q", co.SHA)
+	}
+	sawToken := false
+	for _, call := range runs.calls {
+		for _, tok := range call {
+			if strings.Contains(tok, "x-access-token:ghs_x@github.com/argusappsec/argus") {
+				sawToken = true
+			}
+		}
+	}
+	if !sawToken {
+		t.Errorf("expected git remote to embed the minted installation token, got: %v", runs.calls)
+	}
+}
+
+// TestCodeHost_SeededInstallationSkipsResolution proves a webhook-seeded
+// installation (NoteInstallation) is used directly, without an App-JWT lookup.
+func TestCodeHost_SeededInstallationSkipsResolution(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/octo/app/installation", func(http.ResponseWriter, *http.Request) {
+		t.Error("resolution endpoint must not be called when the installation is seeded")
+	})
+	mux.HandleFunc("/app/installations/555/access_tokens", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_555", "expires_at": "2099-01-01T00:00:00Z"})
+	})
+	mux.HandleFunc("/repos/octo/app/issues/1/comments", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer ghs_555" {
+			t.Errorf("comment auth = %q, want the seeded installation's token", got)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host := newTestHost(t, srv)
+
+	repo := codehost.Repo{Host: "github.com", Owner: "octo", Name: "app", FullName: "github.com/octo/app"}
+	host.NoteInstallation(repo, "555")
+	if err := host.PostComment(context.Background(), repo, 1, "hi"); err != nil {
+		t.Fatalf("post comment: %v", err)
 	}
 }
 

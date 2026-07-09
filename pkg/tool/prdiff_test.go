@@ -47,8 +47,8 @@ func TestPRDiff_ReturnsChangedFilesAndHunks(t *testing.T) {
 }
 
 func TestPRDiff_NoDiffOutsidePRReview(t *testing.T) {
-	// A plain `argus review` never sets a diff; the tool says so rather than
-	// pretending the whole tree is in scope.
+	// A non-PR review (e.g. a chat-requested repo review) never sets a diff; the
+	// tool says so rather than pretending the whole tree is in scope.
 	out, err := tool.NewPRDiff(session.New()).Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)

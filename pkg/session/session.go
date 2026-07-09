@@ -73,7 +73,8 @@ func (s *Session) SetRoot(path string) {
 // PRDiff returns the pull-request diff set for this Session, and whether one
 // was set. A PR review pre-fetches the diff and stashes it here so the pr_diff
 // tool can expose the changed files/hunks to the agent without a live API call
-// mid-loop (ADR 0009). A non-PR review (e.g. `argus review`) never sets it.
+// mid-loop (ADR 0009). A non-PR review (e.g. a chat-requested repo review)
+// never sets it.
 func (s *Session) PRDiff() (codehost.PRDiff, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

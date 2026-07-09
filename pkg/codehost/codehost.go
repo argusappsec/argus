@@ -109,6 +109,8 @@ type CodeHost interface {
 	PostReview(ctx context.Context, repo Repo, number int, review Review, replace bool) error
 
 	// InstallationRepos lists the canonical names of the repositories the
-	// installation can access. It backs repo gating (ADR 0008).
-	InstallationRepos(ctx context.Context) ([]string, error)
+	// installation that owns repo can access. The installation is derived from
+	// repo (ADR 0015), so gating consults the repos of the event's
+	// installation, never a pinned one. It backs repo gating (ADR 0008).
+	InstallationRepos(ctx context.Context, repo Repo) ([]string, error)
 }

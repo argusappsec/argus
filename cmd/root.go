@@ -20,17 +20,16 @@ func Root() *cobra.Command {
 func init() {
 	chat := chatCmd()
 	rootCmd.AddCommand(chat)
-	rootCmd.AddCommand(reviewCmd())
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(doctorCmd())
 	rootCmd.AddCommand(skillCmd())
 	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(userCmd())
-	rootCmd.AddCommand(serviceCmd())
 	rootCmd.AddCommand(codehostCmd())
 
 	// `argus` with no arguments opens the interactive chat — the primary UX.
-	// Explicit subcommands (review, chat, init, doctor, future ones) still
-	// work as before.
+	// Explicit subcommands (chat, init, doctor, future ones) still work as
+	// before. A review is requested conversationally in chat (ADR 0016), not
+	// through a dedicated command.
 	rootCmd.RunE = chat.RunE
 }

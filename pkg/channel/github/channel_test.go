@@ -2,8 +2,6 @@ package github
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -39,6 +37,7 @@ type fakeHost struct {
 	clonePath string
 	cloneSHA  string
 	clones    []cloneCall
+	noted     map[string]string // repo full name → installation id seeded from the event
 }
 
 type postedComment struct {
@@ -86,7 +85,15 @@ func (f *fakeHost) PostReview(_ context.Context, repo codehost.Repo, number int,
 	f.reviews = append(f.reviews, postedReview{repo.FullName, number, review, replace})
 	return nil
 }
-func (f *fakeHost) InstallationRepos(context.Context) ([]string, error) { return f.repos, nil }
+func (f *fakeHost) InstallationRepos(context.Context, codehost.Repo) ([]string, error) {
+	return f.repos, nil
+}
+func (f *fakeHost) NoteInstallation(repo codehost.Repo, installationID string) {
+	if f.noted == nil {
+		f.noted = map[string]string{}
+	}
+	f.noted[repo.FullName] = installationID
+}
 
 // diffCovering builds a PRDiff whose single file's hunk covers [start, start+n).
 func diffCovering(path string, start, n int) codehost.PRDiff {
@@ -146,15 +153,14 @@ func reviewScript() *scriptedProvider {
 	}}
 }
 
-// testChannel builds a channel over a temp home with a github-app Service whose
-// secret hash matches testSecret, and a full daemon Context (scripted provider,
-// session manager, report writer) so dispatch can run a real review.
+// testChannel builds a channel over a temp home with a Persons-only users.yaml
+// (no service row — the github-app Service is synthesized by the channel, ADR
+// 0015), and a full daemon Context (scripted provider, session manager, report
+// writer) so dispatch can run a real review.
 func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, autoEnroll bool, enabledRepos []string) (*Server, *daemon.Context, string) {
 	t.Helper()
 	home := t.TempDir()
-	sum := sha256.Sum256([]byte(testSecret))
-	users := "services:\n  - id: github-app\n    role: ci-trigger\n    kind: github-app\n    secret_sha256: " + hex.EncodeToString(sum[:]) + "\n" +
-		"persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n" +
+	users := "persons:\n  - id: bob\n    role: analyst\n    identities:\n      - github:bob\n" +
 		"  - id: carol\n    role: viewer\n    identities:\n      - github:carol\n"
 	usersPath := filepath.Join(home, "users.yaml")
 	if err := os.WriteFile(usersPath, []byte(users), 0o600); err != nil {
@@ -185,7 +191,6 @@ func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, a
 	t.Cleanup(func() { dc.Sessions.Drain(2 * time.Second) })
 
 	srv := NewServer(dc, host, Options{
-		Addr:          ":0",
 		WebhookSecret: testSecret,
 		AutoEnroll:    autoEnroll,
 		EnabledRepos:  enabledRepos,
@@ -248,6 +253,12 @@ func TestChannel_OpenedPRPostsInlineCommentOnChangedLine(t *testing.T) {
 	code := postEvent(t, s, "pull_request", "d1", body, sign(body, testSecret))
 	if code != 200 {
 		t.Fatalf("status = %d, want 200", code)
+	}
+
+	// The installation the App acts as is taken from the event payload and
+	// seeded onto the CodeHost (ADR 0015) — no pinned installation id.
+	if host.noted[installedRepo] != "987654" {
+		t.Errorf("seeded installation = %q, want 987654 from the event", host.noted[installedRepo])
 	}
 
 	// The PR head is cloned via the installation-token CodeHost at the head SHA.
@@ -484,7 +495,6 @@ func TestChannel_PersonaNameMentionGetsThreadedReply(t *testing.T) {
 	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
 	_, dc, _ := testChannel(t, host, replyScript("Move that key to an env var."), true, nil)
 	s := NewServer(dc, host, Options{
-		Addr:          ":0",
 		WebhookSecret: testSecret,
 		AutoEnroll:    true,
 		PersonaName:   "Ercole",

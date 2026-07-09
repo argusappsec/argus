@@ -73,12 +73,6 @@ func (c *Client) SendMessage(text string) error {
 	return c.w.write(Frame{Type: TypeMessage, Text: text})
 }
 
-// SendReview submits a structured review target; the daemon clones and
-// starts the review deterministically.
-func (c *Client) SendReview(githubURL, ref string) error {
-	return c.w.write(Frame{Type: TypeReview, GitHubURL: githubURL, Ref: ref})
-}
-
 // Cancel aborts the in-flight run without closing the Session.
 func (c *Client) Cancel() error {
 	return c.w.write(Frame{Type: TypeCancel})
