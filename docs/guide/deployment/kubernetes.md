@@ -9,7 +9,7 @@ chart.
 > two active pods would corrupt it. There is no HA or horizontal scaling.
 > Kubernetes here gives you self-healing, declarative deploys and managed
 > secrets/ingress — not scale. See
-> [ADR 0012](../adr/0012-kubernetes-deployment.md) for the reasoning.
+> [ADR 0012](../../adr/0012-kubernetes-deployment.md) for the reasoning.
 
 If you just want the simplest possible host, a VPS with the binary under
 systemd is easier. Reach for Kubernetes when you already run a cluster and
@@ -60,11 +60,11 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   It is **batteries-included**: `argus` plus every binary its Tools shell out
   to — `git` (required, for cloning), `semgrep`, `gitleaks` and `osv-scanner`
   — so the GitHub PR-review Channel works out of the box with no derived image
-  or sidecar (see [ADR 0013](../adr/0013-batteries-included-runtime-image.md)).
+  or sidecar (see [ADR 0013](../../adr/0013-batteries-included-runtime-image.md)).
   The image runs as nonroot (uid `65532`) and exposes a single HTTP front door
   on `:8080` — the daemon serves every configured HTTP channel (the GitHub
   webhook at `/webhooks/github`, MCP at `/mcp`) plus its `/healthz` probe on
-  that one port (see [ADR 0015](../adr/0015-integrations-declared-in-configuration.md)).
+  that one port (see [ADR 0015](../../adr/0015-integrations-declared-in-configuration.md)).
   It is published multi-arch for `linux/amd64` and `linux/arm64`
   with provenance and SBOM attestations.
 
@@ -80,7 +80,7 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   want to track `main`.
 
   > **Contributors** who want to build the image locally can still do so from
-  > the repo's multi-stage [`Dockerfile`](../../Dockerfile)
+  > the repo's multi-stage [`Dockerfile`](../../../Dockerfile)
   > (`docker build -t argus:dev .`) — that is a development workflow, not the
   > operator path.
 
@@ -274,7 +274,7 @@ Point the GitHub App's webhook URL at `https://argus.example.com/webhooks/github
 ## Step 4 — Bootstrap users
 
 `users.yaml` starts empty. Possession of the local socket is admin
-(see [ADR 0007](../adr/0007-socket-possession-is-authentication.md)), so the
+(see [ADR 0007](../../adr/0007-socket-possession-is-authentication.md)), so the
 first operator administers the daemon over `kubectl exec`:
 
 ```sh

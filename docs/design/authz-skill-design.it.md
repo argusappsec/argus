@@ -2,14 +2,14 @@
 
 > Stato: **implementata** — il design è atterrato come skill built-in
 > `authz-audit` (`pkg/skill/builtin/authz-audit/`), validata con 100% di recall /
-> 100% di precision su VAmPI (vedi [`skills/authz-audit/README.md`](skills/authz-audit/README.md)).
+> 100% di precision su VAmPI (vedi [docs/guide/skills.md](../guide/skills.md)).
 > Questo documento conserva il razionale: cosa costruire per la rilevazione
 > white-box dei bug di logica di autorizzazione (BOLA / IDOR / BFLA), perché le
 > opzioni pronte all'uso non li coprono, e come lo fa una skill nativa di Argus.
 >
 > Materiale collegato: `CONTEXT.md` (definizioni di Tool/Skill), ADR 0005 (forma
 > delle skill — modello a directory-bundle), ADR 0006 (niente tool di shell
-> generico), e il [`README.md`](skills/authz-audit/README.md) della skill.
+> generico), e la pagina utente della skill in [docs/guide/skills.md](../guide/skills.md).
 >
 > Nota: versione italiana di `authz-skill-design.md`. In caso di divergenza, la
 > versione inglese fa fede (vive accanto agli altri doc del repo).

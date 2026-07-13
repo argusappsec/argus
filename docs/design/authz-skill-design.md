@@ -2,14 +2,14 @@
 
 > Status: **implemented** — the design landed as the built-in `authz-audit`
 > skill (`pkg/skill/builtin/authz-audit/`), validated 100% recall / 100%
-> precision on VAmPI (see [`skills/authz-audit/README.md`](skills/authz-audit/README.md)).
+> precision on VAmPI (see [docs/guide/skills.md](../guide/skills.md)).
 > This document keeps the rationale: what to build for white-box detection of
 > authorization-logic bugs (BOLA / IDOR / BFLA), why the off-the-shelf options
 > don't cover it, and how an Argus-native skill does.
 >
 > Companion material: `CONTEXT.md` (Tool/Skill definitions), ADR 0005 (skill
 > shape — directory-bundle model), ADR 0006 (no generic shell tool),
-> and the skill's own [`README.md`](skills/authz-audit/README.md).
+> and the skill's user-facing page in [docs/guide/skills.md](../guide/skills.md).
 
 ---
 
