@@ -33,10 +33,15 @@ configuration of the Channel that carries it (configuring the GitHub
 channel is what brings the `github-app` Service into existence; removing
 that configuration removes the Service). It has no operator-assigned Role:
 its capabilities are fixed by the channel type and are always narrower
-than any Person's — a Service never edits SOUL and never manages
-Principals. The concept exists so the audit log can attribute non-human
-actions to exactly one actor. _Avoid_: treating a Service as an entry in
-the user file — `users.yaml` holds Persons only.
+than any Person's — a Service never edits SOUL, never manages Principals,
+and **never writes to the knowledge base**: an automatic, Service-triggered
+review is *read-only* on org knowledge — it does not write CONTEXT and does
+not trigger MEMORY curation. Knowledge is persisted only by a Person
+(analyst+); a run driven by untrusted third-party code can inform the
+current report but can never durably teach the organization. The concept
+exists so the audit log can attribute non-human actions to exactly one
+actor. _Avoid_: treating a Service as an entry in the user file —
+`users.yaml` holds Persons only.
 
 ### Identity
 
@@ -334,6 +339,19 @@ The word alone is ambiguous, so we always qualify the target:
   ordinary file-scoped tools drive the collaboration implicitly.
 
 _Avoid_ using bare "review" when the target matters.
+
+### Untrusted review content
+
+The code, diff, and scanner output of the target under review. Authored by a
+potentially hostile third party — on a public repo, anyone who can open a Pull
+Request — it is **data to be analyzed, never instructions to be followed**. It
+never becomes a knowledge-base write (see **Service**), and it reaches the
+public review output argus[bot] posts only when **grounded** in the target
+itself (a posted snippet must exist in the checked-out tree; a location must
+exist in the diff). Org knowledge (SOUL, MEMORY, CONTEXT) is loaded in full so
+the review stays org-aware, but the confidentiality boundary is enforced on the
+*output*, not by starving the *input*. _Avoid_: treating reviewed code as
+trusted input, or as commands addressed to the agent.
 
 ### Consult
 
