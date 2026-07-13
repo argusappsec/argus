@@ -188,7 +188,7 @@ type providerSelection struct {
 	APIKey   string
 	// PersonaName is the operator-chosen instance name (persona.name in
 	// argus.yaml), already trimmed and stripped of a leading @. Empty means the
-	// brand default (@argus only).
+	// brand default (the instance answers to Argus only).
 	PersonaName string
 }
 
@@ -263,13 +263,9 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 
 	nameStep := huh.NewInput().
 		Title("Instance name (optional)").
-		Description("A name colleagues address this agent by — e.g. @Ercole on GitHub, in addition to @argus. Single word. Leave empty to keep just @argus.").
+		Description("A name colleagues address this agent by on GitHub — e.g. \"Ercole, look at this\" — in addition to the brand name Argus. Leave empty to keep just Argus.").
 		Placeholder("Ercole").
-		Value(&sel.PersonaName).
-		Validate(func(s string) error {
-			_, err := normalizePersonaName(s)
-			return err
-		})
+		Value(&sel.PersonaName)
 
 	form := huh.NewForm(
 		huh.NewGroup(providerStep),
@@ -289,13 +285,7 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		sel.Model = modelChoice
 	}
 	sel.APIKey = strings.TrimSpace(sel.APIKey)
-	// Normalize once more after the form: the validator only reports errors, it
-	// does not rewrite the bound value, so trim/strip-@ happens here.
-	name, err := normalizePersonaName(sel.PersonaName)
-	if err != nil {
-		return providerSelection{}, err
-	}
-	sel.PersonaName = name
+	sel.PersonaName = normalizePersonaName(sel.PersonaName)
 	return sel, nil
 }
 
@@ -427,18 +417,15 @@ const interviewKickoff = "[kick-off] The human just launched `argus init`. " +
 	"They have typed nothing yet. Greet them and ask your first question."
 
 // normalizePersonaName cleans an operator-entered instance name for
-// persona.name in argus.yaml: it trims surrounding whitespace and strips a
-// leading @ (colleagues address the agent as @<name>, but the config stores the
-// bare word). An empty result is valid and means "no persona name" — the brand
-// default (@argus only). A non-empty name must be a single word: a mention is
-// one whitespace-delimited token (see pkg/channel/github mentionTokens), so a
-// multi-word name can never form a usable @handle and is rejected.
-func normalizePersonaName(raw string) (string, error) {
+// persona.name in argus.yaml: it strips a leading @ (the config stores the
+// bare name) and collapses surrounding and internal whitespace. An empty
+// result is valid and means "no persona name" — the brand default (the
+// instance answers to Argus only). A multi-word name is valid too: it forms
+// no single-word @handle, but the GitHub channel answers to it as a vocative
+// opening the comment (see pkg/channel/github newMentionMatcher).
+func normalizePersonaName(raw string) string {
 	name := strings.TrimPrefix(strings.TrimSpace(raw), "@")
-	if name != "" && len(strings.Fields(name)) != 1 {
-		return "", fmt.Errorf("%q must be a single word (no spaces)", name)
-	}
-	return name, nil
+	return strings.Join(strings.Fields(name), " ")
 }
 
 // interviewerPersona is the hardcoded system prompt for the bootstrap agent.

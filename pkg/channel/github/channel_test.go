@@ -488,6 +488,25 @@ func TestChannel_MentionFromResolvedPersonGetsThreadedReply(t *testing.T) {
 	}
 }
 
+func TestChannel_VocativeMentionGetsThreadedReply(t *testing.T) {
+	// The canonical addressing form on public repos is the bare name opening
+	// the comment — no @, so nobody pings the unrelated github.com/argus user.
+	host := &fakeHost{repos: []string{installedRepo}, clonePath: t.TempDir()}
+	s, _, _ := testChannel(t, host, replyScript("The hardcoded key should move to an env var."), true, nil)
+
+	body := []byte(commentOn(42, "bob", "Argus, explain this"))
+	code := postEvent(t, s, "issue_comment", "c1", body, sign(body, testSecret))
+	if code != 200 {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if len(host.comments) != 1 {
+		t.Fatalf("comments = %d, want 1 (a vocative mention must be answered)", len(host.comments))
+	}
+	if !strings.Contains(host.comments[0].body, "move to an env var") {
+		t.Errorf("reply body missing agent answer:\n%s", host.comments[0].body)
+	}
+}
+
 func TestChannel_PersonaNameMentionGetsThreadedReply(t *testing.T) {
 	// An instance deployed under the persona name "Ercole" answers a comment
 	// that tags @Ercole (as well as @argus), proving the name is wired from the
@@ -523,7 +542,7 @@ func TestChannel_CommentWithoutMentionSilentlyIgnored(t *testing.T) {
 		t.Errorf("status = %d, want 200", code)
 	}
 	if len(host.comments) != 0 {
-		t.Errorf("a comment without @argus must not get a reply, got %d", len(host.comments))
+		t.Errorf("a comment not addressed to Argus must not get a reply, got %d", len(host.comments))
 	}
 }
 

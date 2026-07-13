@@ -61,21 +61,23 @@ type Config struct {
 
 	// Persona configures the operator-chosen display name this instance answers
 	// to (e.g. "Ercole"). Optional and additive: an empty persona leaves the
-	// instance known only by its brand handle @argus, identical to prior
+	// instance known only by its brand name Argus, identical to prior
 	// behavior.
 	Persona PersonaConfig `yaml:"persona,omitempty"`
 }
 
 // PersonaConfig is the persona: section of argus.yaml — an operator-chosen name
 // this Argus instance is addressed by, in addition to the always-accepted brand
-// handle @argus. The name feeds two independent surfaces: the GitHub mention
-// token (@<Name>) the bot answers to, and a line in the agent's system prompt so
-// the persona introduces and signs itself consistently. The SOUL stays free
-// prose for the model; the name is a structured field so channel code never has
-// to parse markdown to learn it.
+// name. The name feeds two independent surfaces: the GitHub mention forms the
+// bot answers to (the bare name opening a comment — "Ercole, look at this" —
+// plus the @<Name> handle when the name is a single word), and a line in the
+// agent's system prompt so the persona introduces and signs itself
+// consistently. The SOUL stays free prose for the model; the name is a
+// structured field so channel code never has to parse markdown to learn it.
 type PersonaConfig struct {
-	// Name is the custom name colleagues use, e.g. "Ercole". Empty means the
-	// brand default (@argus only). Whitespace is trimmed by consumers.
+	// Name is the custom name colleagues use, e.g. "Ercole" or "Ercole il
+	// Guardiano". Empty means the brand default (the instance answers to
+	// Argus only). Whitespace is trimmed by consumers.
 	Name string `yaml:"name,omitempty"`
 }
 
