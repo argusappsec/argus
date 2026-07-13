@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 200" role="img" aria-label="Argus — application security agent">
+  <title>Argus — application security agent</title>
+  <g transform="translate(6,0)">
+    <rect x="96.5" y="172" width="7" height="26" rx="3.5" fill="#16A08C"/>
+    <path d="M100 14 C152 36 164 108 100 180 C36 108 48 36 100 14 Z" fill="#16A08C"/>
+    <circle cx="100" cy="86" r="38" fill="#E9B44C"/>
+    <circle cx="100" cy="86" r="27" fill="#0E6E63"/>
+    <circle cx="100" cy="86" r="15" fill="#0B2239"/>
+    <circle cx="105" cy="81" r="4" fill="#F4F7F6"/>
+  </g>
+  <text x="214" y="118" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="96" font-weight="700" letter-spacing="1" fill="#F4F7F6">Argus</text>
+  <text x="214" y="158" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="2" textLength="262" lengthAdjust="spacing" fill="#E9B44C">APPLICATION SECURITY AGENT</text>
+</svg>
