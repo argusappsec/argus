@@ -10,8 +10,8 @@
 <p align="center">
   <a href="https://github.com/argusappsec/argus/actions/workflows/ci.yml"><img src="https://github.com/argusappsec/argus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/argusappsec/argus/releases"><img src="https://img.shields.io/github/v/release/argusappsec/argus" alt="Latest release"></a>
-  <a href="https://pkg.go.dev/github.com/argusappsec/argus"><img src="https://pkg.go.dev/badge/github.com/argusappsec/argus.svg" alt="Go Reference"></a>
-  <a href="https://goreportcard.com/report/github.com/argusappsec/argus"><img src="https://goreportcard.com/badge/github.com/argusappsec/argus" alt="Go Report Card"></a>
+  <a href="https://github.com/argusappsec/argus/pkgs/container/argus"><img src="https://img.shields.io/badge/ghcr.io-argusappsec%2Fargus-0E6E63?logo=docker&logoColor=white" alt="Container image"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/argusappsec/argus" alt="Go version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/argusappsec/argus" alt="License"></a>
 </p>
 
