@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/argusappsec/argus/compare/v0.2.0...v0.3.0) (2026-07-13)
+
+
+### Features
+
+* config v2 with codehosts/channels split and HTTP front door ([#59](https://github.com/argusappsec/argus/issues/59)) ([43e47a5](https://github.com/argusappsec/argus/commit/43e47a5d6e20c6f7ed09af9e449c58de0ca12e7e))
+* **github:** address Argus by bare-name vocative instead of [@argus](https://github.com/argus) ([#61](https://github.com/argusappsec/argus/issues/61)) ([8eb4d64](https://github.com/argusappsec/argus/commit/8eb4d6480fba507c17dbad69c7766fc05a25381b))
+* guided SOUL onboarding, richer SOUL schema, inline terminal UI ([#48](https://github.com/argusappsec/argus/issues/48)) ([0ea3e90](https://github.com/argusappsec/argus/commit/0ea3e90d79b332fb5b4181e62e74a61b2c9330fd))
+
+
+### Bug Fixes
+
+* **init:** ask the instance name in the provider form so it is never skipped ([#60](https://github.com/argusappsec/argus/issues/60)) ([90f2fc1](https://github.com/argusappsec/argus/commit/90f2fc1abdf48d0bb2fe1ebae4db128b127ef3de))
+
 ## [0.2.0](https://github.com/argusappsec/argus/compare/v0.1.0...v0.2.0) (2026-07-08)
 
 
