@@ -5,7 +5,9 @@
 config-declared; the listener moves to the shared front door at
 `/webhooks/github`); the mention form is broadened by the
 [2026-07-13 amendment](#amendment-2026-07-13--the-bare-name-vocative-is-the-canonical-mention)
-below (bare-name vocative preferred over `@argus`)
+below (bare-name vocative preferred over `@argus`); the `auto_enroll` default
+(`true` here) is superseded by [ADR 0018](0018-automatic-reviews-are-least-privilege.md)
+(unset now defaults to `false` — opt-in enrollment)
 **Date:** 2026-06-21
 **Builds on:** [ADR 0002](0002-rbac-model.md), [ADR 0003](0003-user-table-and-bootstrap.md), [ADR 0004](0004-single-process-channel-goroutines.md), [ADR 0007](0007-socket-possession-is-authentication.md)
 
