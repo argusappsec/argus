@@ -26,7 +26,7 @@ const (
 	// KindPullRequest is a pull_request event (opened/synchronize/…).
 	KindPullRequest
 	// KindComment is an issue_comment or pull_request_review_comment. The
-	// channel decides whether it carries the @argus mention (ADR 0008).
+	// channel decides whether it is addressed to Argus (ADR 0008).
 	KindComment
 )
 

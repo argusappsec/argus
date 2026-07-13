@@ -31,7 +31,7 @@ type Options struct {
 	WebhookSecret string   // resolved App webhook secret (raw)
 	AutoEnroll    bool     // effective github.auto_enroll
 	EnabledRepos  []string // explicit allow-list when AutoEnroll is false
-	PersonaName   string   // operator-chosen name (persona.name); adds @<name> as a mention token
+	PersonaName   string   // operator-chosen name (persona.name); adds its vocative and @<name> as mention forms
 }
 
 // Server is the GitHub App channel (ADR 0008): an HTTP listener for webhook
@@ -45,10 +45,10 @@ type Server struct {
 	dedup   *deliveryCache
 	reviews *prReviewStore
 
-	// mentions is the set of @-handles a comment may use to address this
-	// instance (@argus plus any configured persona handle), computed once at
-	// construction rather than per event.
-	mentions []string
+	// mentions recognises the forms a comment may use to address this
+	// instance (opening bare names plus @-handles, brand and persona),
+	// computed once at construction rather than per event.
+	mentions mentionMatcher
 }
 
 // NewServer builds the channel. host is the authenticated CodeHost the ack is
@@ -60,7 +60,7 @@ func NewServer(dc *daemon.Context, host codehost.CodeHost, opts Options) *Server
 		opts:     opts,
 		dedup:    newDeliveryCache(2048),
 		reviews:  newPRReviewStore(dc.Home),
-		mentions: mentionTokens(opts.PersonaName),
+		mentions: newMentionMatcher(opts.PersonaName),
 	}
 }
 
@@ -194,15 +194,15 @@ func (s *Server) dispatchPullRequest(ctx context.Context, evt Event) error {
 }
 
 // dispatchComment handles a PR/issue comment as a conversational turn (ADR
-// 0008, slice 5). The channel parses the @argus mention itself and resolves
-// the commenter's github:<login> to a Person; a comment without the mention,
-// or from a login that resolves to no Person, is silently ignored — no reply,
-// no leak that Argus exists. A resolved Person's turn re-hydrates the PR's
+// 0008, slice 5). The channel parses the mention itself — an opening "Argus,"
+// vocative or an @-handle — and resolves the commenter's github:<login> to a
+// Person; a comment not addressed to Argus, or from a login that resolves to
+// no Person, is silently ignored — no reply, no leak that Argus exists. A resolved Person's turn re-hydrates the PR's
 // Session from its on-disk conversation log (continuity via the log, not a
 // resident in-memory session), runs one agent turn attributed to that Person
 // with their Role, and posts the agent's answer back in the thread.
 func (s *Server) dispatchComment(ctx context.Context, evt Event) error {
-	request, ok := parseMention(evt.Body, s.mentions)
+	request, ok := s.mentions.parse(evt.Body)
 	if !ok {
 		return nil // not addressed to Argus — silently ignored (ADR 0008)
 	}

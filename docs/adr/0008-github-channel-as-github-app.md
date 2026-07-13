@@ -3,7 +3,9 @@
 **Status:** Accepted — the Service model section is superseded by
 [ADR 0015](0015-integrations-declared-in-configuration.md) (Services are
 config-declared; the listener moves to the shared front door at
-`/webhooks/github`)
+`/webhooks/github`); the mention form is broadened by the
+[2026-07-13 amendment](#amendment-2026-07-13--the-bare-name-vocative-is-the-canonical-mention)
+below (bare-name vocative preferred over `@argus`)
 **Date:** 2026-06-21
 **Builds on:** [ADR 0002](0002-rbac-model.md), [ADR 0003](0003-user-table-and-bootstrap.md), [ADR 0004](0004-single-process-channel-goroutines.md), [ADR 0007](0007-socket-possession-is-authentication.md)
 
@@ -99,3 +101,30 @@ fits. Instead:
   CI and cannot host the long-lived daemon, multi-channel shared state, or
   audit log that ADR 0001/0004 require; OAuth is for acting *as a user*, not
   as an autonomous installation.
+
+## Amendment (2026-07-13) — the bare-name vocative is the canonical mention
+
+`@argus` on github.com belongs to an unrelated real user: on a public repo,
+every `@argus` comment pings a stranger. Since this channel already parses
+the body itself (GitHub's native mention resolution was never involved), the
+`@` sign buys nothing. A comment now addresses the instance in either of two
+forms:
+
+- **Vocative (canonical, documented):** the bare instance name — brand or
+  persona — as the **opening word(s)** of the comment: "Argus, explain this",
+  "Ercole guarda qui". Opening position is what separates talking *to* Argus
+  from talking *about* it ("I think argus is wrong here" stays ignored). A
+  comment that opens with the name but addresses other humans ("Argus is
+  wrong about this") does trigger a reply; that residual false positive is
+  accepted — the reply is harmless, actions still require a resolved Person.
+- **@-handle (alias):** `@argus` / `@<persona>` anywhere in the body, kept
+  because people type it out of habit and a bot that ignores its own tag is
+  worse UX than the spurious ping (which happens regardless of what Argus
+  accepts).
+
+A consequence for the persona name (`persona.name`): it no longer must be a
+single word. A multi-word name ("Ercole il Guardiano") forms no @handle but
+works in full as a vocative. Deliberately rejected: matching only the first
+word of a multi-word name (a persona like "The Guardian" would trigger on
+"The"), and `/argus` slash commands (robust but off-register for a
+conversational agent with a persona).

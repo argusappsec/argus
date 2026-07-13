@@ -249,19 +249,23 @@ Each implementation:
     Which installed repos get reviewed is gated by the GitHub channel's
     `auto_enroll` policy in `argus.yaml` (see ADR 0008).
   - **comment events** (`issue_comment`, `pull_request_review_comment`)
-    that contain the mention token `@argus` → a conversational turn. The
-    actor is the **Person** resolved from the commenter's
-    `github:<login>` Identity. The App receives every comment event for
-    installed repos and parses the body itself — it does not depend on
-    GitHub's native mention resolution. Argus replies as the `argus[bot]`
-    account.
+    addressed to the instance → a conversational turn. Two accepted
+    forms: the bare instance name opening the comment ("Argus, explain
+    this" / "Ercole guarda qui") — the canonical form, because `@argus`
+    on github.com belongs to an unrelated real user whom a tag on a
+    public repo would ping — or an `@argus`/`@<persona>` handle anywhere
+    in the body, kept as an alias for habit. The actor is the **Person**
+    resolved from the commenter's `github:<login>` Identity. The App
+    receives every comment event for installed repos and parses the body
+    itself — it does not depend on GitHub's native mention resolution.
+    Argus replies as the `argus[bot]` account.
 
   Channel-specific trust policy (overrides the global "reject with a
   message" rule, the same way the local socket has its own): a comment
-  whose `github:<login>` does **not** resolve to a Person, or that omits
-  the `@argus` mention, is **silently ignored** — no reply. Replying
-  "contact your administrator" to every passer-by on a public PR would be
-  noise and an abuse surface.
+  whose `github:<login>` does **not** resolve to a Person, or that is
+  not addressed to Argus (no opening name, no @-handle), is **silently
+  ignored** — no reply. Replying "contact your administrator" to every
+  passer-by on a public PR would be noise and an abuse surface.
 
 ## Session
 
@@ -278,8 +282,8 @@ Key shapes:
   thread re-attach to the same Session, the agent keeps context.
 - A GitHub PR is **one Session with a stable identity but one-shot
   execution**: the session-id is keyed by `(github, repo + PR number)`,
-  so the automatic review (on `pull_request`) and every later `@argus`
-  comment map to the same Session. The live object is re-hydrated from
+  so the automatic review (on `pull_request`) and every later comment
+  addressed to Argus map to the same Session. The live object is re-hydrated from
   the conversation log on each event, runs one `agent.Run`, and is
   released when the run returns — it does **not** hold a slot between
   events. Continuity comes from the on-disk log, not from a resident
@@ -349,7 +353,7 @@ covers it.
 
 The review target on the GitHub channel: a `base…head` proposed change on
 a GitHub repository. A PR keys exactly one GitHub Session (by repo + PR
-number) and is the unit the automatic review and all `@argus` comment
+number) and is the unit the automatic review and all addressed comment
 turns attach to. A PR review is born from webhook events only — it is not
 requestable on demand (if that ever changes, it is a `repo`+`pr` target
 extension of `review`, not a new capability). Argus learns its changed files and patch hunks from the
