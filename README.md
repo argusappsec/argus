@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h3 align="center">Security reviews that reason like an analyst.</h3>
+<h3 align="center">Not 400 findings. A conversation with someone who knows your codebase.</h3>
 
 <p align="center">
   <a href="https://github.com/argusappsec/argus/actions/workflows/ci.yml"><img src="https://github.com/argusappsec/argus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -15,12 +15,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/argusappsec/argus" alt="License"></a>
 </p>
 
-Argus is an open-source **application security agent**. It reviews code the
+Argus is an open-source **application security agent** that reviews code the
 way an analyst does: it runs real scanners, reads their findings, weighs them
-against your organization's context, and talks back in plain language. One
-long-lived daemon per organization — reached through the places your team
-already works: a terminal chat, GitHub pull requests, and MCP from your own
-AI tools.
+against your organization's context, and tells you in plain language what
+actually matters. Then you argue back — Argus answers. One long-lived daemon
+per organization, reached where your team already works: a terminal chat,
+GitHub pull requests, and MCP from your own AI tools.
 
 ## Why Argus
 
@@ -30,8 +30,8 @@ code, but on their own they drown the signal in false positives. Argus pairs
 the two and adds the missing third ingredient: **your organization**. Scanners
 are wrapped as structured tools, the model is disciplined by curated
 methodology, and every review is grounded in your company's stack, risk
-tolerance, and accumulated knowledge — so the answer isn't "here are 400
-findings", it's a conversation with a colleague who knows your codebase.
+tolerance, and accumulated knowledge. That's the difference between a report
+nobody reads and a colleague you can ask a follow-up question.
 
 ## Quick start
 
@@ -117,6 +117,13 @@ Curious how it's designed? The domain vocabulary lives in
 Argus is **pre-1.0** and moving fast. Defaults and configuration schemas may
 change between minor versions — always loudly, with startup errors that name
 their replacement, never silently.
+
+## Security
+
+Found a vulnerability in Argus itself? Please report it privately: email
+[security@argusappsec.com](mailto:security@argusappsec.com) or use GitHub's
+[private vulnerability reporting](https://github.com/argusappsec/argus/security/advisories/new).
+See [SECURITY.md](SECURITY.md) for what's in scope and how disclosure works.
 
 ## License
 
