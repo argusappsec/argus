@@ -118,6 +118,13 @@ Argus is **pre-1.0** and moving fast. Defaults and configuration schemas may
 change between minor versions — always loudly, with startup errors that name
 their replacement, never silently.
 
+## Security
+
+Found a vulnerability in Argus itself? Please report it privately: email
+[security@argusappsec.com](mailto:security@argusappsec.com) or use GitHub's
+[private vulnerability reporting](https://github.com/argusappsec/argus/security/advisories/new).
+See [SECURITY.md](SECURITY.md) for what's in scope and how disclosure works.
+
 ## License
 
 Argus is licensed under the [Apache License 2.0](LICENSE). The Argus logo and
