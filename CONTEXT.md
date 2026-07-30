@@ -227,6 +227,11 @@ response carrying text, tool calls and a token count. The `DaemonContext`
 the **Channels** share carries a Provider *factory*, not a Provider: each
 **Session** acquires exactly one Provider through it at creation, which is
 why choosing a model is a per-Session concern and never a daemon restart.
+What the factory takes is a **Spec** — already-resolved connection info
+(type, endpoint, key, model, optional output ceiling) — owned by the
+Provider abstraction and not by the config format, so mapping `argus.yaml`
+onto a Spec is the caller's job and `pkg/provider` never learns the file
+format at all.
 
 A Provider is addressed by a `type` naming a **protocol, not a vendor** —
 hence `openai-compatible`, never `openai`. Argus implements a wire

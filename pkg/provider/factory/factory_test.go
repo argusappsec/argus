@@ -143,12 +143,90 @@ func TestNewRejectsNegativeOutputCeiling(t *testing.T) {
 // the default, and must stay valid rather than be mistaken for "unset and
 // therefore wrong".
 func TestNewZeroOutputCeilingIsAccepted(t *testing.T) {
-	if _, err := factory.New(context.Background(), provider.Spec{
+	for _, providerType := range []string{provider.TypeGemini, provider.TypeOpenAICompatible} {
+		t.Run(providerType, func(t *testing.T) {
+			prov, err := factory.New(context.Background(), provider.Spec{
+				Type:            providerType,
+				APIKey:          "test-key",
+				Model:           "some-model",
+				MaxOutputTokens: 0,
+			})
+			if err != nil {
+				t.Fatalf("New with a zero output ceiling: %v", err)
+			}
+			// A Provider, not merely the absence of an error: "zero is valid"
+			// has to mean a Provider came back, or a nil-and-no-error return
+			// would satisfy the rule too.
+			if prov == nil {
+				t.Fatal("New returned a nil Provider and no error")
+			}
+		})
+	}
+}
+
+// TestNewRejectsOutputCeilingOnGemini: the Gemini client accepts no output
+// ceiling, so a gemini Spec carrying one used to be dropped on the floor here —
+// and a ceiling that is silently dropped delivers exactly the failure the field
+// exists to prevent, a Report truncated mid-write with nothing to explain it.
+// Failing at construction is the only place the operator can still connect the
+// symptom to the key they wrote.
+func TestNewRejectsOutputCeilingOnGemini(t *testing.T) {
+	_, err := factory.New(context.Background(), provider.Spec{
+		Type:            provider.TypeGemini,
+		APIKey:          "test-key",
+		Model:           "gemini-2.5-flash",
+		MaxOutputTokens: 8192,
+	})
+	if err == nil {
+		t.Fatal("New with an output ceiling on a gemini spec returned no error")
+	}
+	msg := err.Error()
+	// Both halves have to be in the message: the key to delete, and the entry
+	// to delete it from. Naming one without the other leaves the operator
+	// guessing on a config file that may hold several Providers.
+	for _, want := range []string{"max_output_tokens", "gemini"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not name %q", msg, want)
+		}
+	}
+}
+
+// TestNewCarriesOutputCeilingToTheWire is the counterweight to the rejection
+// above: the ceiling is rejected because gemini cannot honour it, not because
+// the factory has stopped carrying it. On the compatible type it must still
+// reach the endpoint.
+func TestNewCarriesOutputCeilingToTheWire(t *testing.T) {
+	var gotMaxTokens *int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			MaxTokens *int `json:"max_tokens"`
+		}
+		_ = json.Unmarshal(body, &req)
+		gotMaxTokens = req.MaxTokens
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"pong"}}]}`)
+	}))
+	defer srv.Close()
+
+	prov, err := factory.New(context.Background(), provider.Spec{
 		Type:            provider.TypeOpenAICompatible,
-		BaseURL:         "http://localhost:11434/v1",
+		BaseURL:         srv.URL,
 		Model:           "some-model",
-		MaxOutputTokens: 0,
+		MaxOutputTokens: 4096,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := prov.Generate(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: "user", Content: "ping"}},
 	}); err != nil {
-		t.Fatalf("New with a zero output ceiling: %v", err)
+		t.Fatalf("Generate: %v", err)
+	}
+	if gotMaxTokens == nil {
+		t.Fatal("no output ceiling reached the endpoint")
+	}
+	if *gotMaxTokens != 4096 {
+		t.Errorf("output ceiling on the wire = %d, want %d", *gotMaxTokens, 4096)
 	}
 }

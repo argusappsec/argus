@@ -41,7 +41,12 @@ type Spec struct {
 	// default endpoint, which is how "no url configured" travels.
 	//
 	// Honoured by openai-compatible only: the gemini implementation takes no
-	// endpoint, so a base URL set against it has no effect.
+	// endpoint, so a base URL set against a gemini Spec is **silently ignored**
+	// — accepted and dropped, not rejected. That is deliberate, and the one
+	// asymmetry with MaxOutputTokens below: `url` predates the factory, so
+	// configurations already carry it against gemini entries and erroring would
+	// break them — and an endpoint that is never read corrupts nothing on its
+	// way past.
 	BaseURL string
 	// Model is the bare model id to send on the wire — the id the endpoint
 	// itself knows, never the `provider-name/model-id` qualified form Argus
@@ -49,11 +54,15 @@ type Spec struct {
 	Model string
 	// MaxOutputTokens caps the response length. Zero — the default — sends no
 	// ceiling at all, matching both the ecosystem norm and what omitting the
-	// configuration key means. A negative value is an error rather than a
-	// silently ignored one.
+	// configuration key means. Zero is valid for every Provider type; a negative
+	// value is an error rather than a silently ignored one.
 	//
-	// Honoured by openai-compatible only, for the same reason as BaseURL: the
-	// ceiling exists as a lever against servers whose own output cap truncates a
-	// Report mid-write, and the gemini implementation accepts none.
+	// Honoured by openai-compatible only: the gemini implementation accepts no
+	// ceiling, so a non-zero value on a gemini Spec is an **error** from the
+	// factory rather than an ignored setting. The ceiling exists as a lever
+	// against servers whose own output cap truncates a Report mid-write, and a
+	// lever that quietly does nothing delivers that same mutilated Report — so
+	// the one Provider type that cannot pull it has to say so where the setting
+	// was made.
 	MaxOutputTokens int
 }

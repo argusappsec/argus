@@ -39,19 +39,31 @@ const DefaultOpenAICompatibleBaseURL = openaicompat.DefaultBaseURL
 // mistyped value must fail where the mistake was made rather than connect the
 // operator to a different Provider than the one they asked for.
 func New(ctx context.Context, spec provider.Spec) (provider.Provider, error) {
-	// Checked before the switch: a ceiling of "minus five tokens" is a
-	// configuration mistake whatever protocol it was written against, and the
-	// value is otherwise passed straight through to a server that would reject
-	// it far from the file that set it.
+	// Spec validation lives here, ahead of the switch, so there is one gate to
+	// read rather than a rule per case.
+
+	// A ceiling of "minus five tokens" is a configuration mistake whatever
+	// protocol it was written against, and the value is otherwise passed
+	// straight through to a server that would reject it far from the file that
+	// set it.
 	if spec.MaxOutputTokens < 0 {
 		return nil, fmt.Errorf("provider: max_output_tokens must be zero or positive, got %d (zero sends no output ceiling at all)", spec.MaxOutputTokens)
+	}
+	// The Gemini client accepts no ceiling, so honouring one is not on offer;
+	// the choice is between rejecting the key and ignoring it. Rejecting is the
+	// only option that reaches the operator: an ignored ceiling surfaces as a
+	// truncated Report they have no way to trace back to the key they set.
+	if spec.MaxOutputTokens != 0 && spec.Type == provider.TypeGemini {
+		return nil, fmt.Errorf("provider: max_output_tokens is not supported by provider type %q: the Gemini client accepts no output ceiling, so omit the key rather than have it silently ignored", provider.TypeGemini)
 	}
 
 	switch spec.Type {
 	case provider.TypeGemini:
-		// Spec.BaseURL and Spec.MaxOutputTokens are not carried over: the
-		// SDK-backed Gemini client accepts neither, so configuring either one
-		// against a gemini entry has no effect.
+		// Spec.BaseURL is not carried over: the SDK-backed Gemini client accepts
+		// no endpoint, so setting `url` on a gemini entry has no effect. Unlike
+		// the output ceiling above it is tolerated rather than rejected, because
+		// it predates the factory and configurations already carry it.
+		// Spec.MaxOutputTokens cannot arrive here non-zero — the gate rejected it.
 		p, err := gemini.New(ctx, spec.APIKey, spec.Model)
 		if err != nil {
 			return nil, err

@@ -44,13 +44,19 @@ recording together: they are one argument, not three notes.
 second Provider: the type is named after the protocol, the client is written by
 hand, and no server is certified.**
 
-Construction moves behind a factory in `pkg/provider` that takes a `Spec` (the
-Provider type, API key, base URL, model) and returns the matching
-`provider.Provider`, or an error naming the supported types. `Spec` is owned by
-`pkg/provider`, not `pkg/config`: the Provider abstraction stays ignorant of
-the `argus.yaml` file format, and the caller maps config into `Spec`. Both
-construction sites — the daemon's factory and the `argus init` interview — go
-through it, and neither imports a concrete implementation any more. This keeps
+Construction moves behind a factory in `pkg/provider/factory` that takes a
+`Spec` (the Provider type, API key, base URL, model, and an optional
+output-token ceiling, which the compatible client sends and a `gemini` entry
+must omit) and returns the matching `provider.Provider`, or an error naming the
+supported types. It sits one directory *below* the abstraction it serves because
+both implementation packages import `pkg/provider` for the Request/Response
+types, so the package holding a switch over them cannot be `pkg/provider`
+itself without an import cycle. `Spec` and the type constants do live in
+`pkg/provider`, not `pkg/config` — which is the point that matters: the Provider
+abstraction stays ignorant of the `argus.yaml` file format, and the caller maps
+config into `Spec`. Both construction sites — the daemon's factory and the
+`argus init` interview — go through it, and neither imports a concrete
+implementation any more. This keeps
 [ADR 0004](0004-single-process-channel-goroutines.md)'s contract intact:
 Channels never construct a Provider, they receive a `DaemonContext`, and the
 injected per-Session provider constructor on it stays the boundary at which
