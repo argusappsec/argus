@@ -1,10 +1,16 @@
-# MCP channel
+---
+title: MCP channel
+description: Expose Argus as a consultable colleague to Claude Code, Cursor and your own AI tools.
+sidebar:
+  order: 41
+---
 
 Argus exposes an MCP (Model Context Protocol) server so that *other* AI
 tools — Claude Code, Claude Desktop, Cursor, your own agents — can consult it
 as a **colleague, not a toolbox**. The external AI delegates a question or a
 review; Argus runs its own org-aware loop with its own scanners and returns
-the result. Your organization's knowledge (SOUL, MEMORY, context) never
+the result. Your organization's knowledge — its identity (SOUL), the summary
+Argus keeps across sessions (MEMORY), and your context documents — never
 leaves Argus.
 
 ## Setup
@@ -31,8 +37,9 @@ URL:            https://argus.your-company.example/mcp
 Authorization:  Bearer <token>
 ```
 
-Every call is attributed to the Person who owns the token (identity
-`mcp:<token-hash>`), with their role and audit trail. Revoke anytime with
+Every call is attributed to the **Person** who owns the token — the human Argus
+recognizes behind the identity `mcp:<token-hash>` — with their role and audit
+trail. Revoke anytime with
 `argus user mcp-token revoke`.
 
 ## What's exposed
@@ -46,8 +53,8 @@ low-level scanner tools:
     out and reviews in full.
 - **`consult`** — ask a question against the organization's knowledge
   (SOUL, curated context, recent findings).
-- **Resources** — read-only org knowledge: SOUL, CONTEXT documents, recent
-  reports.
+- **Resources** — read-only org knowledge: SOUL, your context documents
+  (`~/.argus/context/`), recent reports.
 
 ## What it's *not*
 

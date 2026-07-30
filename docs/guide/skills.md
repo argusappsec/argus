@@ -1,4 +1,9 @@
-# Skills
+---
+title: Skills
+description: Using, writing and overriding the security methodologies Argus follows.
+sidebar:
+  order: 50
+---
 
 A **skill** is a security methodology bundled as markdown: a directory with a
 `SKILL.md` (frontmatter `name` / `description` / optional `tags`, plus a
@@ -33,13 +38,13 @@ User-curated skills live on the daemon host at:
 ```
 
 A user-curated bundle with the same name as a built-in **overrides it
-whole-bundle** — fork a built-in to tune it for your context without losing
-the upstream version:
+whole-bundle** — claim a built-in's name to replace it with your own version,
+tuned to your context:
 
 ```sh
 mkdir -p ~/.argus/skills/authz-audit
-cp pkg/skill/builtin/authz-audit/SKILL.md ~/.argus/skills/authz-audit/
-# edit, then restart the daemon (no hot reload)
+$EDITOR ~/.argus/skills/authz-audit/SKILL.md   # your own body, under the built-in's name
+# restart the daemon to pick it up (no hot reload)
 ```
 
 The frontmatter `name` must match the directory name, and the `description`
@@ -47,7 +52,7 @@ doubles as the when-to-use hint the agent sees in the catalog.
 
 ## Built-in skills
 
-Built-ins ship inside the binary (`pkg/skill/builtin/`):
+Built-ins ship inside the binary:
 
 | Skill | What it does |
 | --- | --- |
@@ -85,10 +90,6 @@ scored **100% recall with zero canonical false positives**: both BOLA bugs
 found at the exact sink with correct severity, both secure decoy branches
 cleared. The skill is static and read-only — safe to run pre-merge, no
 running target needed.
-
-Full design rationale, the tool landscape it was measured against, and the
-validation protocol live in
-[docs/design/authz-skill-design.md](../design/authz-skill-design.md).
 
 ## Writing your own
 

@@ -1,4 +1,9 @@
-# GitHub channel
+---
+title: GitHub channel
+description: Automatic pull-request reviews, and talking to Argus right on the thread.
+sidebar:
+  order: 40
+---
 
 Argus connects to GitHub as a **GitHub App**: signed webhook events come in
 on the HTTP front door at `/webhooks/github`, and Argus acts (clones, posts
@@ -12,7 +17,7 @@ reviews, replies) as the App installation — comments appear as `argus[bot]`.
 
 The interactive setup walks you through connecting the App and writes both
 config sections: the outbound identity under `codehosts:` and the inbound
-webhook binding under `channels:` (see [Configuration](../configuration.md)).
+webhook binding under `channels:` (see [Configuration](/guide/configuration/)).
 Point the App's webhook URL at your daemon's front door:
 
 ```
@@ -38,8 +43,7 @@ channels:
 
 With `auto_enroll: true` (the current default when unset) every installed
 repo is reviewed; prefer the allow-list — on a public repo, "anyone who can
-open a PR" is the whole internet
-([ADR 0018](../../adr/0018-automatic-reviews-are-least-privilege.md)).
+open a PR" is the whole internet.
 
 ## Talking to Argus on a thread
 
@@ -55,8 +59,9 @@ comment is addressed to it. Two forms work:
   belongs to an unrelated real user who gets pinged; the bare name avoids
   that.
 
-Who can talk: the commenter's GitHub login must resolve to a **Person** in
-the user table. Grant the identity with:
+Who can talk: the commenter's GitHub login must resolve to a **Person** — one
+human Argus recognizes, who may sign in from several places. Grant the identity
+with:
 
 ```sh
 argus user add alice
@@ -73,12 +78,9 @@ An automatic review reads attacker-controlled content (the PR's code and
 diff). Argus treats it accordingly:
 
 - **Data, never instructions.** Reviewed code cannot direct the agent, and
-  nothing it says is written back to the organization's knowledge base
-  ([ADR 0018](../../adr/0018-automatic-reviews-are-least-privilege.md)).
+  nothing it says is written back to the organization's knowledge base.
 - **Confined file access.** Review tools and scanners operate inside the
-  checkout under review, not the daemon's filesystem
-  ([ADR 0019](../../adr/0019-untrusted-code-review-filesystem-isolation.md)).
+  checkout under review, not the daemon's filesystem.
 - **Controlled egress.** Org knowledge is loaded in full so the review stays
   sharp; confidentiality is enforced on what Argus *posts publicly*, which
-  must be grounded in the reviewed tree itself
-  ([ADR 0017](../../adr/0017-full-context-in-controlled-egress-out.md)).
+  must be grounded in the reviewed tree itself.
