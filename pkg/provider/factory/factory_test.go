@@ -230,3 +230,52 @@ func TestNewCarriesOutputCeilingToTheWire(t *testing.T) {
 		t.Errorf("output ceiling on the wire = %d, want %d", *gotMaxTokens, 4096)
 	}
 }
+
+// TestSwitchAndIsKnownTypeAgree guards the one duplication the import cycle
+// forced: New's switch and provider.IsKnownType are the same vocabulary written
+// twice, and Go offers no way to derive one from the other across that boundary.
+// Both package docs say to treat them as one edit; this is what notices when
+// somebody doesn't.
+//
+// The failure it catches is quiet in both directions. A type added to the switch
+// but not to IsKnownType constructs a working Provider that `argus doctor` then
+// calls unimplemented. A type added to IsKnownType but not to the switch passes
+// every doctor check and fails at the first Session, in the one place the
+// factory exists to stop failing.
+//
+// It asserts on the "unknown type" verdict rather than on New succeeding,
+// because a known type may legitimately fail for its own reasons — a bad
+// endpoint, a rejected key. What must never disagree is whether the type is one
+// Argus implements.
+func TestSwitchAndIsKnownTypeAgree(t *testing.T) {
+	// Near-misses an operator actually types, plus the two real ones. `ollama`
+	// and `openai` are the two the old reserved-type list invited (ADR 0020).
+	for _, providerType := range []string{
+		provider.TypeGemini,
+		provider.TypeOpenAICompatible,
+		"openai",
+		"ollama",
+		"anthropic",
+		"",
+		"GEMINI",
+		"openai-compatible ", // trailing space: a YAML quoting slip
+	} {
+		t.Run("type="+providerType, func(t *testing.T) {
+			_, err := factory.New(context.Background(), provider.Spec{
+				Type:   providerType,
+				APIKey: "test-key",
+				Model:  "some-model",
+			})
+			// New's default case is the only thing that says "unknown type".
+			rejectedAsUnknown := err != nil && strings.Contains(err.Error(), "unknown type")
+
+			if known := provider.IsKnownType(providerType); known == rejectedAsUnknown {
+				if known {
+					t.Errorf("IsKnownType(%q) is true but New rejected it as an unknown type (%v): the switch is missing a case", providerType, err)
+				} else {
+					t.Errorf("IsKnownType(%q) is false but New did not reject it as an unknown type (err=%v): IsKnownType is missing a case", providerType, err)
+				}
+			}
+		})
+	}
+}

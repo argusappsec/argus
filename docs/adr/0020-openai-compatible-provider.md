@@ -150,6 +150,17 @@ probe is a potential contributor.
   meet Argus's requirements", which is the difference between a bug report and
   a configuration fix — but only for users who run `argus doctor`, so the guide
   has to send them there.
+- **The probe's ordering has a cost this record has to own.** It enumerates
+  `GET /models` first, so one request settles reachability, key validity and the
+  existence of the configured model id *before* a token is spent — a typo
+  surfaces free. The price is that a server which serves `/chat/completions` but
+  not `/models` fails `argus doctor` blockingly even though Argus would run
+  against it fine, because `/models` has exactly one caller in the tree and it
+  is the probe. That sits awkwardly against the tolerance posture above, and it
+  is paid knowingly rather than overlooked: the check's own hint asks such a
+  user to report the server, and the guide states the limitation next to the
+  three checks. Reversing it would mean spending tokens to learn a model id was
+  misspelled.
 - The tolerance decisions become executable rather than aspirational: each
   sloppy server behaviour the design accepts gets a case against an `httptest`
   stand-in endpoint (absent `usage`, non-standard `finish_reason`, empty or
