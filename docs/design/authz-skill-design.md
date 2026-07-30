@@ -108,10 +108,12 @@ findings through the existing `add_finding` / `finalize_report` control tools.
 
 Why an Argus-native skill beats leaning on the public options:
 
-1. **Cost.** It runs on **Argus's own provider and budget** (`pkg/provider`,
-   incl. the Gemini backend; capped by `pkg/budget`), not on a separate
-   expensive Claude Code subscription. No per-developer CC plan, no Semgrep Pro
-   license. The model tier is our choice, governed by the org budget cap.
+1. **Cost.** It runs on **Argus's own LLM Provider** (`pkg/provider`), not on a
+   separate expensive Claude Code subscription. No per-developer CC plan, no
+   Semgrep Pro license: one Provider the org configures once, at a model tier
+   the org chooses. Argus reports the token counts a run consumed, per Session,
+   so an operator can price it against their own provider's rates — Argus
+   enforces no spend cap of its own.
 2. **Specialization.** It encodes the 6-pass authz methodology (§6) that
    off-the-shelf tools explicitly *don't* have. This is the difference between
    78% FPs and a usable signal.
