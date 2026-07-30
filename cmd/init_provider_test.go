@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/provider"
 )
 
 func TestProviderEnvVar(t *testing.T) {
@@ -17,11 +18,11 @@ func TestProviderEnvVar(t *testing.T) {
 		providerType string
 		want         string
 	}{
-		{"gemini", providerTypeGemini, "GEMINI_API_KEY"},
+		{"gemini", provider.TypeGemini, "GEMINI_API_KEY"},
 		// The explicit case that stops the fallback rule from producing
 		// "OPENAI-COMPATIBLE_API_KEY": OPENAI_API_KEY is the name every
 		// compatible service documents, so an exported key pre-fills init.
-		{"openai-compatible uses the ecosystem convention", providerTypeOpenAICompatible, "OPENAI_API_KEY"},
+		{"openai-compatible uses the ecosystem convention", provider.TypeOpenAICompatible, "OPENAI_API_KEY"},
 		{"unknown type falls back to the upper-cased convention", "acme", "ACME_API_KEY"},
 	}
 	for _, tt := range tests {
@@ -39,7 +40,7 @@ func TestProviderBaseURLEnvVar(t *testing.T) {
 		providerType string
 		want         string
 	}{
-		{"openai-compatible uses the ecosystem convention", providerTypeOpenAICompatible, "OPENAI_BASE_URL"},
+		{"openai-compatible uses the ecosystem convention", provider.TypeOpenAICompatible, "OPENAI_BASE_URL"},
 		{"unknown type falls back to the upper-cased convention", "acme", "ACME_BASE_URL"},
 	}
 	for _, tt := range tests {
@@ -67,7 +68,7 @@ func TestOfferedProviderTypes(t *testing.T) {
 	}
 	// The select must render exactly those types, so no dead "not yet
 	// implemented" entry can creep back in.
-	opts := providerTypeOptions(providerTypeOpenAICompatible)
+	opts := providerTypeOptions(provider.TypeOpenAICompatible)
 	if len(opts) != len(want) {
 		t.Fatalf("providerTypeOptions() rendered %d options, want %d", len(opts), len(want))
 	}
@@ -284,28 +285,28 @@ func TestDefaultProviderType(t *testing.T) {
 		cfg  *config.Config
 		want string
 	}{
-		{"empty config offers gemini", &config.Config{}, providerTypeGemini},
+		{"empty config offers gemini", &config.Config{}, provider.TypeGemini},
 		{
 			"a sole openai-compatible entry is kept on re-run",
 			&config.Config{Providers: map[string]config.ProviderConfig{
-				"openai-compatible": {Type: providerTypeOpenAICompatible},
+				"openai-compatible": {Type: provider.TypeOpenAICompatible},
 			}},
-			providerTypeOpenAICompatible,
+			provider.TypeOpenAICompatible,
 		},
 		{
 			"a sole gemini entry",
 			&config.Config{Providers: map[string]config.ProviderConfig{
-				"gemini": {Type: providerTypeGemini},
+				"gemini": {Type: provider.TypeGemini},
 			}},
-			providerTypeGemini,
+			provider.TypeGemini,
 		},
 		{
 			"ambiguous config falls back to gemini",
 			&config.Config{Providers: map[string]config.ProviderConfig{
-				"gemini": {Type: providerTypeGemini},
-				"local":  {Type: providerTypeOpenAICompatible},
+				"gemini": {Type: provider.TypeGemini},
+				"local":  {Type: provider.TypeOpenAICompatible},
 			}},
-			providerTypeGemini,
+			provider.TypeGemini,
 		},
 	}
 	for _, tt := range tests {
@@ -328,26 +329,26 @@ func TestProviderEntryYAML(t *testing.T) {
 	}{
 		{
 			name:   "local runtime, no key",
-			picked: providerSelection{Provider: providerTypeOpenAICompatible, Model: "qwen3:8b", BaseURL: "http://localhost:11434/v1"},
+			picked: providerSelection{Provider: provider.TypeOpenAICompatible, Model: "qwen3:8b", BaseURL: "http://localhost:11434/v1"},
 			want: "type: openai-compatible\n" +
 				"url: http://localhost:11434/v1\n",
 		},
 		{
 			name:   "hosted service with a key",
-			picked: providerSelection{Provider: providerTypeOpenAICompatible, Model: "openai/gpt-4o-mini", BaseURL: "https://openrouter.ai/api/v1", APIKey: "sk-secret"},
+			picked: providerSelection{Provider: provider.TypeOpenAICompatible, Model: "openai/gpt-4o-mini", BaseURL: "https://openrouter.ai/api/v1", APIKey: "sk-secret"},
 			want: "type: openai-compatible\n" +
 				"api_key: env(OPENAI_API_KEY)\n" +
 				"url: https://openrouter.ai/api/v1\n",
 		},
 		{
 			name:   "OpenAI itself: the default endpoint is the absence of url",
-			picked: providerSelection{Provider: providerTypeOpenAICompatible, Model: "gpt-4o-mini", APIKey: "sk-secret"},
+			picked: providerSelection{Provider: provider.TypeOpenAICompatible, Model: "gpt-4o-mini", APIKey: "sk-secret"},
 			want: "type: openai-compatible\n" +
 				"api_key: env(OPENAI_API_KEY)\n",
 		},
 		{
 			name:   "gemini is unchanged",
-			picked: providerSelection{Provider: providerTypeGemini, Model: "gemini-2.5-flash", APIKey: "AIza-secret"},
+			picked: providerSelection{Provider: provider.TypeGemini, Model: "gemini-2.5-flash", APIKey: "AIza-secret"},
 			want: "type: gemini\n" +
 				"api_key: env(GEMINI_API_KEY)\n",
 		},
@@ -378,21 +379,21 @@ func TestConfiguredBaseURL(t *testing.T) {
 		{
 			"literal url on the compatible entry",
 			&config.Config{Providers: map[string]config.ProviderConfig{
-				"openai-compatible": {Type: providerTypeOpenAICompatible, URL: "http://localhost:11434/v1"},
+				"openai-compatible": {Type: provider.TypeOpenAICompatible, URL: "http://localhost:11434/v1"},
 			}},
 			"http://localhost:11434/v1",
 		},
 		{
 			"gemini entries carry no user-selectable endpoint",
 			&config.Config{Providers: map[string]config.ProviderConfig{
-				"gemini": {Type: providerTypeGemini, URL: "http://ignored/v1"},
+				"gemini": {Type: provider.TypeGemini, URL: "http://ignored/v1"},
 			}},
 			"",
 		},
 		{
 			"an unresolvable env() reference is skipped rather than written back",
 			&config.Config{Providers: map[string]config.ProviderConfig{
-				"openai-compatible": {Type: providerTypeOpenAICompatible, URL: "env(ARGUS_TEST_UNSET_BASE_URL)"},
+				"openai-compatible": {Type: provider.TypeOpenAICompatible, URL: "env(ARGUS_TEST_UNSET_BASE_URL)"},
 			}},
 			"",
 		},

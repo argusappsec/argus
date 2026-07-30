@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider/factory"
 )
 
 // This file holds the pure parts of the `argus init` Provider step: the
@@ -18,25 +20,22 @@ import (
 // untested by design; everything here is a plain function so the knowledge it
 // encodes can be pinned by a table test.
 
-// Provider types the interview offers. These are the values written to `type`
-// under providers: in argus.yaml. A type names a **protocol, not a vendor**:
-// openai-compatible is any server speaking the OpenAI chat-completions
-// protocol, so a local runtime is not a type of its own — it is a server that
-// speaks one, reached as a base URL. Argus implements the wire protocol and
-// certifies nobody's server.
-const (
-	providerTypeGemini           = "gemini"
-	providerTypeOpenAICompatible = "openai-compatible"
-)
-
 // providerTypeChoices is the Provider type step, in the order the form presents
 // it. One table so the select's options and offeredProviderTypes cannot drift.
+//
+// The type strings themselves are pkg/provider's (provider.TypeGemini and
+// friends): the interview writes the values the factory switches on, so there is
+// one list of Provider types in the tree and the form cannot offer one the
+// factory does not build. A type names a **protocol, not a vendor** —
+// openai-compatible is any server speaking the OpenAI chat-completions
+// protocol, so a local runtime is not a type of its own but a server that speaks
+// one, reached as a base URL.
 var providerTypeChoices = []struct {
 	Type  string
 	Label string
 }{
-	{providerTypeGemini, "Gemini (Google)"},
-	{providerTypeOpenAICompatible, "OpenAI-compatible — a hosted service or a local runtime"},
+	{provider.TypeGemini, "Gemini (Google)"},
+	{provider.TypeOpenAICompatible, "OpenAI-compatible — a hosted service or a local runtime"},
 }
 
 // offeredProviderTypes lists the Provider types the interview can write, in
@@ -57,19 +56,6 @@ func providerTypeOptions(selected string) []huh.Option[string] {
 	}
 	return opts
 }
-
-// openAIDefaultBaseURL is the endpoint an OpenAI-compatible Provider talks to
-// when no `url` is configured — pkg/config treats an empty url that way, and
-// the adapter defaults to it (openaicompat.DefaultBaseURL, whose own test pins
-// the same string). Shown in the form so the user can see what the OpenAI
-// preset stands for; never written into argus.yaml, because there the default
-// is the absence of the key. Held here rather than imported so cmd depends on
-// no concrete Provider implementation.
-//
-// Verified against the official OpenAI Python SDK, which falls back to this
-// exact base URL when OPENAI_BASE_URL is unset (openai-python,
-// src/openai/_client.py).
-const openAIDefaultBaseURL = "https://api.openai.com/v1"
 
 // endpointPreset is one entry in the base-URL list offered after the
 // openai-compatible type is chosen.
@@ -103,10 +89,11 @@ const presetCustom = "custom"
 // guessing one.
 var endpointPresets = []endpointPreset{
 	{
-		// openai-python defaults base_url to this when OPENAI_BASE_URL is
-		// unset (src/openai/_client.py). It is Argus's default too, so
-		// choosing OpenAI writes no url.
-		ID: "openai", Name: "OpenAI", BaseURL: openAIDefaultBaseURL, Default: true,
+		// Argus's own default endpoint for this Provider type, read from the
+		// factory rather than restated here: it is shown so the user can see
+		// what the OpenAI preset stands for, and never written into argus.yaml,
+		// because there the default is the absence of the key.
+		ID: "openai", Name: "OpenAI", BaseURL: factory.DefaultOpenAICompatibleBaseURL, Default: true,
 	},
 	{
 		// openrouter.ai/docs/quickstart — "Using the OpenAI SDK": baseURL
@@ -226,9 +213,9 @@ func validateBaseURL(raw string) error {
 // user who already exports it finds the interview pre-filled.
 func providerEnvVar(providerType string) string {
 	switch providerType {
-	case providerTypeGemini:
+	case provider.TypeGemini:
 		return "GEMINI_API_KEY"
-	case providerTypeOpenAICompatible:
+	case provider.TypeOpenAICompatible:
 		return "OPENAI_API_KEY"
 	default:
 		return strings.ToUpper(providerType) + "_API_KEY"
@@ -240,7 +227,7 @@ func providerEnvVar(providerType string) string {
 // reason.
 func providerBaseURLEnvVar(providerType string) string {
 	switch providerType {
-	case providerTypeOpenAICompatible:
+	case provider.TypeOpenAICompatible:
 		return "OPENAI_BASE_URL"
 	default:
 		return strings.ToUpper(providerType) + "_BASE_URL"
@@ -272,7 +259,7 @@ func defaultProviderType(cfg *config.Config) string {
 			}
 		}
 	}
-	return providerTypeGemini
+	return provider.TypeGemini
 }
 
 // configuredBaseURL returns the endpoint an already-configured
@@ -289,7 +276,7 @@ func defaultProviderType(cfg *config.Config) string {
 // because an env() string is not a URL the user could confirm.
 func configuredBaseURL(cfg *config.Config) string {
 	for _, p := range cfg.Providers {
-		if p.Type != providerTypeOpenAICompatible {
+		if p.Type != provider.TypeOpenAICompatible {
 			continue
 		}
 		if u, err := p.ResolveURL(); err == nil && u != "" {

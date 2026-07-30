@@ -19,7 +19,7 @@ import (
 	"github.com/argusappsec/argus/pkg/channel/tui"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/provider"
-	"github.com/argusappsec/argus/pkg/provider/gemini"
+	"github.com/argusappsec/argus/pkg/provider/factory"
 	"github.com/argusappsec/argus/pkg/soul"
 	"github.com/argusappsec/argus/pkg/tool"
 )
@@ -113,7 +113,15 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			prov, err := gemini.New(ctx, picked.APIKey, picked.Model)
+			// Through the factory, on the type the user just picked: choosing
+			// openai-compatible must interview you through *that* endpoint, not
+			// through a Gemini client built behind your back.
+			prov, err := factory.New(ctx, provider.Spec{
+				Type:    picked.Provider,
+				APIKey:  picked.APIKey,
+				BaseURL: picked.BaseURL,
+				Model:   picked.Model,
+			})
 			if err != nil {
 				return err
 			}
@@ -221,13 +229,13 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		PersonaName: cfg.Persona.Name,
 	}
 
-	geminiKey := lookupEnvDefault(env, providerEnvVar(providerTypeGemini))
-	compatKey := lookupEnvDefault(env, providerEnvVar(providerTypeOpenAICompatible))
+	geminiKey := lookupEnvDefault(env, providerEnvVar(provider.TypeGemini))
+	compatKey := lookupEnvDefault(env, providerEnvVar(provider.TypeOpenAICompatible))
 
 	// cfg.DefaultModel belongs to whichever Provider is already configured, so
 	// it only pre-fills that type's model field.
 	var geminiModel, compatModel string
-	if sel.Provider == providerTypeOpenAICompatible {
+	if sel.Provider == provider.TypeOpenAICompatible {
 		compatModel = cfg.DefaultModel
 	} else {
 		geminiModel = cfg.DefaultModel
@@ -238,7 +246,7 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 	// preselects its preset, or the custom entry carrying the URL.
 	knownURL := configuredBaseURL(cfg)
 	if knownURL == "" {
-		knownURL = normalizeBaseURL(lookupEnvDefault(env, providerBaseURLEnvVar(providerTypeOpenAICompatible)))
+		knownURL = normalizeBaseURL(lookupEnvDefault(env, providerBaseURLEnvVar(provider.TypeOpenAICompatible)))
 	}
 	presetID := endpointPresets[0].ID
 	customURL := ""
@@ -300,7 +308,7 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		Title("API key").
 		Description(keyHint(
 			"Get a free Gemini key at https://aistudio.google.com/apikey",
-			providerEnvVar(providerTypeGemini), geminiKey)).
+			providerEnvVar(provider.TypeGemini), geminiKey)).
 		EchoMode(huh.EchoModePassword).
 		Value(&geminiKey).
 		Validate(func(s string) error {
@@ -317,7 +325,7 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		Title("API key (optional)").
 		Description(keyHint(
 			"Paste the key your hosted service issued. Leave it empty if your endpoint needs none — a local runtime usually does not.",
-			providerEnvVar(providerTypeOpenAICompatible), compatKey)).
+			providerEnvVar(provider.TypeOpenAICompatible), compatKey)).
 		EchoMode(huh.EchoModePassword).
 		Value(&compatKey)
 
@@ -327,7 +335,7 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		Placeholder("Ercole").
 		Value(&sel.PersonaName)
 
-	isOpenAICompatible := func() bool { return sel.Provider == providerTypeOpenAICompatible }
+	isOpenAICompatible := func() bool { return sel.Provider == provider.TypeOpenAICompatible }
 
 	form := huh.NewForm(
 		huh.NewGroup(providerStep),
@@ -345,7 +353,7 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		return providerSelection{}, fmt.Errorf("init form: %w", err)
 	}
 
-	if sel.Provider == providerTypeOpenAICompatible {
+	if sel.Provider == provider.TypeOpenAICompatible {
 		sel.Model = strings.TrimSpace(compatModel)
 		sel.APIKey = strings.TrimSpace(compatKey)
 		if presetID == presetCustom {
@@ -391,9 +399,9 @@ func keyHint(base, envVar, current string) string {
 // There is no curated list for openai-compatible endpoints, and there must not
 // be one: the model ids an arbitrary endpoint serves are unknowable from here.
 // That type gets a free-text step instead.
-func modelOptionsFor(provider string, current string) []huh.Option[string] {
+func modelOptionsFor(providerType string, current string) []huh.Option[string] {
 	var models []string
-	if provider == providerTypeGemini {
+	if providerType == provider.TypeGemini {
 		models = []string{
 			"gemini-2.5-flash",
 			"gemini-2.5-pro",
