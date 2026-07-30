@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -26,16 +29,24 @@ import (
 //	  gemini:
 //	    type: gemini
 //	    api_key: env(GEMINI_API_KEY)
+//	  local:
+//	    type: openai-compatible
+//	    url: http://localhost:11434/v1
 //	default_model: gemini-2.5-flash
 type Config struct {
 	// Providers maps a logical name (free choice) to its connection config.
-	// Multiple providers may coexist; the one used at runtime is the one
-	// whose name matches the family of DefaultModel.
+	// Multiple providers may coexist; the name is what a model id qualifies
+	// against — `local/qwen3-coder` names this map's key — so a short one is
+	// worth choosing. See ProviderForModel for how a model id picks one.
 	Providers map[string]ProviderConfig `yaml:"providers,omitempty"`
 
-	// DefaultModel is the model id used when no --model flag is passed.
-	// Form: a plain model id (e.g. "gemini-2.5-flash"). The provider that
-	// implements it is the one whose name matches the model's family.
+	// DefaultModel is the model id used when no --model flag is passed. Either
+	// a bare id ("gemini-2.5-flash") or the qualified form ("local/qwen3-coder"),
+	// resolved by ProviderForModel exactly like a per-Session override.
+	//
+	// It is not necessarily the id to send on the wire: resolution strips the
+	// provider qualification, so a caller wants ProviderForModel's model result
+	// rather than this field verbatim.
 	DefaultModel string `yaml:"default_model,omitempty"`
 
 	// Daemon configures the long-running argusd process. Loaded once at
@@ -293,8 +304,16 @@ func (d DaemonConfig) SessionCap() int {
 	return DefaultMaxConcurrentSessions
 }
 
-// ProviderConfig captures one provider's connection info. Today only `type`
-// "gemini" is implemented; "openai" / "anthropic" / "ollama" are reserved.
+// ProviderConfig captures one provider's connection info.
+//
+// The supported `type` values are "gemini" and "openai-compatible". A type
+// names a *protocol*, not a vendor: "openai-compatible" is any server speaking
+// the OpenAI chat-completions wire protocol — hosted services (OpenAI,
+// OpenRouter, Groq, Together, DeepSeek, …) and local runtimes (Ollama, vLLM,
+// LM Studio, llama.cpp) alike, which is why none of them is a type of its own.
+// The word "compatible" is the honest part: Argus implements the protocol and
+// certifies nobody's server, so run `argus doctor` to verify a given endpoint
+// and model.
 //
 // Both APIKey and URL accept the env(VAR_NAME) syntax for indirection —
 // resolve them via ResolveAPIKey / ResolveURL rather than reading the raw
@@ -303,12 +322,23 @@ type ProviderConfig struct {
 	Type string `yaml:"type"`
 	// APIKey is either a literal secret (discouraged) or an env() reference
 	// like "env(GEMINI_API_KEY)". The env form is what `argus init` writes
-	// so secrets stay out of the YAML file.
+	// so secrets stay out of the YAML file. Optional: a local runtime that
+	// authenticates nobody needs none.
 	APIKey string `yaml:"api_key,omitempty"`
 	// URL is an optional base URL override (self-hosted or proxy
 	// deployments). Empty means "use the provider's official endpoint".
 	// Also accepts env() references.
 	URL string `yaml:"url,omitempty"`
+	// MaxOutputTokens optionally caps how many tokens the provider may emit in
+	// one response. Zero (the default, and what omitting the key means) sends
+	// no ceiling at all, matching the ecosystem norm.
+	//
+	// It exists as a lever against a *silent* failure: some self-hosted
+	// configurations cap output low, and a Report that runs past that cap comes
+	// back truncated mid-write — a mutilated file rather than an error. An
+	// operator cannot change a hosted server's default, so raising the ceiling
+	// from the client side is the only fix available to them.
+	MaxOutputTokens int `yaml:"max_output_tokens,omitempty"`
 }
 
 // ResolveValue takes a raw config string and returns:
@@ -426,19 +456,78 @@ func SaveConfig(path string, c *Config) error {
 	return os.WriteFile(path, out, 0o644)
 }
 
-// ProviderForDefaultModel returns the provider entry whose name matches the
-// family of DefaultModel. Today the matching is naive: model "gemini-x"
-// maps to provider "gemini". Will grow when openai/anthropic land in v0.6.
+// ProviderForDefaultModel resolves DefaultModel to the provider that backs it.
+// It is ProviderForModel applied to the configured default; see there for the
+// resolution rules.
 func (c *Config) ProviderForDefaultModel() (ProviderConfig, string, error) {
 	if c.DefaultModel == "" {
 		return ProviderConfig{}, "", errors.New("config: default_model is unset (run `argus init`)")
 	}
-	for name, p := range c.Providers {
-		if matchesProvider(name, p, c.DefaultModel) {
-			return p, name, nil
+	p, name, _, err := c.ProviderForModel(c.DefaultModel)
+	return p, name, err
+}
+
+// ProviderForModel resolves an arbitrary model id to the configured Provider
+// that backs it, returning the Provider entry, its configured name, and the
+// bare model id to send on the wire. It takes any model id, not just
+// DefaultModel, because a Session may override the model.
+//
+// Resolution, in order:
+//
+//  1. The canonical qualified form `provider-name/model-id`, split on the FIRST
+//     slash only, so a model id that already contains one (OpenRouter's
+//     `vendor/model`) qualifies as `openrouter/vendor/model` and travels to the
+//     wire whole.
+//  2. An unqualified id — no slash, or a leading segment naming no configured
+//     Provider — when exactly one Provider is configured: it takes the id.
+//  3. An unqualified id whose Provider name or type is its prefix
+//     ("gemini-2.5-flash" → the gemini Provider), which is how single-Provider
+//     Gemini configurations written before qualification existed keep working.
+//
+// Anything else is an error: an unqualified id several Providers could serve is
+// ambiguous (the message names the candidates and the qualified form to write
+// instead), an id no Provider matches names the configured Providers, and a
+// malformed id — empty, or a qualification with nothing after the slash —
+// says so rather than resolving to a Provider it would then send nothing to.
+func (c *Config) ProviderForModel(model string) (ProviderConfig, string, string, error) {
+	if model == "" {
+		return ProviderConfig{}, "", "", errors.New("config: no model id given")
+	}
+	if name, bare, qualified := strings.Cut(model, "/"); qualified {
+		if p, ok := c.Providers[name]; ok {
+			if bare == "" {
+				return ProviderConfig{}, "", "", fmt.Errorf("config: model %q names provider %q with an empty model id (write `%s/<model-id>`)", model, name, name)
+			}
+			return p, name, bare, nil
 		}
 	}
-	return ProviderConfig{}, "", fmt.Errorf("config: no provider configured for model %q", c.DefaultModel)
+	if len(c.Providers) == 0 {
+		return ProviderConfig{}, "", "", fmt.Errorf("config: no provider configured for model %q; no providers are declared under `providers:` (run `argus init`)", model)
+	}
+	// Unqualified id, single Provider: no ambiguity is possible, so any model
+	// id belongs to it — including one whose own id contains a slash.
+	if len(c.Providers) == 1 {
+		for name, p := range c.Providers {
+			return p, name, model, nil
+		}
+	}
+
+	var matched []string
+	for name, p := range c.Providers {
+		if matchesProvider(name, p, model) {
+			matched = append(matched, name)
+		}
+	}
+	switch len(matched) {
+	case 1:
+		return c.Providers[matched[0]], matched[0], model, nil
+	case 0:
+		return ProviderConfig{}, "", "", fmt.Errorf("config: no provider configured for model %q (configured providers: %s); qualify the model as `<provider>/%s` to name one", model, quotedNames(slices.Collect(maps.Keys(c.Providers))), model)
+	default:
+		// Sorted so the suggested example is the same one on every run.
+		slices.Sort(matched)
+		return ProviderConfig{}, "", "", fmt.Errorf("config: model %q is ambiguous: providers %s could each serve it; qualify it with the one you mean, e.g. `%s/%s`", model, quotedNames(matched), matched[0], model)
+	}
 }
 
 func matchesProvider(name string, p ProviderConfig, model string) bool {
@@ -457,4 +546,15 @@ func matchesProvider(name string, p ProviderConfig, model string) bool {
 
 func startsWith(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// quotedNames renders provider names as a quoted, comma-separated list for an
+// error message. It sorts them itself: they come from map iteration, and an
+// error that reads differently on every run is one nobody can search for.
+func quotedNames(names []string) string {
+	quoted := slices.Sorted(slices.Values(names))
+	for i, name := range quoted {
+		quoted[i] = strconv.Quote(name)
+	}
+	return strings.Join(quoted, ", ")
 }
