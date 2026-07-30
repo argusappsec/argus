@@ -4,8 +4,27 @@
 // Callers — the daemon's per-Session Provider constructor, the `argus init`
 // interview, the `argus doctor` capability probe — hand over a Spec and receive
 // a provider.Provider, so none of them imports a concrete implementation and
-// none of them repeats the switch. Adding a protocol is a case here plus a type
-// constant in pkg/provider (ADR 0020).
+// none of them repeats the switch.
+//
+// Adding a protocol (ADR 0020) is a case here plus, in pkg/provider beside Spec,
+// the type constant and the per-type answers everything else reads off it:
+// provider.IsKnownType, provider.RequiresAPIKey and
+// provider.SupportsCapabilityProbe. Those three are what keeps `argus doctor`
+// from switching on `type` itself — it asks, and so should any new caller.
+//
+// One thing is genuinely elsewhere in code: the `argus init` interview carries
+// its own per-type knowledge — which environment variables hold the key and the
+// base URL, which endpoint presets to offer, which types to list at all —
+// because none of that is a fact about the protocol, it is a fact about how
+// humans are asked for it. A protocol added without it works from a
+// hand-written argus.yaml; it just is not offered by the interview.
+//
+// The one duplication left is unavoidable here: the switch below and
+// provider.IsKnownType are two lists of the same vocabulary, and Go offers no
+// way to derive one from the other across the import boundary that forced them
+// apart. A type added to one and not the other is a real defect — a Provider
+// that constructs fine while `argus doctor` calls its type unimplemented — so
+// treat them as one edit.
 //
 // Why it sits one directory below the abstraction it serves: every
 // implementation package (gemini, openaicompat) imports pkg/provider for the

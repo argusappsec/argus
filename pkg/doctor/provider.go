@@ -30,9 +30,10 @@ import (
 // resolves it (argus.yaml is not doctor's business) and hands over the
 // already-resolved facts.
 type ProviderTarget struct {
-	// Type is a provider.Type* value. It decides what can be verified at all:
-	// the capability probe is the openai-compatible protocol's, and a value
-	// Argus implements no Provider for is itself the finding.
+	// Type is a provider.Type* value. It decides what can be verified at all —
+	// provider.SupportsCapabilityProbe and provider.IsKnownType own that
+	// judgement, so a type Argus cannot probe, and a value Argus implements no
+	// Provider for at all, are told apart there rather than here.
 	Type string
 	// Model is the bare model id that travels on the wire — the id the endpoint
 	// itself knows, never the `provider-name/model-id` form Argus resolves
@@ -67,21 +68,27 @@ func providerCheck(t ProviderTarget, listModels func(context.Context) ([]string,
 		endpoint = "(default endpoint)"
 	}
 
-	switch t.Type {
-	case provider.TypeOpenAICompatible:
+	// Which of the three outcomes below applies is a fact about the *type*, so it
+	// is asked of pkg/provider rather than decided by a switch over type strings
+	// here. "Cannot be probed" and "is not a type at all" both mean no probe runs,
+	// and they are different findings — hence two questions, not one.
+	switch {
+	case provider.SupportsCapabilityProbe(t.Type):
 		// The probe below is this protocol's. Fall through.
-	case provider.TypeGemini:
-		// Not probed, and deliberately so: the SDK-backed Gemini client offers
-		// no model listing to enumerate, and a generation would spend tokens to
-		// confirm tool calling on the one Provider whose tool calling was never
-		// the unknown. The probe exists because *compatible servers* are
-		// unverified; Gemini is not one. Saying that is better than fabricating
-		// a check that cannot run, and better than an absent row that reads like
-		// the feature is broken.
+	case provider.IsKnownType(t.Type):
+		// A type Argus implements but cannot verify live — why not is
+		// provider.SupportsCapabilityProbe's to explain. What is doctor's is the
+		// row: an Info that says so beats fabricating a check that cannot run,
+		// and beats an absent row that reads like the feature is broken.
+		//
+		// The message names t.Type so a second such type is at least named
+		// correctly, but the reason it gives is Gemini's — today the only
+		// implemented type the probe does not reach. A second one would need its
+		// own reason written here.
 		c.Status = Info
 		c.Severity = SeverityInfo
 		c.Message = fmt.Sprintf("%s model %q — not probed: the capability probe (a /models listing, then a tool call) is the %s protocol's, and Gemini's tool calling is not the unknown it exists for",
-			provider.TypeGemini, t.Model, provider.TypeOpenAICompatible)
+			t.Type, t.Model, provider.TypeOpenAICompatible)
 		return c
 	default:
 		// `type` selects an implementation, so a value Argus has none for is not
@@ -215,7 +222,7 @@ func apiKeyCheck(name string, p config.ProviderConfig, envPath string) Check {
 	c := Check{Name: name + " api key"}
 
 	if strings.TrimSpace(p.APIKey) == "" {
-		if providerRequiresAPIKey(p.Type) {
+		if provider.RequiresAPIKey(p.Type) {
 			c.Status = Fail
 			c.Severity = SeverityRequired
 			c.Hint = fmt.Sprintf("provider %q declares no `api_key`, and type %s authenticates every request — run `argus init` to configure one, or add `api_key: env(VAR)` to the entry and put the secret in %s", name, p.Type, envPath)
@@ -260,19 +267,6 @@ func fallbackAPIKeyCheck(envPath string) Check {
 	c.Status = Fail
 	c.Hint = "no `providers:` are configured and GEMINI_API_KEY is unset — run `argus init` to configure your provider and API key"
 	return c
-}
-
-// providerRequiresAPIKey reports whether a Provider type cannot work without a
-// credential.
-//
-// Only gemini can be said to: the Gemini API authenticates every request, so an
-// entry with no key cannot make one call. openai-compatible legitimately needs
-// none — a local runtime authenticates nobody — and for a type Argus implements
-// no Provider for the question is unanswerable, so the provider row reports the
-// type itself and this one stays quiet rather than sending the operator after a
-// credential Argus cannot reason about.
-func providerRequiresAPIKey(providerType string) bool {
-	return providerType == provider.TypeGemini
 }
 
 // keySource names where a resolved secret most plausibly came from. It is a

@@ -162,11 +162,23 @@ this is where verification actually happens.
 argus doctor
 ```
 
-The provider probe checks three things:
+**Only `openai-compatible` providers are probed.** It is the type that points at
+servers nobody has verified, and the only one whose protocol offers a listing to
+ask. A `gemini` provider gets a row saying exactly that — an informational *not
+probed*, never a failure: the Gemini API exposes no model listing to enumerate,
+and a generation would spend tokens confirming tool calling that was never the
+unknown. (A `type` Argus implements no provider for fails on that same row,
+naming what to write instead.)
+
+For a compatible endpoint, the probe reports on three things:
 
 1. **The endpoint is reachable** and your key (if any) is accepted.
-2. **The configured model exists** on that endpoint — so a typo in a model id
-   surfaces before it costs you tokens.
+2. **The configured model id** is one the endpoint lists — so a typo surfaces
+   before it costs you tokens. With one deliberate exception: an endpoint that
+   lists **nothing** has not said your model is absent, so the row reports that
+   the id **could not be verified** and carries on, rather than convicting a
+   model id on no evidence and sending you to fix the one thing that isn't
+   broken.
 3. **The model actually emits a tool call**, verified with one minimal
    generation carrying a throwaway tool declaration.
 
@@ -180,6 +192,34 @@ calling, rather than as a raw HTTP error from a server you didn't write.
 This turns "Argus is broken" into "your model does not meet Argus's
 requirements", which is the difference between a bug report and a configuration
 fix.
+
+### The probe requires `GET /models`
+
+Steps 1 and 2 are **one request**. Reachability is established *by* listing
+models, and that is the point: a single cheap GET settles three questions — the
+endpoint answers, your key is accepted, your model id is one it serves —
+**before a single token is spent.** A typo in a model id should cost you nothing
+to find.
+
+That ordering has a price, and it is better named here than discovered: **an
+endpoint that serves `/chat/completions` but not `/models` fails the probe, and
+fails it blockingly, even though Argus itself would run against it fine.** Argus
+only ever posts to `/chat/completions`; the listing exists for verification.
+Enumerate first, spend nothing is the order
+[ADR 0020](../adr/0020-openai-compatible-provider.md) settled on, and this is
+its cost, paid knowingly. The failing row ends by asking you to report the
+endpoint.
+
+Please do. If yours is usable but unlistable:
+
+- **`argus chat` and Reviews still work.** The row is a verdict about what could
+  be *verified*, not about what Argus can do.
+- **`argus doctor` exits non-zero**, so any CI step gated on it fails for that
+  install.
+- **Open an issue naming the server**, with the failing row — the probe's own
+  hint asks you to. A named unlistable endpoint is worth more than a guess about
+  whether any exist, and it reaches the maintainers by the same route as a
+  compatibility report below.
 
 ## Compatibility reports
 

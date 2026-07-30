@@ -233,9 +233,10 @@ func providerDoctorOptions(home string) (*doctor.ProviderTarget, func(context.Co
 	}
 
 	target := &doctor.ProviderTarget{Type: spec.Type, Model: spec.Model, Endpoint: spec.BaseURL}
-	if spec.Type != provider.TypeOpenAICompatible {
-		// No probes: the capability probe is this protocol's, and doctor says so
-		// on the row rather than inventing a check that cannot run.
+	if !provider.SupportsCapabilityProbe(spec.Type) {
+		// No probes: whether a type can be verified live is the type's own fact,
+		// answered next to the type constants rather than re-derived here. doctor
+		// says so on the row rather than inventing a check that cannot run.
 		return target, nil, nil
 	}
 	if target.Endpoint == "" {
