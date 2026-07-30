@@ -10,7 +10,6 @@ import (
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/conversation"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
@@ -63,7 +62,6 @@ func testContext(t *testing.T, prov provider.Provider, cap int) *Context {
 	dc := &Context{
 		Home:         home,
 		DefaultModel: "gemini-2.5-flash",
-		Pricing:      budget.Pricing{"gemini-2.5-flash": {InputUSDPer1M: 1, OutputUSDPer1M: 2}},
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
@@ -117,19 +115,25 @@ func TestHandleMessage_RunsAgentAndPersists(t *testing.T) {
 	}
 
 	var streamed []provider.Message
-	var gotCost float64
+	var gotIn, gotOut int
 	_, err = s.HandleMessage(ctx, "hello agent", RunCallbacks{
 		OnMessage: func(m provider.Message) { streamed = append(streamed, m) },
-		OnUsage:   func(_ provider.Usage, cost float64) { gotCost += cost },
+		OnUsage: func(u provider.Usage) {
+			gotIn += u.InputTokens
+			gotOut += u.OutputTokens
+		},
 	})
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	// Cost = 100/1M*1 + 50/1M*2 USD.
-	want := 100.0/1e6 + 50.0*2/1e6
-	if gotCost < want*0.99 || gotCost > want*1.01 {
-		t.Errorf("cost = %v, want ~%v", gotCost, want)
+	// The run's token usage reaches the channel verbatim — it is the whole
+	// readout, and the Session accumulates the same figures.
+	if gotIn != 100 || gotOut != 50 {
+		t.Errorf("streamed usage = in %d out %d, want in 100 out 50", gotIn, gotOut)
+	}
+	if in, out := s.Usage(); in != 100 || out != 50 {
+		t.Errorf("Session.Usage() = in %d out %d, want in 100 out 50", in, out)
 	}
 	if len(streamed) == 0 {
 		t.Errorf("no messages streamed")

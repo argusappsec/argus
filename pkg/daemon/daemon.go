@@ -21,7 +21,6 @@ import (
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
@@ -47,7 +46,6 @@ type Context struct {
 	Home         string
 	DefaultModel string
 	SocketPath   string
-	Pricing      budget.Pricing
 
 	// PersonaName is the operator-chosen name this instance answers to
 	// (persona.name in argus.yaml), or "" for the brand default. Like the rest
@@ -112,7 +110,6 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		Home:         home,
 		DefaultModel: cfg.DefaultModel,
 		SocketPath:   cfg.Daemon.SocketPath(home),
-		Pricing:      defaultPricing(),
 		PersonaName:  strings.TrimSpace(cfg.Persona.Name),
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
 		Audit:        aud,
@@ -184,17 +181,4 @@ func resolveAPIKey(cfg *config.Config, modelID string) (string, error) {
 		return k, nil
 	}
 	return "", fmt.Errorf("no provider configured for model %q", modelID)
-}
-
-// defaultPricing is the hardcoded best-effort pricing table (USD per 1M
-// tokens). The daemon owns cost computation — clients never see prices, only
-// the resulting figures in usage frames.
-func defaultPricing() budget.Pricing {
-	return budget.Pricing{
-		"gemini-2.5-flash": {InputUSDPer1M: 0.30, OutputUSDPer1M: 2.50},
-		"gemini-2.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 10.00},
-		"gemini-2.0-flash": {InputUSDPer1M: 0.10, OutputUSDPer1M: 0.40},
-		"gemini-1.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 5.00},
-		"gemini-1.5-flash": {InputUSDPer1M: 0.075, OutputUSDPer1M: 0.30},
-	}
 }

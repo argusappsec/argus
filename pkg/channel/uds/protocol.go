@@ -24,7 +24,13 @@ import (
 // ProtocolVersion is bumped on incompatible frame changes. The server
 // rejects hellos with a different major version with a polite "update your
 // client".
-const ProtocolVersion = 1
+//
+// v2 dropped cost_usd from the usage frame. JSON decoding tolerates the
+// absence, which is exactly the problem: a v1 client would keep rendering a
+// cost cell and read the missing field as $0.0000 — the false zero this
+// removal exists to prevent. A loud "update the argus binary" beats a silent
+// wrong figure, so the skew is gated rather than absorbed.
+const ProtocolVersion = 2
 
 // Frame types, client → server.
 const (
@@ -66,10 +72,9 @@ type Frame struct {
 	// agent_message
 	Message *provider.Message `json:"message,omitempty"`
 
-	// usage — cost is computed by the daemon; clients never see prices
-	InputTokens  int     `json:"input_tokens,omitempty"`
-	OutputTokens int     `json:"output_tokens,omitempty"`
-	CostUSD      float64 `json:"cost_usd,omitempty"`
+	// usage — token counts only, no price figure (see ProtocolVersion)
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
 }
 
 // frameWriter serializes frames onto a connection. Safe for concurrent use:

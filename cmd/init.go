@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/argusappsec/argus/pkg/agent"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/channel/tui"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/provider"
@@ -115,7 +114,6 @@ func initCmd() *cobra.Command {
 			interviewer := &soul.Soul{Persona: interviewerPersona()}
 
 			state := &interviewState{}
-			pricing := defaultPricing()
 
 			// Snapshot the SOUL.md state BEFORE the interview so we can detect
 			// when the agent writes (or rewrites) it during this run.
@@ -124,7 +122,7 @@ func initCmd() *cobra.Command {
 			var program *tea.Program
 			dispatch := func(userInput string) tea.Cmd {
 				go func() {
-					runInterview(ctx, prov, reg, interviewer, userInput, picked.Model, pricing, state, program)
+					runInterview(ctx, prov, reg, interviewer, userInput, state, program)
 
 					// After every turn, check whether SOUL.md was just written.
 					// If yes, the interview is done — show the user a clear
@@ -373,7 +371,7 @@ func soulMtime(path string) time.Time {
 // runInterview kicks off one agent run per user message, streaming responses
 // back into the TUI program. The full prior history (from earlier turns) is
 // passed as SeedMessages so the agent has the full conversational context.
-func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registry, interviewer *soul.Soul, userInput, modelID string, pricing budget.Pricing, state *interviewState, program *tea.Program) {
+func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registry, interviewer *soul.Soul, userInput string, state *interviewState, program *tea.Program) {
 	state.mu.Lock()
 	seed := append([]provider.Message{}, state.history...)
 	userMsg := provider.Message{Role: "user", Content: userInput}
@@ -397,7 +395,6 @@ func runInterview(ctx context.Context, prov provider.Provider, reg *tool.Registr
 			program.Send(tui.AgentUsageMsg{
 				InputTokens:  u.InputTokens,
 				OutputTokens: u.OutputTokens,
-				CostUSD:      budget.CostFor(pricing, modelID, u.InputTokens, u.OutputTokens),
 			})
 		},
 	})

@@ -217,8 +217,8 @@ func (s *Server) runCallbacks(w *frameWriter) daemon.RunCallbacks {
 		OnMessage: func(m provider.Message) {
 			_ = w.write(Frame{Type: TypeAgentMessage, Message: &m})
 		},
-		OnUsage: func(u provider.Usage, cost float64) {
-			_ = w.write(Frame{Type: TypeUsage, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CostUSD: cost})
+		OnUsage: func(u provider.Usage) {
+			_ = w.write(Frame{Type: TypeUsage, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens})
 		},
 	}
 }

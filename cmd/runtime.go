@@ -4,30 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/argusappsec/argus/pkg/budget"
 )
 
 // The per-command embedded runtime is gone: chat and review are UDS clients
 // of the daemon (running or in-process — see connect.go), and the daemon
-// owns provider construction, tool registries, soul/memory snapshots and
-// pricing (pkg/daemon.Build). What remains here is the home-directory
-// resolution shared by every command and the pricing table `argus init`
-// uses for its bootstrap interview, which deliberately runs in-process
-// before any daemon state exists.
-
-// defaultPricing returns a hardcoded best-effort pricing table for the
-// models Argus knows about. Numbers are USD per 1M tokens. The daemon keeps
-// its own copy (pkg/daemon); this one backs the `argus init` interview.
-func defaultPricing() budget.Pricing {
-	return budget.Pricing{
-		"gemini-2.5-flash": {InputUSDPer1M: 0.30, OutputUSDPer1M: 2.50},
-		"gemini-2.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 10.00},
-		"gemini-2.0-flash": {InputUSDPer1M: 0.10, OutputUSDPer1M: 0.40},
-		"gemini-1.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 5.00},
-		"gemini-1.5-flash": {InputUSDPer1M: 0.075, OutputUSDPer1M: 0.30},
-	}
-}
+// owns provider construction, tool registries and soul/memory snapshots
+// (pkg/daemon.Build). What remains here is the home-directory resolution
+// shared by every command.
 
 // resolveHome returns the directory Argus reads and writes state from.
 // Precedence:

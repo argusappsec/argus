@@ -13,7 +13,6 @@ import (
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/daemon"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
@@ -65,7 +64,6 @@ func startServer(t *testing.T, prov provider.Provider) (socketPath string, dc *d
 		Home:         home,
 		DefaultModel: "gemini-2.5-flash",
 		SocketPath:   socketPath,
-		Pricing:      budget.Pricing{"gemini-2.5-flash": {InputUSDPer1M: 1, OutputUSDPer1M: 2}},
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
@@ -165,7 +163,8 @@ func TestEndToEnd_MessageRoundTrip(t *testing.T) {
 		if f.Type == TypeAgentMessage && f.Message != nil && f.Message.Content == "ciao!" {
 			sawAgentText = true
 		}
-		if f.Type == TypeUsage && f.InputTokens == 10 && f.CostUSD > 0 {
+		// The usage frame carries token counts and nothing else.
+		if f.Type == TypeUsage && f.InputTokens == 10 && f.OutputTokens == 5 {
 			sawUsage = true
 		}
 	}
@@ -173,7 +172,7 @@ func TestEndToEnd_MessageRoundTrip(t *testing.T) {
 		t.Errorf("agent text never streamed; frames: %+v", frames)
 	}
 	if !sawUsage {
-		t.Errorf("usage frame missing or cost not computed; frames: %+v", frames)
+		t.Errorf("usage frame missing or token counts wrong; frames: %+v", frames)
 	}
 }
 

@@ -14,7 +14,6 @@ import (
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/daemon"
 	"github.com/argusappsec/argus/pkg/provider"
@@ -176,7 +175,6 @@ func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, a
 	dc := &daemon.Context{
 		Home:         home,
 		DefaultModel: "gemini-2.5-flash",
-		Pricing:      budget.Pricing{"gemini-2.5-flash": {InputUSDPer1M: 1, OutputUSDPer1M: 2}},
 		Auth:         auth.NewResolver(usersPath),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),

@@ -59,19 +59,20 @@ func TestSlashCommand_ClearWipesHistory(t *testing.T) {
 	}
 }
 
-func TestSlashCommand_CostShowsCurrentSpend(t *testing.T) {
+func TestSlashCommand_CostShowsTokenUsage(t *testing.T) {
 	m := tui.New(tui.Config{})
-	updated, _ := m.Update(tui.AgentUsageMsg{InputTokens: 1000, OutputTokens: 200, CostUSD: 0.0123})
+	updated, _ := m.Update(tui.AgentUsageMsg{InputTokens: 1000, OutputTokens: 200})
 	model := updated.(tui.Model).WithInput("/cost")
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(tui.Model)
 
-	// /cost prints a system line into the scrollback with the current spend.
+	// /cost prints a system line into the scrollback with the tokens consumed
+	// so far, and no currency figure.
 	if !historyContains(model, "1000") || !historyContains(model, "200") {
 		t.Errorf("/cost should report cumulative tokens; got:\n%+v", model.Messages())
 	}
-	if !historyContains(model, "0.0123") {
-		t.Errorf("/cost should report cumulative USD; got:\n%+v", model.Messages())
+	if historyContains(model, "$") {
+		t.Errorf("/cost must not report a currency figure; got:\n%+v", model.Messages())
 	}
 }
 

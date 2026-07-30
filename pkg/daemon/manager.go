@@ -156,7 +156,6 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 		id:          id,
 		channel:     channel,
 		principal:   principal,
-		modelID:     modelID,
 		maxTurns:    opts.MaxTurns,
 		ephemeral:   opts.Ephemeral,
 		dc:          dc,
