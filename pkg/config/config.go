@@ -328,6 +328,15 @@ type ProviderConfig struct {
 	// URL is an optional base URL override (self-hosted or proxy
 	// deployments). Empty means "use the provider's official endpoint".
 	// Also accepts env() references.
+	//
+	// Honoured by openai-compatible only: the Gemini client takes no endpoint,
+	// so a `url` on a `gemini` entry is resolved (an unset env() reference still
+	// errors) and then dropped. Note what that costs an operator who set it to
+	// route egress through a proxy they control: they do not get that, and
+	// nothing says so at runtime. Unlike MaxOutputTokens this is not refused,
+	// because the behaviour predates this field's documentation and dropping an
+	// endpoint that is never read corrupts nothing — where a dropped output
+	// ceiling silently mutilates a Report. See provider.Spec.
 	URL string `yaml:"url,omitempty"`
 	// MaxOutputTokens optionally caps how many tokens the provider may emit in
 	// one response. Zero (the default, and what omitting the key means) sends
