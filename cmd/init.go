@@ -27,8 +27,10 @@ import (
 // initCmd is the bootstrap flow. Two phases:
 //
 //	Phase A — provider & API key (no LLM yet, huh-driven form).
-//	          Select provider → select model → enter API key.
-//	          Writes ~/.argus/argus.yaml + ~/.argus/.env.
+//	          Select the Provider type → its endpoint → its model → the API
+//	          key. Writes ~/.argus/argus.yaml, plus ~/.argus/.env when there
+//	          is a key to store (an endpoint that authenticates nobody
+//	          needs none).
 //	Phase B — SOUL interview via the chat TUI (existing).
 //
 // Either phase is skipped if its artifact already exists, unless --force.
@@ -41,7 +43,8 @@ func initCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Interactive bootstrap: pick provider, set API key, and create SOUL.md.",
 		Long: "Run a two-phase bootstrap:\n" +
-			"  1) provider/model selection + API key (saved to ~/.argus/argus.yaml and ~/.argus/.env)\n" +
+			"  1) provider/endpoint/model selection + API key (saved to ~/.argus/argus.yaml,\n" +
+			"     the key to ~/.argus/.env — an endpoint that needs no key stores none)\n" +
 			"  2) chat-based interview with the Argus agent to populate SOUL.md\n\n" +
 			"Existing values are kept unless --force is passed.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,12 +73,7 @@ func initCmd() *cobra.Command {
 				return err
 			}
 
-			cfg.Providers = map[string]config.ProviderConfig{
-				picked.Provider: {
-					Type:   picked.Provider,
-					APIKey: config.EnvRef(providerEnvVar(picked.Provider)),
-				},
-			}
+			cfg.Providers = map[string]config.ProviderConfig{picked.Provider: providerEntry(picked)}
 			cfg.DefaultModel = picked.Model
 			// The instance name is asked deterministically in the Phase A form
 			// (already normalized), so it lands in argus.yaml alongside the rest
@@ -85,12 +83,24 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("save config: %w", err)
 			}
 
-			env.Set(providerEnvVar(picked.Provider), picked.APIKey)
-			if err := env.Save(); err != nil {
-				return fmt.Errorf("save .env: %w", err)
+			// No key supplied writes no secret: .env is left untouched rather
+			// than gaining an empty variable, which is what an endpoint that
+			// authenticates nobody needs.
+			hasKey := picked.APIKey != ""
+			if hasKey {
+				env.Set(providerEnvVar(picked.Provider), picked.APIKey)
+				if err := env.Save(); err != nil {
+					return fmt.Errorf("save .env: %w", err)
+				}
 			}
 			env.ApplyToProcess()
-			fmt.Fprintf(cmd.OutOrStdout(), "\n✓ config:  %s\n✓ secrets: %s\n\n", cfgPath, envPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "\n✓ config:  %s\n", cfgPath)
+			if hasKey {
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ secrets: %s\n", envPath)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "· no API key given — none stored\n")
+			}
+			fmt.Fprintln(cmd.OutOrStdout())
 
 			// --- Phase B: SOUL interview -------------------------------------
 			soulPath := filepath.Join(home, "SOUL.md")
@@ -181,53 +191,91 @@ func initCmd() *cobra.Command {
 
 // providerSelection captures the answers of the provider form.
 type providerSelection struct {
+	// Provider is the chosen Provider *type* — the value written to `type`
+	// under providers: in argus.yaml. It names a protocol, not a vendor.
 	Provider string
 	Model    string
 	APIKey   string
+	// BaseURL is the endpoint an openai-compatible Provider talks to, either
+	// from a preset or typed by the user. Empty means "Argus's default": for
+	// openai-compatible that is the OpenAI public endpoint, and no `url` is
+	// written into argus.yaml.
+	BaseURL string
 	// PersonaName is the operator-chosen instance name (persona.name in
 	// argus.yaml), already trimmed and stripped of a leading @. Empty means the
 	// brand default (the instance answers to Argus only).
 	PersonaName string
 }
 
-// runProviderForm shows a huh form: pick provider → pick model → enter API key.
+// runProviderForm shows a huh form: pick the Provider type → pick the endpoint
+// (openai-compatible only) → pick or type the model → enter the API key.
 // Existing values from cfg/env are used as the form's defaults so re-running
 // init only needs ENTER on what you want to keep.
+//
+// Per-type answers live in separate variables on purpose: switching type
+// halfway through the form must never carry another Provider's key, model or
+// endpoint into the file.
 func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, error) {
 	sel := providerSelection{
-		Provider:    "gemini",
-		Model:       cfg.DefaultModel,
-		APIKey:      env.Get(providerEnvVar("gemini")),
+		Provider:    defaultProviderType(cfg),
 		PersonaName: cfg.Persona.Name,
 	}
-	if sel.Provider == "" {
-		sel.Provider = "gemini"
+
+	geminiKey := lookupEnvDefault(env, providerEnvVar(providerTypeGemini))
+	compatKey := lookupEnvDefault(env, providerEnvVar(providerTypeOpenAICompatible))
+
+	// cfg.DefaultModel belongs to whichever Provider is already configured, so
+	// it only pre-fills that type's model field.
+	var geminiModel, compatModel string
+	if sel.Provider == providerTypeOpenAICompatible {
+		compatModel = cfg.DefaultModel
+	} else {
+		geminiModel = cfg.DefaultModel
+	}
+
+	// An endpoint already in play — configured, or exported as OPENAI_BASE_URL
+	// by a user following the convention every compatible service documents —
+	// preselects its preset, or the custom entry carrying the URL.
+	knownURL := configuredBaseURL(cfg)
+	if knownURL == "" {
+		knownURL = normalizeBaseURL(lookupEnvDefault(env, providerBaseURLEnvVar(providerTypeOpenAICompatible)))
+	}
+	presetID := endpointPresets[0].ID
+	customURL := ""
+	if id, ok := presetForBaseURL(knownURL); ok {
+		presetID = id
+		if id == presetCustom {
+			customURL = knownURL
+		}
 	}
 
 	var modelChoice string
 	var customModel string
 
 	providerStep := huh.NewSelect[string]().
-		Title("Provider").
-		Description("Which LLM provider does Argus talk to?").
-		Options(
-			huh.NewOption("Gemini (Google)", "gemini"),
-			huh.NewOption("OpenAI — not yet implemented", "openai").Selected(false),
-			huh.NewOption("Anthropic — not yet implemented", "anthropic").Selected(false),
-		).
-		Validate(func(s string) error {
-			if s != "gemini" {
-				return fmt.Errorf("%s is not implemented yet (only gemini works today)", s)
-			}
-			return nil
-		}).
+		Title("LLM Provider").
+		Description("The LLM backend Argus generates through. A Provider type names a protocol, not a vendor.").
+		Options(providerTypeOptions(sel.Provider)...).
 		Value(&sel.Provider)
+
+	endpointStep := huh.NewSelect[string]().
+		Title("Endpoint").
+		Description("Any server speaking the OpenAI chat-completions protocol: hosted services (OpenAI, OpenRouter, Groq, Together, DeepSeek, Mistral, Cerebras) or a local runtime (Ollama, vLLM, LM Studio). The preset fills in the base URL for you.").
+		Options(endpointOptions(presetID)...).
+		Value(&presetID)
+
+	customURLStep := huh.NewInput().
+		Title("Base URL").
+		Description("Argus appends /chat/completions to what you enter, so include the path your server serves the API under — usually /v1.").
+		Placeholder("http://localhost:8000/v1").
+		Value(&customURL).
+		Validate(validateBaseURL)
 
 	modelStep := huh.NewSelect[string]().
 		Title("Model").
 		Description("Pick the default model. You can override with --model on every command.").
 		OptionsFunc(func() []huh.Option[string] {
-			return modelOptionsFor(sel.Provider, sel.Model)
+			return modelOptionsFor(sel.Provider, geminiModel)
 		}, &sel.Provider).
 		Value(&modelChoice)
 
@@ -236,22 +284,25 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		Description("Enter any model name supported by your provider.").
 		Placeholder("gemini-2.5-flash-latest").
 		Value(&customModel).
-		Validate(func(s string) error {
-			if strings.TrimSpace(s) == "" {
-				return errors.New("model id required")
-			}
-			return nil
-		})
+		Validate(requireModelID)
 
-	hint := "Get a free Gemini key at https://aistudio.google.com/apikey"
-	if sel.APIKey != "" {
-		hint += "  •  current: …" + tailOf(sel.APIKey, 4) + " (leave empty to keep)"
-	}
-	keyStep := huh.NewInput().
+	// Free text, not a fetched list: enumerating the endpoint belongs in the
+	// `argus doctor` probe, where it can fail and be reported, rather than in
+	// the middle of an interactive form.
+	compatModelStep := huh.NewInput().
+		Title("Model").
+		Description("The model id exactly as your endpoint names it. Argus certifies nobody's server: run `argus doctor` to verify this endpoint and model.").
+		Placeholder("gpt-4o-mini").
+		Value(&compatModel).
+		Validate(requireModelID)
+
+	geminiKeyStep := huh.NewInput().
 		Title("API key").
-		Description(hint).
+		Description(keyHint(
+			"Get a free Gemini key at https://aistudio.google.com/apikey",
+			providerEnvVar(providerTypeGemini), geminiKey)).
 		EchoMode(huh.EchoModePassword).
-		Value(&sel.APIKey).
+		Value(&geminiKey).
 		Validate(func(s string) error {
 			if strings.TrimSpace(s) == "" {
 				return errors.New("API key required")
@@ -259,17 +310,34 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 			return nil
 		})
 
+	// Optional, not mandatory: a local runtime needs no key, and requiring one
+	// would block that user at the very first screen. No key means no api_key
+	// entry in argus.yaml at all.
+	compatKeyStep := huh.NewInput().
+		Title("API key (optional)").
+		Description(keyHint(
+			"Paste the key your hosted service issued. Leave it empty if your endpoint needs none — a local runtime usually does not.",
+			providerEnvVar(providerTypeOpenAICompatible), compatKey)).
+		EchoMode(huh.EchoModePassword).
+		Value(&compatKey)
+
 	nameStep := huh.NewInput().
 		Title("Instance name (optional)").
 		Description("A name colleagues address this agent by on GitHub — e.g. \"Ercole, look at this\" — in addition to the brand name Argus. Leave empty to keep just Argus.").
 		Placeholder("Ercole").
 		Value(&sel.PersonaName)
 
+	isOpenAICompatible := func() bool { return sel.Provider == providerTypeOpenAICompatible }
+
 	form := huh.NewForm(
 		huh.NewGroup(providerStep),
-		huh.NewGroup(modelStep),
-		huh.NewGroup(customStep).WithHideFunc(func() bool { return modelChoice != "custom" }),
-		huh.NewGroup(keyStep),
+		huh.NewGroup(endpointStep).WithHideFunc(func() bool { return !isOpenAICompatible() }),
+		huh.NewGroup(customURLStep).WithHideFunc(func() bool { return !isOpenAICompatible() || presetID != presetCustom }),
+		huh.NewGroup(modelStep).WithHideFunc(isOpenAICompatible),
+		huh.NewGroup(customStep).WithHideFunc(func() bool { return isOpenAICompatible() || modelChoice != "custom" }),
+		huh.NewGroup(compatModelStep).WithHideFunc(func() bool { return !isOpenAICompatible() }),
+		huh.NewGroup(geminiKeyStep).WithHideFunc(isOpenAICompatible),
+		huh.NewGroup(compatKeyStep).WithHideFunc(func() bool { return !isOpenAICompatible() }),
 		huh.NewGroup(nameStep),
 	).WithTheme(huh.ThemeBase16())
 
@@ -277,24 +345,55 @@ func runProviderForm(cfg *config.Config, env *config.Env) (providerSelection, er
 		return providerSelection{}, fmt.Errorf("init form: %w", err)
 	}
 
-	if modelChoice == "custom" {
-		sel.Model = strings.TrimSpace(customModel)
+	if sel.Provider == providerTypeOpenAICompatible {
+		sel.Model = strings.TrimSpace(compatModel)
+		sel.APIKey = strings.TrimSpace(compatKey)
+		if presetID == presetCustom {
+			sel.BaseURL = normalizeBaseURL(customURL)
+		} else {
+			sel.BaseURL = presetBaseURL(presetID)
+		}
 	} else {
-		sel.Model = modelChoice
+		if modelChoice == "custom" {
+			sel.Model = strings.TrimSpace(customModel)
+		} else {
+			sel.Model = modelChoice
+		}
+		sel.APIKey = strings.TrimSpace(geminiKey)
 	}
-	sel.APIKey = strings.TrimSpace(sel.APIKey)
 	sel.PersonaName = normalizePersonaName(sel.PersonaName)
 	return sel, nil
+}
+
+// requireModelID rejects an empty model id: Argus has no default to fall back
+// on, and the failure would otherwise surface as a provider error.
+func requireModelID(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return errors.New("model id required")
+	}
+	return nil
+}
+
+// keyHint builds the API-key step's description, appending where a pre-filled
+// value came from so the user can tell it apart from one they typed.
+func keyHint(base, envVar, current string) string {
+	if current == "" {
+		return base
+	}
+	return base + "  •  pre-filled from " + envVar + " (…" + tailOf(current, 4) + ")"
 }
 
 // modelOptionsFor returns a curated list of models for the chosen provider,
 // always with a "custom" tail option for keys we don't know about. The
 // `current` arg is the model already in config; it's marked as the
 // preselected option.
+//
+// There is no curated list for openai-compatible endpoints, and there must not
+// be one: the model ids an arbitrary endpoint serves are unknowable from here.
+// That type gets a free-text step instead.
 func modelOptionsFor(provider string, current string) []huh.Option[string] {
 	var models []string
-	switch provider {
-	case "gemini":
+	if provider == providerTypeGemini {
 		models = []string{
 			"gemini-2.5-flash",
 			"gemini-2.5-pro",
@@ -302,8 +401,6 @@ func modelOptionsFor(provider string, current string) []huh.Option[string] {
 			"gemini-1.5-pro",
 			"gemini-1.5-flash",
 		}
-	default:
-		models = []string{"gemini-2.5-flash"}
 	}
 
 	opts := make([]huh.Option[string], 0, len(models)+1)
@@ -325,21 +422,6 @@ func modelOptionsFor(provider string, current string) []huh.Option[string] {
 	}
 	opts = append(opts, huh.NewOption("custom...", "custom"))
 	return opts
-}
-
-// providerEnvVar returns the env var name where the secret for `provider`
-// is stored. Kept in one place so the convention is consistent.
-func providerEnvVar(provider string) string {
-	switch provider {
-	case "gemini":
-		return "GEMINI_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	default:
-		return strings.ToUpper(provider) + "_API_KEY"
-	}
 }
 
 func tailOf(s string, n int) string {
