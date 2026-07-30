@@ -6,6 +6,7 @@ for *why* Argus is built the way it is, see [CONTEXT.md](../../CONTEXT.md)
 
 - [Getting started](getting-started.md) — install, bootstrap, first chat
 - [Configuration](configuration.md) — the full `argus.yaml` reference
+- [LLM providers](llm-providers.md) — what Argus requires from a model, and how to verify yours
 - [GitHub channel](channels/github.md) — automatic PR reviews and talking to Argus on threads
 - [MCP channel](channels/mcp.md) — Argus as a consultable colleague for your AI tools
 - [Skills](skills.md) — using, writing, and overriding skills

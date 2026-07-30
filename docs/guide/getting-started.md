@@ -52,8 +52,12 @@ For running on a cluster, see [Kubernetes deployment](deployment/kubernetes.md).
 
 `init` walks you through:
 
-1. **Provider** — currently Google Gemini; the API key can live inline in the
-   config or come from the environment (`GEMINI_API_KEY`).
+1. **Provider** — Gemini, or any server speaking the OpenAI-compatible
+   protocol (hosted service or local runtime), with presets that fill in the
+   base URL. The API key can live inline in the config or come from the
+   environment (`GEMINI_API_KEY` / `OPENAI_API_KEY`), and an endpoint that
+   needs no key doesn't ask for one. See
+   [LLM providers](llm-providers.md) for what Argus requires from a model.
 2. **Instance name** — how you'll address Argus ("Argus" by default, or a
    persona of your own — even multi-word).
 3. **SOUL** — a guided interview that captures your organization's profile,
