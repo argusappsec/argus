@@ -62,15 +62,27 @@ A named bundle of capabilities. Each Person has exactly one Role.
   chat, writes CONTEXT, reads everything. Cannot edit SOUL or manage
   other Principals.
 - **viewer** — read-only consumer (CISO, PM, exec). Can read reports and
-  ask the agent questions via chat or `consult`. Cannot trigger reviews
-  from scratch, write context, or modify any state; those gates live at
-  the Tool layer, so a refusal is uniform however the agent is prompted.
+  ask the agent questions via chat or `consult`. The Role is read-only: no
+  review from scratch, no context writes, no state changes. **Enforcement
+  of that boundary lives in the channels, never in the shared Tool
+  registry.** MCP checks the Role before running `review`; the GitHub
+  channel's in-thread `suppress_finding` / `rescope_review` check it
+  themselves, the channel having built them with the commenter's Role.
+  Those three are the only refusals a viewer meets. The shared registry
+  carries no Role at all, so every Session's base tool set is identical —
+  `write_context`, `start_review_local` and `start_review_github`
+  included — and **nothing stops a viewer reaching them** once past a
+  permitted entry point: a PR comment, which has no Role gate of its own,
+  seeds the turn with the commenter's own text, and `consult`'s seed steers
+  toward prose without forbidding those tools. So a refusal is *not*
+  uniform however the agent is prompted. Closing that belongs at the Tool
+  layer and is not yet built.
   Asking questions consumes tokens, and **no spend control is enforced**
   on them. The two limits that do exist bound concurrency and runaway
   loops, not cost: `max_concurrent_sessions` caps how many Sessions run at
   once, and the agent's turn ceiling (50 by default) ends a single
-  non-terminating run. Neither bounds what a viewer costs over a day, so
-  the Role is read-only on *state*, not on spend. See ADR 0021.
+  non-terminating run. Neither bounds what a viewer costs over a day: the
+  Role's limits are about *state*, never spend. See ADR 0021.
 
 Roles apply to **Persons only**. A Service has no Role — its capabilities
 are fixed by the channel type that declares it. (Retired terms:

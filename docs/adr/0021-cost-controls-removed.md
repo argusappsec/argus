@@ -89,9 +89,10 @@ displays the false zero. Deleting the dead caps is not coupled and may follow.
   the third never refused a call. What users lose is a number, and the number
   was about to become wrong for most of them.
 - **Three earlier ADRs lean on this phantom control** and are amended by this
-  one. [ADR 0002](0002-rbac-model.md) justifies letting `viewer` chat by calling
-  the budget cap "the guardrail against runaway token spend, not the role
-  boundary"; [ADR 0004](0004-single-process-channel-goroutines.md) lists "its
+  one. [ADR 0002](0002-rbac-model.md) lists "overrides budget" among the `admin`
+  powers, and justifies letting `viewer` chat by calling the budget cap "the
+  guardrail against runaway token spend, not the role boundary";
+  [ADR 0004](0004-single-process-channel-goroutines.md) lists "its
   own per-session token budget" among what each Session owns;
   [ADR 0018](0018-automatic-reviews-are-least-privilege.md) offers "the global
   budget cap remains the hard spend backstop" as the counterweight to opt-in
