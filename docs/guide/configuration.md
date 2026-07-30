@@ -1,4 +1,9 @@
-# Configuration
+---
+title: Configuration
+description: The full argus.yaml reference — providers, code hosts, channels, and the keys that matter.
+sidebar:
+  order: 20
+---
 
 All configuration lives in one file: `~/.argus/argus.yaml` (or
 `$ARGUS_HOME/argus.yaml`). Secrets never need to be inline — any value can be
@@ -61,7 +66,7 @@ channels:
   `/healthz`.
 
 `argus codehost setup` writes both sections for you — see the
-[GitHub channel](channels/github.md) guide.
+[GitHub channel](/guide/channels/github/) guide.
 
 ## LLM providers
 
@@ -82,7 +87,7 @@ llama.cpp) alike. A local runtime is **not** a type of its own: it's a server
 that speaks this protocol, reached as a base URL.
 
 Argus implements the protocol and certifies nobody's server, so read
-[LLM providers](llm-providers.md) for what Argus requires from a model, and run
+[LLM providers](/guide/llm-providers/) for what Argus requires from a model, and run
 `argus doctor` to verify your own endpoint meets it.
 
 ### Per-provider keys
@@ -202,7 +207,7 @@ costs different amounts behind different gateways. An incomplete table doesn't
 decline to answer — it reports **zero**, and a false zero is worse than no
 number, because it's a number you have no reason to distrust. An operator who
 wants a cost figure has their provider's pricing page and an accurate token
-count. See [ADR 0021](../adr/0021-cost-controls-removed.md).
+count.
 
 Token counts are correct for every model on every endpoint, including a local
 runtime where the marginal cost isn't measured in dollars at all.
@@ -232,14 +237,14 @@ aggregate.
 | `channels.github.enabled_repos` | Explicit `owner/repo` allow-list when `auto_enroll: false` |
 | `channels.mcp` | Enables the MCP channel on the front door |
 
-> **Recommendation:** set `auto_enroll: false` with an explicit
-> `enabled_repos` allow-list. On public repos, `auto_enroll: true` means
-> anyone who can open a PR can trigger a review — and every review spends
-> tokens on your account. **Nothing bounds that spend:** Argus reports token
-> counts and enforces no cap, no ceiling, and nothing anywhere that will refuse
-> a call ([ADR 0021](../adr/0021-cost-controls-removed.md)). The allow-list is
-> the control. The default is moving to opt-in
-> ([ADR 0018](../adr/0018-automatic-reviews-are-least-privilege.md)).
+:::caution[Set an explicit allow-list]
+Prefer `auto_enroll: false` with an explicit `enabled_repos` list. On public
+repos, `auto_enroll: true` means anyone who can open a pull request can trigger
+a review — and every review spends tokens on your account. **Nothing bounds that
+spend:** Argus reports token counts and enforces no cap, no ceiling, and nothing
+anywhere that will refuse a call. The allow-list is the control. The default is
+moving to opt-in.
+:::
 
 ## Legacy keys fail loudly
 

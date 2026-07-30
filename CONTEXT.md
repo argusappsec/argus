@@ -41,7 +41,8 @@ not trigger MEMORY curation. Knowledge is persisted only by a Person
 current report but can never durably teach the organization. The concept
 exists so the audit log can attribute non-human actions to exactly one
 actor. _Avoid_: treating a Service as an entry in the user file —
-`users.yaml` holds Persons only.
+`users.yaml` holds Persons only; and confusing it with a Kubernetes
+`Service` — say **Service principal** wherever both senses can be read.
 
 ### Identity
 

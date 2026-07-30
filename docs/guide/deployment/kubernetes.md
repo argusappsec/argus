@@ -1,15 +1,21 @@
-# Hosting Argus on Kubernetes
+---
+title: Kubernetes deployment
+description: Run Argus on a cluster — StatefulSet, persistent state, secrets and ingress.
+sidebar:
+  order: 60
+---
 
 This guide shows how to run Argus on a Kubernetes cluster. It is meant as a
 solid starting point you adapt to your cluster — not a turnkey production
 chart.
 
-> **The one rule that shapes everything:** Argus runs as **exactly one
-> instance**. Its state is file-based with non-concurrent read-modify-write;
-> two active pods would corrupt it. There is no HA or horizontal scaling.
-> Kubernetes here gives you self-healing, declarative deploys and managed
-> secrets/ingress — not scale. See
-> [ADR 0012](../../adr/0012-kubernetes-deployment.md) for the reasoning.
+:::caution[The one rule that shapes everything]
+Argus runs as **exactly one instance**. Its state is file-based with
+non-concurrent read-modify-write; two active pods would corrupt it. There is no
+HA or horizontal scaling, because there is no distributed lock and no shared
+database that would make two active instances possible. Kubernetes here gives
+you self-healing, declarative deploys and managed secrets/ingress, not scale.
+:::
 
 If you just want the simplest possible host, a VPS with the binary under
 systemd is easier. Reach for Kubernetes when you already run a cluster and
@@ -21,7 +27,7 @@ want Argus to live alongside your other bots and ops tooling.
 | --- | --- |
 | Workload | `StatefulSet`, `replicas: 1` (never scaled) |
 | State | one `ReadWriteOnce` PVC mounted at `ARGUS_HOME` |
-| Config (`argus.yaml`, `SOUL.md`) | `ConfigMap`, seeded onto the PVC by an init container |
+| Config (`argus.yaml`, and `SOUL.md` — your organization's identity) | `ConfigMap`, seeded onto the PVC by an init container |
 | Secrets (API keys, GitHub App) | `Secret` → env vars; the App **PEM** mounted as a file |
 | User table (`users.yaml`) | lives on the PVC, managed via `kubectl exec` |
 | Networking | one HTTP front door (`daemon.http_addr`), exposed by path at the `Ingress` |
@@ -31,7 +37,8 @@ want Argus to live alongside your other bots and ops tooling.
 Argus splits its files by a single question — *is it mutated at runtime?*
 
 - **Declarative config — `argus.yaml`, `SOUL.md`.** Read once at boot, never
-  written at runtime. Keep them in Git, ship them via a `ConfigMap`, and let
+  written at runtime. `SOUL.md` carries your organization's identity into every
+  model call. Keep them in Git, ship them via a `ConfigMap`, and let
   the init container copy them onto the PVC (overwrite on every boot).
   Changing `SOUL.md` requires a **pod restart** to reload.
 - **Secrets.** Provider keys and GitHub App credentials go in a `Secret` and
@@ -40,9 +47,9 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   environment — so **you do not need a `.env` file in the pod**. The GitHub
   App **private key** is the exception: `private_key_path` reads a file, so
   mount it from a `Secret`.
-- **Runtime state — `users.yaml`, `MEMORY.md`, `context/`,
-  `audit.log.jsonl`, `reports/`, `cache/`.** Owned by the PVC. The init
-  container never overwrites these.
+- **Runtime state — `users.yaml`, `MEMORY.md` (the summary Argus curates across
+  sessions), `context/`, `audit.log.jsonl`, `reports/`, `cache/`.** Owned by the
+  PVC. The init container never overwrites these.
 
 ## Prerequisites
 
@@ -59,14 +66,12 @@ Argus splits its files by a single question — *is it mutated at runtime?*
 
   It is **batteries-included**: `argus` plus every binary its Tools shell out
   to — `git` (required, for cloning), `semgrep`, `gitleaks` and `osv-scanner`
-  — so the GitHub PR-review Channel works out of the box with no derived image
-  or sidecar (see [ADR 0013](../../adr/0013-batteries-included-runtime-image.md)).
-  The image runs as nonroot (uid `65532`) and exposes a single HTTP front door
-  on `:8080` — the daemon serves every configured HTTP channel (the GitHub
-  webhook at `/webhooks/github`, MCP at `/mcp`) plus its `/healthz` probe on
-  that one port (see [ADR 0015](../../adr/0015-integrations-declared-in-configuration.md)).
-  It is published multi-arch for `linux/amd64` and `linux/arm64`
-  with provenance and SBOM attestations.
+  — so the GitHub pull-request review channel works out of the box with no
+  derived image or sidecar. The image runs as nonroot (uid `65532`) and exposes
+  a single HTTP front door on `:8080` — the daemon serves every configured HTTP
+  channel (the GitHub webhook at `/webhooks/github`, MCP at `/mcp`) plus its
+  `/healthz` probe on that one port. It is published multi-arch for
+  `linux/amd64` and `linux/arm64` with provenance and SBOM attestations.
 
   **Which tag to run:**
 
@@ -78,11 +83,6 @@ Argus splits its files by a single question — *is it mutated at runtime?*
 
   Pin to a semver tag in production; reach for `edge` only if you deliberately
   want to track `main`.
-
-  > **Contributors** who want to build the image locally can still do so from
-  > the repo's multi-stage [`Dockerfile`](../../../Dockerfile)
-  > (`docker build -t argus:dev .`) — that is a development workflow, not the
-  > operator path.
 
 ## Step 1 — Author the seed config locally
 
@@ -121,15 +121,16 @@ channels:
     type: mcp
 ```
 
-> **Config v2 (0.3.0):** the integration surface is split into `codehosts:`
-> (outbound App credentials) and `channels:` (inbound transport bindings), and
-> the daemon owns a single front door under `daemon.http_addr`. There is **no
-> `installation_id`** — Argus derives the acting installation from each webhook
-> event (and per repository for on-demand reviews), so installing the App on
-> more organizations needs zero config change. The old top-level `github:` /
-> `mcp:` keys, `installation_id`, and per-channel `addr` are **hard startup
-> errors** whose message names the replacement — there is no dual-read or
-> migration shim.
+:::note[Config v2 (0.3.0)]
+The integration surface is split into `codehosts:` (outbound App credentials)
+and `channels:` (inbound transport bindings), and the daemon owns a single front
+door under `daemon.http_addr`. There is **no `installation_id`** — Argus derives
+the acting installation from each webhook event (and per repository for
+on-demand reviews), so installing the App on more organizations needs zero
+config change. The old top-level `github:` / `mcp:` keys, `installation_id`, and
+per-channel `addr` are **hard startup errors** whose message names the
+replacement — there is no dual-read or migration shim.
+:::
 
 ## Step 2 — ConfigMap (seed) and Secrets
 
@@ -151,13 +152,15 @@ kubectl create secret generic argus-github-pem \
   --from-file=github_app.pem=./github_app.pem
 ```
 
-> For GitOps, encrypt these with [Sealed Secrets](https://sealed-secrets.netlify.app)
-> or wire up [External Secrets](https://external-secrets.io) instead of
-> committing them.
->
-> `SOUL.md` carries org details (stack, infra, escalation contact). If you
-> would rather not have it in a ConfigMap, put it in a `Secret` and mount
-> `/seed` from there — the mechanism is identical.
+:::tip
+For GitOps, encrypt these with [Sealed Secrets](https://sealed-secrets.netlify.app)
+or wire up [External Secrets](https://external-secrets.io) instead of
+committing them.
+
+`SOUL.md` carries org details (stack, infra, escalation contact). If you would
+rather not have it in a ConfigMap, put it in a `Secret` and mount `/seed` from
+there — the mechanism is identical.
+:::
 
 ## Step 3 — StatefulSet, Service, Ingress
 
@@ -168,7 +171,7 @@ metadata:
   name: argus
 spec:
   serviceName: argus
-  replicas: 1                       # never scale — see ADR 0012
+  replicas: 1                       # never scale: two writers corrupt the state
   selector:
     matchLabels: { app: argus }
   template:
@@ -267,29 +270,38 @@ port-forward. Leave `/healthz` unrouted; it is for in-cluster probes.
 
 Point the GitHub App's webhook URL at `https://argus.example.com/webhooks/github`.
 
-> **Upgrading from 0.2.x:** the webhook path changed from `/webhook` to
-> `/webhooks/github`. Update the GitHub App's webhook URL to match, or
-> deliveries will 404.
+:::note[Upgrading from 0.2.x]
+The webhook path changed from `/webhook` to `/webhooks/github`. Update the
+GitHub App's webhook URL to match, or deliveries will 404.
+:::
 
 ## Step 4 — Bootstrap users
 
-`users.yaml` starts empty. Possession of the local socket is admin
-(see [ADR 0007](../../adr/0007-socket-possession-is-authentication.md)), so the
-first operator administers the daemon over `kubectl exec`:
+`users.yaml` starts empty. Possession of the local socket is admin — whoever can
+reach the daemon's Unix socket already controls the host it runs on, so Argus
+treats that access as proof of ownership rather than asking for a credential it
+could not protect anyway. The first operator therefore administers the daemon
+over `kubectl exec`:
 
 ```sh
 kubectl exec -it argus-0 -- argus user add davide --role admin --email davide@example.com
 kubectl exec -it argus-0 -- argus user mcp-token add davide
 ```
 
-> Only **Persons** are bootstrapped here. The `github-app` Service principal
-> that automatic PR reviews are attributed to is **synthesized** by the GitHub
-> channel from the fact of being configured — there is no service row to
-> provision and no `argus service` step (config v2, ADR 0015/0016).
+:::note
+Only **Persons** — the humans Argus recognizes — are bootstrapped here. The
+`github-app` **Service principal**, the non-human actor that automatic
+pull-request reviews are attributed to, is **synthesized** by the GitHub channel
+from the fact of being configured: there is no service row to provision and no
+`argus service` step. (Not to be confused with a Kubernetes `Service`, which
+appears in the manifests above.)
+:::
 
-> **Security:** in this model, anyone who can `kubectl exec` into the pod is
-> an Argus admin. Lock down `exec` with Kubernetes RBAC the same way you
-> would protect SSH to a host.
+:::caution[Security]
+In this model, anyone who can `kubectl exec` into the pod is an Argus admin.
+Lock down `exec` with Kubernetes RBAC the same way you would protect SSH to a
+host.
+:::
 
 ## Step 5 — Backups
 

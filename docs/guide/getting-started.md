@@ -1,4 +1,9 @@
-# Getting started
+---
+title: Getting started
+description: Install Argus, bootstrap it with your organization's profile, and connect your first channel.
+sidebar:
+  order: 10
+---
 
 Argus runs as a single long-lived daemon per organization. The CLI is
 deliberately scoped to **setup and administration** — you talk to Argus
@@ -40,7 +45,7 @@ door (webhooks + MCP). The image's entrypoint runs `argus daemon`; for the
 interactive setup commands below, exec into the container or run them with
 the same volume mounted.
 
-For running on a cluster, see [Kubernetes deployment](deployment/kubernetes.md).
+For running on a cluster, see [Kubernetes deployment](/guide/deployment/kubernetes/).
 
 ## Bootstrap
 
@@ -57,11 +62,11 @@ For running on a cluster, see [Kubernetes deployment](deployment/kubernetes.md).
    base URL. The API key can live inline in the config or come from the
    environment (`GEMINI_API_KEY` / `OPENAI_API_KEY`), and an endpoint that
    needs no key doesn't ask for one. See
-   [LLM providers](llm-providers.md) for what Argus requires from a model.
+   [LLM providers](/guide/llm-providers/) for what Argus requires from a model.
 2. **Instance name** — how you'll address Argus ("Argus" by default, or a
    persona of your own — even multi-word).
-3. **SOUL** — a guided interview that captures your organization's profile,
-   stack, and risk tolerance. Every model call carries it, so reviews reflect
+3. **SOUL** — your organization's identity, captured by a guided interview:
+   profile, stack, and risk tolerance. Every model call carries it, so reviews reflect
    *your* context. Answer briefly; every line should be able to change a
    decision.
 
@@ -74,9 +79,9 @@ container image, whose default command is exactly that).
 
 - **GitHub** — `./argus codehost setup` onboards a GitHub App and webhook
   channel; pull-request reviews then fire automatically. See
-  [GitHub channel](channels/github.md).
+  [GitHub channel](/guide/channels/github/).
 - **MCP** — mint a token with `argus user mcp-token create` and point your
-  AI tool at the daemon's `/mcp` endpoint. See [MCP channel](channels/mcp.md).
+  AI tool at the daemon's `/mcp` endpoint. See [MCP channel](/guide/channels/mcp/).
 
 ## Command reference
 
@@ -87,7 +92,7 @@ container image, whose default command is exactly that).
 | `argus init` | Interactive bootstrap: provider, API key, instance name, and `SOUL.md` |
 | `argus codehost setup` | Onboard a GitHub code host + webhook channel |
 | `argus doctor` | Check that dependencies and configuration are ready |
-| `argus user add/ls/rm/grant` | Manage the Person table (`~/.argus/users.yaml`) |
+| `argus user add/ls/rm/grant` | Manage **Persons** — the people Argus recognizes, each of whom may sign in from several places (`~/.argus/users.yaml`) |
 | `argus user mcp-token create/revoke` | Manage MCP bearer tokens |
 | `argus skill ls` / `argus skill rm <name>` | Manage agent skills |
 | `argus daemon` | Run the Argus daemon (`argusd`) |
@@ -98,17 +103,18 @@ Everything is file-based under `~/.argus/` (or `ARGUS_HOME`):
 
 | Path | Purpose |
 | --- | --- |
-| `argus.yaml` | Configuration — see [Configuration](configuration.md) |
+| `argus.yaml` | Configuration — see [Configuration](/guide/configuration/) |
 | `SOUL.md` | Organization identity, injected into every model call |
 | `MEMORY.md` | Curated cross-session summary |
 | `context/*.md` | Topical knowledge base, loaded on demand |
 | `skills/<name>/SKILL.md` | User-curated skill bundles |
-| `users.yaml` | The Person table and role grants |
+| `users.yaml` | The Persons Argus recognizes, and their role grants |
 | `argusd.sock` | The daemon's Unix socket |
 
-> Argus runs as **exactly one instance** per organization: its state is
-> file-based with non-concurrent read-modify-write, so never run two daemons
-> against the same `ARGUS_HOME`.
+:::caution[One instance per organization]
+Argus's state is file-based with non-concurrent read-modify-write, so never run
+two daemons against the same `ARGUS_HOME` — they would corrupt it.
+:::
 
 ## Upgrading from 0.2.x
 

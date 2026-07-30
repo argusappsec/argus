@@ -1,4 +1,9 @@
-# LLM providers
+---
+title: LLM providers
+description: What Argus requires from a model, and how to verify your own endpoint meets it.
+sidebar:
+  order: 30
+---
 
 An **LLM provider** is the model backend Argus generates through. A provider's
 `type` names a **protocol, not a vendor**, and there are two:
@@ -17,7 +22,7 @@ URL.
 The word *compatible* is precise: Argus implements the protocol, and certifies
 nobody's server. This page is the other half of that — what Argus needs from a
 model, and how you check your own endpoint against it. For the configuration
-keys themselves, see [Configuration](configuration.md#llm-providers).
+keys themselves, see [Configuration](/guide/configuration/#llm-providers).
 
 ## What Argus requires from a model
 
@@ -59,8 +64,9 @@ fine. **Symptom:** the first turn works, then the next request fails with the
 server complaining about an unknown or invalid tool-call id — or, worse, the
 model answers as if the tool results were never delivered.
 
-**3. Context window.** SOUL and MEMORY enter the system prompt **in full on
-every call**, and the tool declarations ride along on every call too. On top of
+**3. Context window.** SOUL — your organization's identity — and MEMORY — the
+curated summary Argus keeps across sessions — enter the system prompt **in full
+on every call**, and the tool declarations ride along on every call too. On top of
 that sits a conversation that only grows: scanner output, file contents, diffs.
 A small-context model dies on the first turn of a real Review.
 
@@ -73,12 +79,13 @@ declarations). At an assumed **4 bytes per token**, that is roughly **2,240
 tokens spent before the conversation has said a word** — about 7% of a 32k
 window.
 
-> The measurement is bytes, not tokens, because converting to tokens needs a
-> tokenizer that differs per model family and that Argus deliberately does not
-> carry. The 4-bytes-per-token ratio is the usual rule of thumb for English and
-> code; substitute your model's real ratio if you know it. The figure is pinned
-> by a regression test (`pkg/agent/context_floor_test.go`), so it is kept honest
-> rather than remembered.
+:::note
+The measurement is bytes, not tokens, because converting to tokens needs a
+tokenizer that differs per model family and that Argus deliberately does not
+carry. The 4-bytes-per-token ratio is the usual rule of thumb for English and
+code; substitute your model's real ratio if you know it. The figure is pinned by
+a regression test, so it is kept honest rather than remembered.
+:::
 
 **8,953 B is a floor on the overhead, not a ceiling.** Three things push your
 real figure above it:
@@ -133,7 +140,7 @@ turns doing it. Not fatal, but it converts turn budget into noise.
 **7. Output ceiling.** A low server-side cap on output tokens truncates a long
 Report mid-write. Set `max_output_tokens` on the provider entry to raise the
 client-side request ceiling — see
-[Configuration](configuration.md#llm-providers).
+[Configuration](/guide/configuration/#llm-providers).
 
 It's worth being explicit about why that key exists: **the failure it prevents
 is silent.** A truncated Report is not an error, it's a mutilated file — the
@@ -205,10 +212,9 @@ That ordering has a price, and it is better named here than discovered: **an
 endpoint that serves `/chat/completions` but not `/models` fails the probe, and
 fails it blockingly, even though Argus itself would run against it fine.** Argus
 only ever posts to `/chat/completions`; the listing exists for verification.
-Enumerate first, spend nothing is the order
-[ADR 0020](../adr/0020-openai-compatible-provider.md) settled on, and this is
-its cost, paid knowingly. The failing row ends by asking you to report the
-endpoint.
+Enumerate first, spend nothing is the order Argus deliberately settled on, and
+this is its cost, paid knowingly. The failing row ends by asking you to report
+the endpoint.
 
 Please do. If yours is usable but unlistable:
 
@@ -257,11 +263,9 @@ same probe output. A known-bad model documented is more useful than a gap.
 **Prompts were written against Gemini — untested elsewhere.** SOUL and the
 agent instructions were authored and tuned against Gemini models. Whether other
 model families need different phrasing is **unanswered**, because answering it
-means testing models this project does not have. It is recorded as a known risk
-rather than mitigated
-([ADR 0020](../adr/0020-openai-compatible-provider.md)). If output quality on a
-non-Gemini model is worse than you expected, prompt phrasing is a plausible
-cause and worth reporting.
+means testing models this project does not have. It is a known risk, stated
+rather than mitigated. If output quality on a non-Gemini model is worse than you
+expected, prompt phrasing is a plausible cause and worth reporting.
 
 **No retry, no backoff.** A failed request fails the turn. This matches the
 Gemini provider, which has none either — it is the current bar, not a
@@ -277,5 +281,4 @@ and authenticates with an `api-key` header rather than
 not work.
 
 **No spend control.** Argus reports token counts and bounds nothing. See
-[Configuration](configuration.md#cost-visibility) and
-[ADR 0021](../adr/0021-cost-controls-removed.md).
+[Configuration](/guide/configuration/#cost-visibility).
