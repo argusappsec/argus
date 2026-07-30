@@ -187,8 +187,16 @@ the files it wants, the agent pulls them on demand.
 
 Skills compose existing Tools; they never define new ones. If a skill
 references a Tool that isn't registered, the agent simply doesn't have
-that capability and adapts. RBAC is enforced at the Tool layer, not in
-the skill: a skill cannot escalate the caller's permissions.
+that capability and adapts. **A skill cannot escalate the caller's
+permissions** — because it adds no capability, not because anything
+checks it. A skill's entire effect is markdown entering the
+conversation: the callable surface is assembled by the Session at
+creation (`buildRegistry`), plus any request-scoped tools its Channel
+layers on for that turn, and no skill contributes to either. Whatever the
+caller could reach by typing the request themselves is exactly what a
+skill reaches for them. Per-Role gating of that surface belongs at the
+Tool layer and **is not built**: the shared registry carries no Role at
+all (see **Role**), and ADR 0005 calls Tool-layer RBAC a no-op today.
 
 Override is **whole-bundle**: a user-curated skill that owns a name wins the
 entire directory (body *and* supporting files) over the built-in of that
@@ -211,8 +219,14 @@ the agent as one turn — deterministic, with no dependence on the model
 choosing to call `read_skill`. The body enters the conversation, so it
 stays in context for follow-up turns.
 
-Skills are an analyst+ capability (viewers can't use them), enforced at the
-Tool layer once channel auth (stream A) lands.
+Skills are *intended* as an analyst+ capability, and nothing enforces that
+today: `list_skills`, `read_skill` and `read_skill_file` sit in every
+Session's registry whatever the caller's Role, and `/<name>` resolves
+against the catalog without a Role check. The gate arrives with the
+Tool-layer enforcement above, once channel auth (stream A) lands.
+**Contradicts ADR 0005**, whose RBAC section states that gate as present
+fact ("`list_skills` and `read_skill` are gated behind the **analyst**
+role"); read its no-op line, cited above, instead.
 
 ---
 

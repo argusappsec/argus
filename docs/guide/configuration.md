@@ -91,8 +91,8 @@ Argus implements the protocol and certifies nobody's server, so read
 | --- | --- | --- |
 | `type` | yes | `gemini` or `openai-compatible`. An unknown value is an error naming the supported types |
 | `api_key` | in practice | The secret, inline or `env(...)`. See below |
-| `url` | no | Base URL. Empty means the provider's default endpoint |
-| `max_output_tokens` | no | Client-side cap on response length. Omitted means no ceiling is sent |
+| `url` | no | Base URL. Empty means the provider's default endpoint. `openai-compatible` only — a `gemini` entry ignores it |
+| `max_output_tokens` | no | Client-side cap on response length. Omitted means no ceiling is sent. `openai-compatible` only — on a `gemini` entry a non-zero value is an error |
 
 **`api_key`** is not a schema requirement — no key is a valid configuration, and
 for `openai-compatible` it is a **useful** one: a local runtime that
@@ -108,7 +108,11 @@ fallback.
 endpoint — for `openai-compatible` that's `https://api.openai.com/v1`, so
 pointing at OpenAI itself needs no `url`. Take the base URL from `argus init`'s
 preset list rather than from memory: **the `/v1` suffix is this protocol's
-sharpest footgun**, and services disagree about it.
+sharpest footgun**, and services disagree about it. It is honoured by
+`openai-compatible` only: the Gemini client takes no endpoint, so a `url` on a
+`gemini` entry is resolved and then **dropped** — it changes nothing, and
+nothing warns you it didn't. Don't read it as a way to route Gemini traffic
+through a proxy of your own: it isn't one.
 
 ```yaml
 providers:
@@ -144,7 +148,13 @@ comes back **truncated mid-write — a mutilated file, not an error**. The run
 succeeds and the last section simply isn't there. You cannot change a hosted
 server's default, so raising the ceiling from the client side is the only fix
 available. Omitting the key sends no ceiling at all, which is both the default
-and the ecosystem norm.
+and the ecosystem norm. It too is honoured by `openai-compatible` only — but
+here a non-zero value on a `gemini` entry is an **error**, not an ignored
+setting: the Gemini client accepts no output ceiling, and a lever that quietly
+does nothing hands you the very truncated Report the key exists to prevent.
+(That's the one asymmetry with `url` above, which is dropped instead of refused:
+an endpoint that is never read corrupts nothing on the way past.) Zero stays
+valid everywhere, so simply omit the key on `gemini` entries.
 
 ### Model ids and which provider serves them
 
@@ -209,8 +219,8 @@ aggregate.
 | `default_model` | Model used by the agent unless a session overrides it; bare or `<provider>/<model-id>` |
 | `providers.<name>.type` | Protocol the provider speaks (`gemini`, `openai-compatible`) |
 | `providers.<name>.api_key` | API key, inline or `env(...)`; optional for `openai-compatible` |
-| `providers.<name>.url` | Base URL; empty means the provider's default endpoint |
-| `providers.<name>.max_output_tokens` | Client-side cap on response length; omitted sends no ceiling |
+| `providers.<name>.url` | Base URL; empty means the provider's default endpoint; ignored on a `gemini` entry |
+| `providers.<name>.max_output_tokens` | Client-side cap on response length; omitted sends no ceiling; a non-zero value is an error on a `gemini` entry |
 | `persona.name` | The instance's name; used as the vocative on GitHub threads |
 | `daemon.socket` | Unix socket path for the local TUI |
 | `daemon.http_addr` | Bind address of the single HTTP front door |

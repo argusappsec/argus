@@ -338,6 +338,13 @@ type ProviderConfig struct {
 	// back truncated mid-write — a mutilated file rather than an error. An
 	// operator cannot change a hosted server's default, so raising the ceiling
 	// from the client side is the only fix available to them.
+	//
+	// Honoured by openai-compatible only: the Gemini client accepts no output
+	// ceiling, so a non-zero value on a `gemini` entry is an error from the
+	// Provider factory rather than an ignored setting — a lever that quietly
+	// does nothing delivers the same mutilated Report it exists to prevent.
+	// Zero stays valid for every type. provider.Spec documents this and the
+	// opposite choice made for a base URL.
 	MaxOutputTokens int `yaml:"max_output_tokens,omitempty"`
 }
 
