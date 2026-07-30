@@ -14,7 +14,10 @@ import (
 
 	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/daemon"
 	"github.com/argusappsec/argus/pkg/doctor"
+	"github.com/argusappsec/argus/pkg/provider"
+	"github.com/argusappsec/argus/pkg/provider/factory"
 	"github.com/argusappsec/argus/pkg/security"
 	"github.com/argusappsec/argus/pkg/session"
 	"github.com/argusappsec/argus/pkg/tool"
@@ -33,7 +36,11 @@ func doctorCmd() *cobra.Command {
 		Long: "Run a pre-flight check on:\n" +
 			"  • CLI binaries Argus shells out to (git, semgrep, gitleaks, osv-scanner, …)\n" +
 			"  • argus.yaml (provider configured? default model set?)\n" +
-			"  • GEMINI_API_KEY (in .env or shell)\n" +
+			"  • the API key each configured provider needs (in .env or shell)\n" +
+			"  • the LLM provider itself: for an openai-compatible endpoint, that it is\n" +
+			"    reachable, that it serves your model id, and that your model actually\n" +
+			"    emits a tool call — Argus certifies nobody's server, so this is where\n" +
+			"    verification happens\n" +
 			"  • SOUL.md (present? populated?)\n" +
 			"  • context/ (any documents on file?)\n\n" +
 			"Exit code 0 = all required checks pass; 1 = at least one required check failed.\n\n" +
@@ -56,6 +63,7 @@ func doctorCmd() *cobra.Command {
 			if !binariesOnly {
 				opts.GitHub, opts.GitHubMint = githubDoctorOptions(home)
 				opts.FrontDoorAddr, opts.FrontDoorProbe = frontDoorDoctorOptions(home)
+				opts.Provider, opts.ProviderModels, opts.ProviderToolCall = providerDoctorOptions(home)
 			}
 			checks := doctor.Run(opts)
 			renderChecks(cmd.OutOrStdout(), checks)
@@ -192,6 +200,132 @@ func githubDoctorOptions(home string) (*config.CodeHostConfig, func(context.Cont
 		return err
 	}
 	return &host, mint
+}
+
+// providerDoctorOptions resolves the LLM Provider backing the configured default
+// model and, when it is an openai-compatible one, returns the two probes that
+// verify it live.
+//
+// This is where "compatible" stops being a disclaimer (ADR 0020). Argus
+// implements a wire protocol and certifies nobody's server, so verification runs
+// on the user's machine, against the user's model, at the moment they configure
+// it. The network calls live here rather than in pkg/doctor, exactly like the
+// GitHub mint and the front-door health check.
+//
+// It builds the Provider through daemon.ProviderSpecForModel plus factory.New —
+// the same two steps the daemon takes per Session — so what doctor verifies is
+// the Provider a Review would actually get, not a second approximation of it. A
+// config that cannot be loaded or a model that resolves to no Provider returns no
+// target: the argus.yaml and api-key rows already report those.
+func providerDoctorOptions(home string) (*doctor.ProviderTarget, func(context.Context) ([]string, error), func(context.Context) (bool, error)) {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		return nil, nil, nil
+	}
+	// The api_key and url entries carry env() references; load .env so they
+	// resolve to the values the daemon would see.
+	if e, lerr := config.LoadEnv(filepath.Join(home, ".env")); lerr == nil {
+		e.ApplyToProcess()
+	}
+	spec, err := daemon.ProviderSpecForModel(cfg, cfg.DefaultModel)
+	if err != nil {
+		return nil, nil, nil
+	}
+
+	target := &doctor.ProviderTarget{Type: spec.Type, Model: spec.Model, Endpoint: spec.BaseURL}
+	if spec.Type != provider.TypeOpenAICompatible {
+		// No probes: the capability probe is this protocol's, and doctor says so
+		// on the row rather than inventing a check that cannot run.
+		return target, nil, nil
+	}
+	if target.Endpoint == "" {
+		// An empty BaseURL means "the implementation's default", which is what the
+		// row has to name for the operator to recognize the endpoint being probed.
+		target.Endpoint = factory.DefaultOpenAICompatibleBaseURL
+	}
+
+	// Constructed once, up front: both probes talk to the same endpoint, and a
+	// construction failure (a base URL that is not a URL, an unimplemented type)
+	// is reported through the first probe rather than swallowed into a row that
+	// claims nothing was attempted.
+	prov, buildErr := factory.New(context.Background(), spec)
+
+	// /models is not on provider.Provider — it is the one question only this
+	// protocol can answer. Asserted structurally so cmd needs no import of a
+	// concrete implementation, and asserted here rather than inside the closure so
+	// that a Provider which cannot list models leaves the probe unwired: doctor
+	// then says the listing was not attempted, instead of mistaking "cannot ask"
+	// for "the endpoint listed nothing".
+	lister, canList := prov.(interface {
+		ListModels(context.Context) ([]string, error)
+	})
+
+	var models func(ctx context.Context) ([]string, error)
+	if canList || buildErr != nil {
+		models = func(ctx context.Context) ([]string, error) {
+			if buildErr != nil {
+				return nil, buildErr
+			}
+			// A short deadline: this is one small GET, and a doctor run that hangs
+			// on an unresponsive endpoint teaches the operator nothing.
+			ctx, cancel := context.WithTimeout(ctx, providerListTimeout)
+			defer cancel()
+			return lister.ListModels(ctx)
+		}
+	}
+
+	toolCall := func(ctx context.Context) (bool, error) {
+		if buildErr != nil {
+			return false, buildErr
+		}
+		// Longer than the listing deadline on purpose: a local runtime may have to
+		// load the model into memory before it answers at all.
+		ctx, cancel := context.WithTimeout(ctx, providerGenerateTimeout)
+		defer cancel()
+		resp, err := prov.Generate(ctx, toolCallProbeRequest())
+		if err != nil {
+			// Returned as it is. An endpoint that refuses tool declarations has
+			// already had that client error translated by the adapter into a plain
+			// statement that the model does not support tool calling, with the
+			// server's own words kept after it — rewriting it here would only bury
+			// the verdict.
+			return false, err
+		}
+		// The assertion is on a tool call arriving, not on a 200: servers that
+		// accept tool declarations and then ignore them answer 200 with prose.
+		return len(resp.ToolCalls) > 0, nil
+	}
+
+	return target, models, toolCall
+}
+
+const (
+	providerListTimeout     = 10 * time.Second
+	providerGenerateTimeout = 60 * time.Second
+)
+
+// toolCallProbeRequest is the smallest generation that can prove a model emits
+// tool calls: one throwaway tool, one sentence asking for it, no history. Small
+// on purpose — the probe runs on every `argus doctor`, and it must cost the
+// operator as close to nothing as a generation can.
+func toolCallProbeRequest() provider.Request {
+	return provider.Request{
+		System: "You are a capability probe. Call the provided tool exactly once. Do not answer in prose.",
+		Messages: []provider.Message{
+			{Role: "user", Content: "Call the argus_probe tool with ok set to true."},
+		},
+		Tools: []provider.ToolDecl{{
+			Name:        "argus_probe",
+			Description: "Confirms this model can call a tool. Call it once with ok set to true.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ok": map[string]any{"type": "boolean", "description": "Always true."},
+				},
+				"required": []string{"ok"},
+			},
+		}},
+	}
 }
 
 // frontDoorDoctorOptions inspects argus.yaml for a configured HTTP channel
