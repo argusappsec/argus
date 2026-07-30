@@ -73,9 +73,10 @@ fits. Instead:
   because Argus roots trust in *daemon-host ownership* (ADR 0007), not in
   GitHub-org ownership: when the App administrator and the Argus operator
   are **not** the same entity, install-implies-enabled would let a
-  GitHub-org admin spend Argus's LLM budget and expose its SOUL on repos
-  the Argus operator never chose. `auto_enroll: true` (the default for the
-  common single-owner deployment) makes installation sufficient;
+  GitHub-org admin spend the Argus operator's LLM tokens — an amount
+  nothing bounds — and expose its SOUL on repos the Argus operator never
+  chose. `auto_enroll: true` (the default for the common single-owner
+  deployment) makes installation sufficient;
   `auto_enroll: false` requires an Argus admin to enable a repo before the
   first review runs.
 

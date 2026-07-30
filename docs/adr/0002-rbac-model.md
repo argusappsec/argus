@@ -1,6 +1,9 @@
 # ADR 0002 — RBAC model: three Person roles + scoped Service principals
 
-**Status:** Accepted
+**Status:** Accepted — amended by
+[ADR 0021](0021-cost-controls-removed.md): the "global budget cap" this ADR
+invokes as an `admin` power and as the guardrail on `viewer` chat spend was
+never built; nothing bounds spend
 **Date:** 2026-05-16
 **Builds on:** [ADR 0001](0001-single-shared-daemon-per-organization.md)
 
@@ -30,7 +33,9 @@ Three Person roles, two Service roles. No anonymous/guest tier.
 ### Person roles
 
 - **admin** — full power. Edits SOUL, manages other Principals,
-  configures providers and webhooks, manages cron jobs, overrides budget.
+  configures providers and webhooks, manages cron jobs. (This list also
+  read "overrides budget"; there is no budget to override — see
+  [ADR 0021](0021-cost-controls-removed.md).)
   Reads the audit log by reading the file directly via shell access:
   audit-log access is **not** a capability, it is filesystem access
   reserved to whoever owns the box. Expected count: 1–2.
@@ -40,7 +45,9 @@ Three Person roles, two Service roles. No anonymous/guest tier.
 - **viewer** — read-only consumer (CISO, PM, exec). Reads reports;
   may chat with the agent to ask questions about existing findings.
   Cannot trigger fresh reviews or write any state. Chat spend is
-  gated by the global budget cap, not by role.
+  gated by nothing: this entry originally read "gated by the global
+  budget cap, not by role", and no such cap was ever wired up — see
+  [ADR 0021](0021-cost-controls-removed.md).
 
 ### Service roles
 
@@ -72,9 +79,22 @@ guest tier, no "first-Slack-user-wins" bootstrap.
 - ci-trigger Service Principals are scoped at provisioning (one
   webhook secret = one repo). Reviewing a different repo requires a
   different secret. Cross-repo escalation requires admin action.
-- viewer can chat. This is a deliberate choice: the budget cap is the
-  guardrail against runaway token spend, not the role boundary. Letting
-  a CISO ask "explain finding #3" is a feature, not a bug.
+- viewer can chat. **The decision stands** — letting a CISO ask "explain
+  finding #3" is a feature, not a bug — but the compensating control it
+  rested on does not exist. This bullet originally read "the budget cap
+  is the guardrail against runaway token spend, not the role boundary".
+  No budget cap was ever constructed
+  ([ADR 0021](0021-cost-controls-removed.md)), so the clause naming what
+  bounds a viewer's token spend named nothing: this ADR let `viewer` chat
+  against a guardrail that was never there. The role boundary above is
+  the whole of it — the Role is read-only on *state*, and **nothing
+  bounds what a viewer costs.** The two limits that do exist bound
+  concurrency and runaway loops, not spend: `max_concurrent_sessions`
+  caps how many Sessions run at once, and the agent's turn ceiling (50 by
+  default) ends a single `agent.Run` with `agent.ErrMaxTurnsExceeded` —
+  one run, not a Session's total and not a day's. Whether the Role should
+  carry a real spend control is a separate and still-open question; see
+  ADR 0021.
 
 ## Alternatives considered
 

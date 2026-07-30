@@ -1,7 +1,9 @@
 # ADR 0018 — Automatic, Service-triggered reviews are least-privilege
 
 **Status:** Accepted (implementation phased) — **supersedes the `auto_enroll`
-default** set in [ADR 0008](0008-github-channel-as-github-app.md)
+default** set in [ADR 0008](0008-github-channel-as-github-app.md); amended by
+[ADR 0021](0021-cost-controls-removed.md): the "global budget cap" this ADR
+names as the hard spend backstop was never built; there is no spend backstop
 **Date:** 2026-07-13
 **Builds on:** [ADR 0003](0003-user-table-and-bootstrap.md), [ADR 0008](0008-github-channel-as-github-app.md)
 
@@ -26,9 +28,16 @@ promises:
 
 2. **Anyone can trigger it by default.** `auto_enroll` unset defaulted to
    `true` (ADR 0008), so installing the App org-wide auto-reviews every repo,
-   public ones included — maximal exposure to injection attempts and to LLM
-   budget exhaustion (a stranger spamming PRs can DoS legitimate reviews; there
-   is no per-author rate limit, only a global budget cap).
+   public ones included — maximal exposure to injection attempts and to
+   unbounded LLM spend (a stranger spamming PRs can DoS legitimate reviews and
+   run up the operator's bill). The parenthetical here originally read "there
+   is no per-author rate limit, only a global budget cap". Its first half is
+   still true; its second half named a control that did not exist. There was
+   no rate limit **and** no cap — `pkg/budget`'s per-day ceiling was never
+   constructed ([ADR 0021](0021-cost-controls-removed.md)) — so this vector
+   was already unmitigated when this ADR was written, exactly as it is now.
+   Deleting the cap did not create the vector; it removed the sentence that
+   claimed the vector was covered.
 
 ## Decision
 
@@ -43,9 +52,15 @@ can *do* and what can *trigger* it.**
   TUI/chat. A run driven by untrusted code can inform its own report but can
   never durably teach the organization.
 - **Opt-in enrollment.** `auto_enroll` unset now defaults to **`false`**: an
-  Argus admin explicitly enrolls the repos to be auto-reviewed. The global
-  budget cap remains the hard spend backstop; per-author / per-repo rate
-  limiting is a later phase.
+  Argus admin explicitly enrolls the repos to be auto-reviewed. This clause
+  originally continued "the global budget cap remains the hard spend backstop;
+  per-author / per-repo rate limiting is a later phase". **There is no spend
+  backstop, and there never was**
+  ([ADR 0021](0021-cost-controls-removed.md)): enrollment bounds *who* can
+  trigger a run, and nothing bounds what those runs cost. The limits that do
+  exist bound concurrency and runaway loops — `max_concurrent_sessions` and
+  the agent's turn ceiling (50 by default) — not a day's spend. Per-author /
+  per-repo rate limiting remains a later phase.
 
 ## Consequences
 
