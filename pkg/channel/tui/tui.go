@@ -102,13 +102,12 @@ type AgentMessageMsg struct {
 	Message provider.Message
 }
 
-// AgentUsageMsg reports the token and cost delta of one LLM call. Dispatched
-// by the cmd/chat.go runner after each agent turn (cost is computed using
-// pkg/budget against the active pricing table).
+// AgentUsageMsg reports the token delta of one LLM call. Dispatched by the
+// cmd/chat.go runner after each agent turn. Tokens are the whole readout;
+// pricing them is the operator's business (daemon.RunCallbacks.OnUsage).
 type AgentUsageMsg struct {
 	InputTokens  int
 	OutputTokens int
-	CostUSD      float64
 }
 
 // AgentDoneMsg signals the agent loop terminated normally.
@@ -164,7 +163,6 @@ type Model struct {
 
 	// Cumulative usage for the status bar.
 	tokensIn, tokensOut int
-	costUSD             float64
 }
 
 // New constructs a Model with empty history and a configured text input.
@@ -291,7 +289,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentUsageMsg:
 		m.tokensIn += msg.InputTokens
 		m.tokensOut += msg.OutputTokens
-		m.costUSD += msg.CostUSD
 		return m, nil
 
 	case autoSubmitMsg:
@@ -537,9 +534,6 @@ func (m Model) statusLine() string {
 		fmt.Sprintf("%s %s",
 			m.styles.statusLabel.Render("out:"),
 			m.styles.statusValue.Render(fmt.Sprintf("%d", m.tokensOut))),
-		fmt.Sprintf("%s %s",
-			m.styles.statusLabel.Render("cost:"),
-			m.styles.statusValue.Render(fmt.Sprintf("$%.4f", m.costUSD))),
 	}
 	line := strings.Join(parts, m.styles.statusDivide.Render(" │ "))
 
@@ -661,9 +655,6 @@ func (m Model) TokensIn() int { return m.tokensIn }
 
 // TokensOut returns the cumulative output tokens consumed in this session.
 func (m Model) TokensOut() int { return m.tokensOut }
-
-// CostUSD returns the cumulative USD cost of this session.
-func (m Model) CostUSD() float64 { return m.costUSD }
 
 // WithInput returns a new Model with the input box pre-populated. Used by
 // tests to avoid simulating keystroke-by-keystroke entry; the height syncs

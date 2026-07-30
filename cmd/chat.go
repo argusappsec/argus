@@ -99,7 +99,6 @@ func receiveLoop(c *uds.Client, program *tea.Program) {
 			program.Send(tui.AgentUsageMsg{
 				InputTokens:  f.InputTokens,
 				OutputTokens: f.OutputTokens,
-				CostUSD:      f.CostUSD,
 			})
 		case uds.TypeDone:
 			program.Send(tui.AgentDoneMsg{})

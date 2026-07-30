@@ -125,6 +125,35 @@ func TestRun_DetectsConfiguredProvider(t *testing.T) {
 	t.Error("no argus.yaml check produced")
 }
 
+func TestRun_BlocksWhenDefaultModelResolvesToNoProvider(t *testing.T) {
+	// Two providers and a bare model id matching neither: nothing Argus does can
+	// start a Session, so doctor must not report the config as ready.
+	home := t.TempDir()
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"groq":       {Type: "openai-compatible", URL: "https://api.groq.com/openai/v1"},
+			"openrouter": {Type: "openai-compatible", URL: "https://openrouter.ai/api/v1"},
+		},
+		DefaultModel: "some-model",
+	}
+	if err := config.SaveConfig(filepath.Join(home, "argus.yaml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "")
+
+	checks := doctor.Run(doctor.Options{Home: home})
+	c := findCheck(checks, "argus.yaml")
+	if c == nil || c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
+		t.Fatalf("check = %+v, want a blocking Fail", c)
+	}
+	if !strings.Contains(c.Hint, "some-model") {
+		t.Errorf("hint should name the unresolvable model id: %q", c.Hint)
+	}
+	if !doctor.Summarize(checks).HasBlockingFailure() {
+		t.Error("a default_model that names no configured provider must block")
+	}
+}
+
 func TestRun_SurfacesLegacyConfigKeyError(t *testing.T) {
 	home := t.TempDir()
 	// A config v2 legacy key: LoadConfig hard-errors with a message naming the
@@ -143,29 +172,9 @@ func TestRun_SurfacesLegacyConfigKeyError(t *testing.T) {
 	}
 }
 
-func TestRun_FlagsMissingAPIKey(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("PATH", "")
-	t.Setenv("GEMINI_API_KEY", "")
-
-	checks := doctor.Run(doctor.Options{Home: home})
-
-	for _, c := range checks {
-		if c.Name == "GEMINI_API_KEY" {
-			if c.Status != doctor.Fail {
-				t.Errorf("missing key should be Fail")
-			}
-			if c.Severity != doctor.SeverityRequired {
-				t.Errorf("missing key should be Required")
-			}
-			if !strings.Contains(c.Hint, "init") {
-				t.Errorf("hint should mention `argus init`: %q", c.Hint)
-			}
-			return
-		}
-	}
-	t.Error("no GEMINI_API_KEY check produced")
-}
+// The API-key rows are derived from the configured Providers rather than from a
+// hardcoded Gemini literal, so their tests — including the missing-key case that
+// used to live here — are in provider_test.go alongside the severity matrix.
 
 func TestRun_DetectsSoulPresence(t *testing.T) {
 	home := t.TempDir()
@@ -355,11 +364,18 @@ func TestRun_BinariesOnly_SkipsNonBinaryChecks(t *testing.T) {
 		ExtraBinaries: []doctor.ExtraBinary{
 			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
 		},
+		// Supplied on purpose: the image-contract check must not reach the network
+		// even when the caller has a Provider to probe.
+		Provider: &doctor.ProviderTarget{Type: "openai-compatible", Model: "m", Endpoint: "http://x/v1"},
+		ProviderModels: func(context.Context) ([]string, error) {
+			t.Error("binaries-only mode must not probe the LLM provider")
+			return nil, nil
+		},
 	})
 
 	for _, c := range checks {
 		switch c.Name {
-		case "argus.yaml", "GEMINI_API_KEY", "SOUL.md", "context/", "github":
+		case "argus.yaml", "gemini api key", "llm provider", "SOUL.md", "context/", "github":
 			t.Errorf("non-binary check %q must not run in binaries-only mode", c.Name)
 		}
 	}

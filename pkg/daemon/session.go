@@ -12,7 +12,6 @@ import (
 	"github.com/argusappsec/argus/pkg/agent"
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/conversation"
 	"github.com/argusappsec/argus/pkg/provider"
@@ -36,9 +35,12 @@ var ErrUnknownSkill = errors.New("daemon: unknown skill")
 type RunCallbacks struct {
 	// OnMessage receives every message appended to the run's history.
 	OnMessage func(provider.Message)
-	// OnUsage receives per-LLM-call token usage with the daemon-computed
-	// USD cost (clients never see the pricing table).
-	OnUsage func(u provider.Usage, costUSD float64)
+	// OnUsage receives the token usage of one LLM call. Tokens are the whole
+	// readout: they come from the provider's own usage response, so they are
+	// right for every model and endpoint, which is more than a hardcoded price
+	// table could manage. Argus reports what a run consumed and leaves pricing
+	// it to the operator, who has their provider's rates.
+	OnUsage func(u provider.Usage)
 }
 
 // Session is one running conversation between a Principal and the agent.
@@ -48,7 +50,6 @@ type Session struct {
 	id        string
 	channel   string
 	principal auth.Principal
-	modelID   string
 	maxTurns  int
 	ephemeral bool // one-shot Session: skip end-of-session memory curation
 
@@ -70,7 +71,6 @@ type Session struct {
 	usageMu   sync.Mutex
 	tokensIn  int
 	tokensOut int
-	costUSD   float64
 }
 
 // ID returns the session identifier (hash of channel + conversation key).
@@ -357,10 +357,9 @@ func (s *Session) run(ctx context.Context, seed []provider.Message, target agent
 			}
 		},
 		OnUsage: func(u provider.Usage) {
-			cost := budget.CostFor(s.dc.Pricing, s.modelID, u.InputTokens, u.OutputTokens)
-			s.recordUsage(u, cost)
+			s.recordUsage(u)
 			if cb.OnUsage != nil {
-				cb.OnUsage(u, cost)
+				cb.OnUsage(u)
 			}
 		},
 	})
@@ -426,19 +425,18 @@ func (s *Session) userMessages() int {
 	return s.userMsgs
 }
 
-func (s *Session) recordUsage(u provider.Usage, cost float64) {
+func (s *Session) recordUsage(u provider.Usage) {
 	s.usageMu.Lock()
 	s.tokensIn += u.InputTokens
 	s.tokensOut += u.OutputTokens
-	s.costUSD += cost
 	s.usageMu.Unlock()
 }
 
-// Usage returns the Session's cumulative token and cost counters.
-func (s *Session) Usage() (tokensIn, tokensOut int, costUSD float64) {
+// Usage returns the Session's cumulative token counters.
+func (s *Session) Usage() (tokensIn, tokensOut int) {
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
-	return s.tokensIn, s.tokensOut, s.costUSD
+	return s.tokensIn, s.tokensOut
 }
 
 // buildRegistry assembles the per-Session tool registry around its tool

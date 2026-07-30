@@ -12,7 +12,6 @@ import (
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/codehost"
 	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/daemon"
@@ -132,7 +131,6 @@ func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server
 	dc := &daemon.Context{
 		Home:         home,
 		DefaultModel: "gemini-2.5-flash",
-		Pricing:      budget.Pricing{"gemini-2.5-flash": {InputUSDPer1M: 1, OutputUSDPer1M: 2}},
 		Auth:         auth.NewResolver(usersPath),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),

@@ -1,10 +1,16 @@
 // Package doctor implements `argus doctor` — pre-flight check of the
 // runtime environment. It verifies that required and optional dependencies
-// are present, that the user's home directory is configured, and that an
-// LLM API key is reachable.
+// are present, that the user's home directory is configured, that each
+// configured LLM Provider's API key is reachable, and — for a Provider whose
+// protocol allows it to be asked — that the endpoint and model actually meet
+// what Argus needs of them.
 //
 // The checks are pure (only filesystem + os/exec.LookPath) so they are
-// cheap to run and easy to test without touching the network.
+// cheap to run and easy to test without touching the network. Everything that
+// does touch the network — minting a GitHub token, the front-door health check,
+// the Provider capability probe — arrives as an injected function field on
+// Options, so the call lives in the caller and this package stays testable by
+// substitution.
 package doctor
 
 import (
@@ -93,13 +99,34 @@ type Options struct {
 	// probed.
 	FrontDoorProbe func(ctx context.Context) error
 
+	// Provider, when non-nil, adds a check of the LLM Provider backing the
+	// configured default model (ADR 0020): the same Provider the daemon would
+	// build. Nil means the caller could not identify one, and the argus.yaml and
+	// api-key rows already say why.
+	Provider *ProviderTarget
+
+	// ProviderModels lists the model ids the endpoint reports (GET /models). It is
+	// the cheapest question worth asking — one request settles reachability, key
+	// validity and the existence of the configured model id, all before a token is
+	// spent — so it runs first. Injected, like every other probe here, so the
+	// network call lives in the caller. Nil means the listing is not attempted.
+	ProviderModels func(ctx context.Context) ([]string, error)
+
+	// ProviderToolCall performs one minimal generation carrying a throwaway tool
+	// declaration and reports whether the response actually contained a tool call.
+	// It is a separate stage because it answers a separate question: servers that
+	// accept tool declarations and then ignore them pass ProviderModels and fail
+	// here. Nil means the generation is not attempted.
+	ProviderToolCall func(ctx context.Context) (bool, error)
+
 	// BinariesOnly restricts Run to the image-contract check (ADR 0013):
 	// only binary checks execute, and every binary is treated as blocking
 	// (Required) regardless of its per-tool "optional" severity. This is the
 	// check CI runs against the batteries-included image — inside the official
 	// image "optional" does not exist; everything the image promises is owed.
-	// Non-binary checks (config, API key, SOUL, context, GitHub) are skipped
-	// and cannot affect the outcome.
+	// Non-binary checks (config, API keys, the LLM Provider probe, SOUL, context,
+	// GitHub, the front door) are skipped and cannot affect the outcome — which
+	// also means the image contract never reaches the network.
 	BinariesOnly bool
 }
 
@@ -116,6 +143,11 @@ func Run(opts Options) []Check {
 	var out []Check
 	out = append(out, binaryChecks(opts.Registry, opts.ExtraBinaries)...)
 	out = append(out, configChecks(opts.Home)...)
+	// Straight after the configuration rows: those say what is configured, this
+	// one says whether it works.
+	if opts.Provider != nil {
+		out = append(out, providerCheck(*opts.Provider, opts.ProviderModels, opts.ProviderToolCall))
+	}
 	out = append(out, soulCheck(opts.Home))
 	out = append(out, contextCheck(opts.Home))
 	if opts.GitHub != nil {
@@ -264,33 +296,38 @@ func configChecks(home string) []Check {
 		yamlCheck.Status = Fail
 		yamlCheck.Hint = "incomplete config; run `argus init` to (re-)populate"
 	default:
-		yamlCheck.Status = Pass
 		var providerNames []string
 		for name := range cfg.Providers {
 			providerNames = append(providerNames, name)
 		}
+		// A default_model that resolves to no configured Provider — or to several —
+		// is a config no Session can start, and until this ran doctor reported a
+		// pass for it and left the operator to discover it mid-Review. The rule set
+		// is config's, and so is the message: it already names the candidates, the
+		// ambiguity, and the qualified `<provider>/<model-id>` form to write
+		// instead. Blocking, unlike the rest of this row: the failure is
+		// unambiguous, purely local, and total.
+		if _, _, _, rerr := cfg.ProviderForModel(cfg.DefaultModel); rerr != nil {
+			yamlCheck.Status = Fail
+			yamlCheck.Severity = SeverityRequired
+			yamlCheck.Hint = fmt.Sprintf("provider=%s, but default_model=%s resolves to none of them: %v", joinSorted(providerNames), cfg.DefaultModel, rerr)
+			break
+		}
+		yamlCheck.Status = Pass
 		yamlCheck.Message = fmt.Sprintf("provider=%s, default_model=%s", joinSorted(providerNames), cfg.DefaultModel)
 	}
 	out = append(out, yamlCheck)
 
-	// .env / GEMINI_API_KEY (load .env into the process if not already)
+	// Credentials, one row per configured Provider. The .env file is applied to
+	// the process first so the env() references in those entries resolve.
 	envPath := filepath.Join(home, ".env")
 	if e, lerr := config.LoadEnv(envPath); lerr == nil {
 		e.ApplyToProcess()
 	}
-	keyCheck := Check{Name: "GEMINI_API_KEY", Severity: SeverityRequired}
-	if v := os.Getenv("GEMINI_API_KEY"); v != "" {
-		keyCheck.Status = Pass
-		source := "shell environment"
-		if _, err := os.Stat(envPath); err == nil {
-			source = envPath
-		}
-		keyCheck.Message = "set (source: " + source + ")"
-	} else {
-		keyCheck.Status = Fail
-		keyCheck.Hint = "run `argus init` to configure your provider and API key"
-	}
-	out = append(out, keyCheck)
+	// A config that failed to load yields a nil cfg; apiKeyChecks reads that as
+	// "no Providers known" and reports the fallback credential, which is what
+	// Argus would actually reach for.
+	out = append(out, apiKeyChecks(cfg, envPath)...)
 
 	return out
 }

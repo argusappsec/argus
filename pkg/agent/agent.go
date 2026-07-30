@@ -59,7 +59,7 @@ type Options struct {
 	OnMessage func(provider.Message)
 
 	// OnUsage, if non-nil, is invoked once per LLM call with the token usage
-	// of that call. Used by UIs to maintain a cumulative cost/token counter.
+	// of that call. Used by UIs to maintain a cumulative token counter.
 	OnUsage func(provider.Usage)
 
 	// Memory is the curated cross-session memory (typically the content of

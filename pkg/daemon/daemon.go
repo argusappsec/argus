@@ -21,12 +21,10 @@ import (
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
-	"github.com/argusappsec/argus/pkg/budget"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/provider"
-	"github.com/argusappsec/argus/pkg/provider/gemini"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
 	"github.com/argusappsec/argus/pkg/soul"
@@ -47,7 +45,6 @@ type Context struct {
 	Home         string
 	DefaultModel string
 	SocketPath   string
-	Pricing      budget.Pricing
 
 	// PersonaName is the operator-chosen name this instance answers to
 	// (persona.name in argus.yaml), or "" for the brand default. Like the rest
@@ -71,6 +68,11 @@ type Context struct {
 	// NewProvider builds a provider for modelID, validating it against the
 	// configured providers. Called once per Session (cheap), so a --model
 	// override is a per-Session concern, never a daemon restart.
+	//
+	// modelID is the id as configured or overridden, which may carry a
+	// `provider-name/` qualification: resolving it to a Provider — and to the
+	// bare id that Provider puts on the wire — is this constructor's job, so
+	// callers pass what the operator wrote and record that same form.
 	NewProvider func(ctx context.Context, modelID string) (provider.Provider, error)
 
 	// LoadSoul / LoadMemory snapshot SOUL.md / MEMORY.md. Called at Session
@@ -112,7 +114,6 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		Home:         home,
 		DefaultModel: cfg.DefaultModel,
 		SocketPath:   cfg.Daemon.SocketPath(home),
-		Pricing:      defaultPricing(),
 		PersonaName:  strings.TrimSpace(cfg.Persona.Name),
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
 		Audit:        aud,
@@ -156,45 +157,4 @@ func (dc *Context) Close() error {
 		return dc.Audit.Close()
 	}
 	return nil
-}
-
-// providerFactory returns the per-Session provider constructor. The model id
-// must map to a configured provider family (argus.yaml), with a direct
-// GEMINI_API_KEY fallback for installs that exported the var but never ran
-// `argus init`.
-func providerFactory(cfg *config.Config) func(ctx context.Context, modelID string) (provider.Provider, error) {
-	return func(ctx context.Context, modelID string) (provider.Provider, error) {
-		apiKey, err := resolveAPIKey(cfg, modelID)
-		if err != nil {
-			return nil, err
-		}
-		return gemini.New(ctx, apiKey, modelID)
-	}
-}
-
-// resolveAPIKey returns the secret for the provider that backs modelID.
-func resolveAPIKey(cfg *config.Config, modelID string) (string, error) {
-	if cfg != nil && len(cfg.Providers) > 0 {
-		tmp := &config.Config{Providers: cfg.Providers, DefaultModel: modelID}
-		if p, _, err := tmp.ProviderForDefaultModel(); err == nil {
-			return p.ResolveAPIKey()
-		}
-	}
-	if k := os.Getenv("GEMINI_API_KEY"); k != "" {
-		return k, nil
-	}
-	return "", fmt.Errorf("no provider configured for model %q", modelID)
-}
-
-// defaultPricing is the hardcoded best-effort pricing table (USD per 1M
-// tokens). The daemon owns cost computation — clients never see prices, only
-// the resulting figures in usage frames.
-func defaultPricing() budget.Pricing {
-	return budget.Pricing{
-		"gemini-2.5-flash": {InputUSDPer1M: 0.30, OutputUSDPer1M: 2.50},
-		"gemini-2.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 10.00},
-		"gemini-2.0-flash": {InputUSDPer1M: 0.10, OutputUSDPer1M: 0.40},
-		"gemini-1.5-pro":   {InputUSDPer1M: 1.25, OutputUSDPer1M: 5.00},
-		"gemini-1.5-flash": {InputUSDPer1M: 0.075, OutputUSDPer1M: 0.30},
-	}
 }

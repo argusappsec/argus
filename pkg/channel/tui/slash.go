@@ -46,9 +46,8 @@ func (m Model) runSlashCommand(line string) (Model, tea.Cmd) {
 
 	case "/cost":
 		sys := Message{
-			Role: "system",
-			Content: fmt.Sprintf("tokens in:%d out:%d  cost:$%.4f",
-				m.tokensIn, m.tokensOut, m.costUSD),
+			Role:    "system",
+			Content: fmt.Sprintf("tokens in:%d out:%d", m.tokensIn, m.tokensOut),
 		}
 		m.messages = append(m.messages, sys)
 		return m, m.printMessages(echo, sys)
@@ -129,7 +128,7 @@ func helpText() string {
 		"client-side slash commands (never reach the agent):",
 		"  /help    show this help",
 		"  /clear   wipe the chat history",
-		"  /cost    show cumulative tokens and USD spend",
+		"  /cost    show cumulative token usage (price it on your provider's rates)",
 		"  /cancel  abort the current agent run",
 		"  /quit    exit Argus",
 		"",

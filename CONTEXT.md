@@ -56,21 +56,45 @@ A named bundle of capabilities. Each Person has exactly one Role.
 
 **Person Roles**:
 - **admin** — full power. Edits SOUL, manages Persons, manages
-  cron + webhooks, configures providers, overrides budget caps. Reads the
-  audit log directly off disk (it's a file). Expected count: 1–2.
+  cron + webhooks, configures Providers. Reads the audit log directly
+  off disk (it's a file). Expected count: 1–2.
 - **analyst** — developer / security engineer. Triggers reviews, opens
   chat, writes CONTEXT, reads everything. Cannot edit SOUL or manage
   other Principals.
 - **viewer** — read-only consumer (CISO, PM, exec). Can read reports and
-  ask the agent questions via chat (consuming tokens, gated by the
-  global budget cap). Cannot trigger reviews from scratch, write context,
-  or modify any state.
+  ask the agent questions via chat or `consult`. The Role is read-only: no
+  review from scratch, no context writes, no state changes. **Enforcement
+  of that boundary lives in the channels, never in the shared Tool
+  registry.** MCP checks the Role before running `review`; the GitHub
+  channel's in-thread `suppress_finding` / `rescope_review` check it
+  themselves, the channel having built them with the commenter's Role.
+  Those three are the only refusals a viewer meets. The shared registry
+  carries no Role at all, so every Session's base tool set is identical —
+  `write_context`, `start_review_local` and `start_review_github`
+  included — and **nothing stops a viewer reaching them** once past a
+  permitted entry point: a PR comment, which has no Role gate of its own,
+  seeds the turn with the commenter's own text, and `consult`'s seed steers
+  toward prose without forbidding those tools. So a refusal is *not*
+  uniform however the agent is prompted. Closing that belongs at the Tool
+  layer and is not yet built.
+  Asking questions consumes tokens, and **no spend control is enforced**
+  on them. The two limits that do exist bound concurrency and runaway
+  loops, not cost: `max_concurrent_sessions` caps how many Sessions run at
+  once, and the agent's turn ceiling (50 by default) ends a single
+  non-terminating run. Neither bounds what a viewer costs over a day: the
+  Role's limits are about *state*, never spend. See ADR 0021.
 
 Roles apply to **Persons only**. A Service has no Role — its capabilities
 are fixed by the channel type that declares it. (Retired terms:
 **ci-trigger** and **mirror-read** were Service roles under the ADR 0003
 model, where services were provisioned rows in the user table; they died
 when services moved to channel configuration.)
+
+**Retired control**: ADR 0002 and ADR 0018 lean on a "global budget cap"
+as the guardrail on chat spend and the backstop against a stranger
+spamming PRs. No such cap was ever wired up, and the code that nominally
+held it is gone. Where those ADRs invoke it, read the limits above
+instead; ADR 0021 records the removal.
 
 **Unrecognised principal** — any inbound request whose identity does NOT
 resolve to a known Principal is rejected with a polite
@@ -163,8 +187,16 @@ the files it wants, the agent pulls them on demand.
 
 Skills compose existing Tools; they never define new ones. If a skill
 references a Tool that isn't registered, the agent simply doesn't have
-that capability and adapts. RBAC is enforced at the Tool layer, not in
-the skill: a skill cannot escalate the caller's permissions.
+that capability and adapts. **A skill cannot escalate the caller's
+permissions** — because it adds no capability, not because anything
+checks it. A skill's entire effect is markdown entering the
+conversation: the callable surface is assembled by the Session at
+creation (`buildRegistry`), plus any request-scoped tools its Channel
+layers on for that turn, and no skill contributes to either. Whatever the
+caller could reach by typing the request themselves is exactly what a
+skill reaches for them. Per-Role gating of that surface belongs at the
+Tool layer and **is not built**: the shared registry carries no Role at
+all (see **Role**), and ADR 0005 calls Tool-layer RBAC a no-op today.
 
 Override is **whole-bundle**: a user-curated skill that owns a name wins the
 entire directory (body *and* supporting files) over the built-in of that
@@ -187,8 +219,59 @@ the agent as one turn — deterministic, with no dependence on the model
 choosing to call `read_skill`. The body enters the conversation, so it
 stays in context for follow-up turns.
 
-Skills are an analyst+ capability (viewers can't use them), enforced at the
-Tool layer once channel auth (stream A) lands.
+Skills are *intended* as an analyst+ capability, and nothing enforces that
+today: `list_skills`, `read_skill` and `read_skill_file` sit in every
+Session's registry whatever the caller's Role, and `/<name>` resolves
+against the catalog without a Role check. The gate arrives with the
+Tool-layer enforcement above, once channel auth (stream A) lands.
+**Contradicts ADR 0005**, whose RBAC section states that gate as present
+fact ("`list_skills` and `read_skill` are gated behind the **analyst**
+role"); read its no-op line, cited above, instead.
+
+---
+
+## Generation
+
+### LLM Provider
+
+The LLM backend Argus generates through. A small Go interface
+(`pkg/provider`) over what the agent loop needs from a model — turn a
+system prompt, a conversation and a set of **Tool** declarations into a
+response carrying text, tool calls and a token count. The `DaemonContext`
+the **Channels** share carries a Provider *factory*, not a Provider: each
+**Session** acquires exactly one Provider through it at creation, which is
+why choosing a model is a per-Session concern and never a daemon restart.
+What the factory takes is a **Spec** — already-resolved connection info
+(type, endpoint, key, model, optional output ceiling) — owned by the
+Provider abstraction and not by the config format, so mapping `argus.yaml`
+onto a Spec is the caller's job and `pkg/provider` never learns the file
+format at all.
+
+A Provider is addressed by a `type` naming a **protocol, not a vendor** —
+hence `openai-compatible`, never `openai`. Argus implements a wire
+protocol; it does not certify anybody's server, so the type must not imply
+a relationship with one. There is one implementation per protocol, and
+today there are two: `gemini` and `openai-compatible`. The second serves
+hosted services (OpenAI, OpenRouter, Groq, Together, DeepSeek, Mistral,
+Cerebras) and local runtimes (Ollama, vLLM, LM Studio, llama.cpp) alike,
+because they all speak the same protocol. A local runtime is therefore
+*not* a Provider type — it is a server that speaks one, reached as a base
+URL on `openai-compatible`.
+
+A configured Provider carries a name as well as a type, and a Session
+selects one by a model id that must resolve to **exactly one** configured
+Provider. The canonical qualified form is `provider-name/model-id`, split
+on the first slash only, so a model id that itself contains a slash still
+qualifies unambiguously; a bare model id stays valid whenever it resolves
+to exactly one Provider on its own.
+
+The only cost signal a Provider yields is a token count, correct for every
+model and every endpoint. Argus reports it and caps nothing — no spend
+control is enforced anywhere in the daemon (see **Role**). _Avoid_: naming
+a Provider type after a vendor or a runtime; "model" for the Provider (one
+Provider serves many models); "backend"; and bare "provider" when the
+**CodeHost** is meant — that entry reserves this word for this one.
+See ADR 0020 and ADR 0021.
 
 ---
 
@@ -199,7 +282,8 @@ binding — a transport of its own (Unix socket, Slack WS) or a path on the
 daemon's single HTTP front door (`/webhooks/github`, `/mcp`); a Channel
 never owns a port of its own. All Channels coexist as goroutines inside
 the single daemon process (see ADR 0004) and share a `DaemonContext` with
-the common state (Provider, Registry, SOUL, MEMORY, Auth, audit logger, …).
+the common state (the LLM Provider factory, CodeHost, Skills, Auth, audit
+logger, report writer, SOUL/MEMORY loaders, …).
 
 ### Channel interface
 
@@ -276,8 +360,8 @@ Each implementation:
 
 One running conversation between a Principal and the agent. Has an `id`,
 a `principal`, a `channel`, a (possibly empty) target repo, a conversation
-log file, and a budget counter. A Session may produce multiple agent runs
-in sequence (one per user message).
+log file, and a cumulative token counter. A Session may produce multiple
+agent runs in sequence (one per user message).
 
 Key shapes:
 - A TUI connection is **one Session**: created at connect, destroyed at
@@ -401,7 +485,7 @@ API, on behalf of *any* channel. Inbound authentication (the webhook
 secret) is not its concern — that belongs to the Channel. GitHub
 organizations are not CodeHosts: they are installations of the same App
 on the same CodeHost. _Avoid_: "codesource", "provider" (that word is taken by the
-LLM Provider). Note the vocabulary gap a second host will expose: GitLab's
+**LLM Provider**). Note the vocabulary gap a second host will expose: GitLab's
 equivalent of a PR is a **Merge Request**, and it authenticates with a
 token rather than an App. See ADR 0010.
 

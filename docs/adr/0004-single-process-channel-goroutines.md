@@ -2,7 +2,9 @@
 
 **Status:** Accepted — amended by
 [ADR 0015](0015-integrations-declared-in-configuration.md): HTTP channels
-bind paths on the daemon's shared front door instead of owning ports
+bind paths on the daemon's shared front door instead of owning ports; and by
+[ADR 0021](0021-cost-controls-removed.md): the "per-session token budget"
+listed among what a Session owns is a counter, never a cap
 **Date:** 2026-05-16
 **Builds on:** [ADR 0001](0001-single-shared-daemon-per-organization.md)
 
@@ -57,7 +59,12 @@ lets two team members write two Channels in parallel without colliding.
 ### Concurrency
 
 - N Sessions can run in flight simultaneously. Each Session owns its own
-  `agent.Run`, its own ConvoWriter, its own per-session token budget.
+  `agent.Run`, its own ConvoWriter, its own cumulative token counter.
+  This bullet originally said "its own per-session token budget": the
+  word budget implied a per-Session cap, which was dead code and is now
+  deleted ([ADR 0021](0021-cost-controls-removed.md)). A Session counts
+  tokens and refuses nothing. The runaway-loop guard is the agent's turn
+  ceiling (50 by default), which bounds turns within one run, not spend.
 - Shared writers (audit logger, MEMORY.md updates from the curator,
   `write_context`, `users.yaml` though that's CLI-only) sit behind a
   mutex.

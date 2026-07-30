@@ -114,11 +114,13 @@ finding tramite i control tool esistenti `add_finding` / `finalize_report`.
 
 Perché una skill nativa di Argus batte l'appoggiarsi alle opzioni pubbliche:
 
-1. **Costo.** Gira sul **provider e sul budget di Argus** (`pkg/provider`,
-   incluso il backend Gemini; limitato da `pkg/budget`), non su un abbonamento
-   Claude Code separato e costoso. Nessun piano CC per sviluppatore, nessuna
-   licenza Semgrep Pro. Il tier del modello è una nostra scelta, governata dal
-   tetto di budget dell'org.
+1. **Costo.** Gira sull'**LLM Provider di Argus** (`pkg/provider`), non su un
+   abbonamento Claude Code separato e costoso. Nessun piano CC per
+   sviluppatore, nessuna licenza Semgrep Pro: un solo Provider che l'org
+   configura una volta, al tier di modello che l'org sceglie. Argus riporta i
+   token che un run ha consumato, per Session, così un operatore può
+   calcolarne il costo sulle tariffe del proprio provider — Argus non impone
+   alcun tetto di spesa.
 2. **Specializzazione.** Codifica la metodologia authz a 6 pass (§6) che gli
    strumenti pronti all'uso esplicitamente *non* hanno. È la differenza tra il
    78% di FP e un segnale utilizzabile.
