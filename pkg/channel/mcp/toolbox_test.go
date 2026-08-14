@@ -22,6 +22,15 @@ import (
 // Argus has no system prompt to push it into.
 var knowledgeTools = []string{"list_context", "read_context", "write_context"}
 
+// deterministicSurface is every Tool the Registry admits, in the order a client
+// reads them out of tools/list. Each slice of the Toolbox work contributes its
+// own names to it — the scanners here, the knowledge above — so that the
+// listing is asserted exactly, in one place, against the whole of what was
+// admitted.
+func deterministicSurface() []string {
+	return slices.Sorted(slices.Values(slices.Concat(knowledgeTools, scannerTools)))
+}
+
 // callerOwnFileTools are the Tools the daemon registers for its own agent loop
 // that the calling agent already has, and better. They are never admitted:
 // routing them through Argus makes the client pay for the same content twice in
@@ -44,8 +53,9 @@ func TestToolsList_AdmitsNothingByDefault(t *testing.T) {
 	// own agent loop; exactly the ones somebody admitted come out here, so a Tool
 	// added later cannot arrive on the surface merely by being registered.
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
-	if names := listedTools(t, s); !slices.Equal(names, knowledgeTools) {
-		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, knowledgeTools)
+	names := listedTools(t, s)
+	if want := deterministicSurface(); !slices.Equal(names, want) {
+		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, want)
 	}
 }
 

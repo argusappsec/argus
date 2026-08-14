@@ -558,13 +558,13 @@ func TestReview_DeleteClosesSession(t *testing.T) {
 
 func TestToolCall_UnknownToolIsMethodNotFound(t *testing.T) {
 	s, _ := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleAnalyst)
-	body := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_semgrep","arguments":{}}}`
+	body := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_trivy","arguments":{}}}`
 	rec := post(t, s, testToken, body)
 	var resp rpcResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Error == nil || resp.Error.Code != codeMethodNotFound {
-		t.Fatalf("error = %+v, want method-not-found (the scanners are not callable tools)", resp.Error)
+		t.Fatalf("error = %+v, want method-not-found (a name this daemon serves no capability under)", resp.Error)
 	}
 }

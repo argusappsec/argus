@@ -92,7 +92,7 @@ func TestToolsList_ColleagueAdvertisesReviewAndConsult(t *testing.T) {
 	// the listing, and the deterministic surface follows (ADR 0023).
 	s, _ := reviewServer(t, &scriptedProvider{responses: textAnswer("ok")}, auth.RoleAnalyst)
 	names := listedTools(t, s)
-	if !slices.Equal(names, append([]string{toolReview, toolConsult}, knowledgeTools...)) {
+	if !slices.Equal(names, append([]string{toolReview, toolConsult}, deterministicSurface()...)) {
 		t.Errorf("a Colleague's tool listing = %v, want review and consult above the deterministic surface", names)
 	}
 }

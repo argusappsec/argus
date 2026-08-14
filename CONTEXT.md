@@ -328,6 +328,28 @@ floor both shapes stand on. Note also that the word is used **approvingly**
 here, where ADR 0011 used it for the thing Argus was not; ADR 0023 records
 the reversal and why the original argument was right for its scenario.
 
+**Scan target.** A scanner reached over the surface is pointed at an **absolute
+path on the Argus host**: the caller names the directory, because there is no
+**Review** to inherit one from. This is ADR 0024's same-machine constraint read
+from the scanner's end — the code has to be somewhere the daemon can already
+see. A path that does not exist, is not absolute or cannot be read is refused
+by naming the problem, because a scan that quietly found nothing is the worst
+answer available. The **Snapshot** workspace remains the answer when client and
+daemon are different machines.
+
+Naming a target is the surface's freedom, not Argus's own loop's. Once a
+**Review** has pinned a checkout, that checkout is the scope: a named path must
+be inside it, the way every file-scoped **Tool**'s argument is. Otherwise the
+argument would be a route for **untrusted review content** to talk the model
+into scanning the rest of the daemon's disk.
+
+It follows that an **analyst** who can reach the surface can have Argus read any
+directory the daemon's own user can read, and gitleaks answers with the secrets
+it finds there. That is the capability being granted, on either shape — the
+Colleague serves the same scanners the same way — so a token for a shared daemon
+is worth what the daemon's filesystem is worth. It is also why a **viewer** is
+refused: a scan is not a read of the organization's knowledge.
+
 ### Colleague
 
 Argus with **at least one Provider configured**. It reasons on its own

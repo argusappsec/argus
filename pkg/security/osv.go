@@ -2,7 +2,6 @@ package security
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -26,13 +25,16 @@ type osvScanner struct {
 func (o *osvScanner) Name() string { return "run_osv_scanner" }
 
 func (o *osvScanner) Description() string {
-	return "Run osv-scanner to detect known vulnerabilities (CVEs) in the cloned repository's dependencies. Returns JSON results that you must parse and triage."
+	return "Run osv-scanner to detect known vulnerabilities (CVEs) in the dependencies declared under a " +
+		"directory on the machine Argus runs on. Returns osv-scanner's JSON results, which you must parse and triage."
 }
 
 func (o *osvScanner) Schema() map[string]any {
 	return map[string]any{
-		"type":       "object",
-		"properties": map[string]any{},
+		"type": "object",
+		"properties": map[string]any{
+			"path": targetSchemaProperty(),
+		},
 	}
 }
 
@@ -44,10 +46,10 @@ func (o *osvScanner) Requires() []tool.Requirement {
 	}}
 }
 
-func (o *osvScanner) Execute(ctx context.Context, _ map[string]any) (string, error) {
-	root := o.sess.Root()
-	if root == "" {
-		return "", errors.New("no target set: call start_review_local or start_review_github first")
+func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, error) {
+	root, err := scanTarget(o.sess, args)
+	if err != nil {
+		return "", err
 	}
 
 	// Write the JSON report to a temp file via --output rather than reading

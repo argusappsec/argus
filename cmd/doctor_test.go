@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/argusappsec/argus/pkg/deployment"
+	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
 )
@@ -165,4 +167,32 @@ func TestProviderDoctorOptions_NoTargetWhenTheModelResolvesToNoProvider(t *testi
 	if target != nil || models != nil || toolCall != nil {
 		t.Errorf("target/models/toolCall = %+v/%v/%v, want all nil for an unresolvable default_model", target, models != nil, toolCall != nil)
 	}
+}
+
+// TestRun_ToolboxStillChecksTheScannerBinaries: a Toolbox is precisely the
+// shape that depends on them — the scanners are most of what it serves — so
+// doctor must go on verifying every one, and say so per binary rather than
+// leaving an operator to discover a missing semgrep through a failed scan.
+func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	home := t.TempDir() // no argus.yaml: no Provider, so a Toolbox
+
+	checks := doctor.Run(doctor.Options{
+		Home:     home,
+		Shape:    deployment.Toolbox,
+		Registry: doctorRegistry(),
+	})
+	for _, binary := range []string{"semgrep", "gitleaks", "osv-scanner"} {
+		if !slices.ContainsFunc(checks, func(c doctor.Check) bool { return c.Name == binary }) {
+			t.Errorf("a Toolbox's doctor run has no %q row: %v", binary, checkNames(checks))
+		}
+	}
+}
+
+func checkNames(checks []doctor.Check) []string {
+	out := make([]string, 0, len(checks))
+	for _, c := range checks {
+		out = append(out, c.Name)
+	}
+	return out
 }
