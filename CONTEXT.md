@@ -125,12 +125,23 @@ call — anything else belongs in CONTEXT/ or MEMORY.
 
 ### MEMORY
 
-`~/.argus/MEMORY.md`. Curated cross-session summary written automatically
-by the **memory curator** subagent at the end of each session. Read by the
-main agent at the start of every session, so prior context (preferences,
-accepted false positives, recent decisions) flows forward. Distinct from
-SOUL: MEMORY is fast-moving session continuity, SOUL is slow-moving
-identity.
+`~/.argus/MEMORY.md`. The cross-session summary loaded into **every**
+conversation, so prior context (preferences, accepted false positives,
+recent decisions) flows forward. It is produced by an ordinary deterministic
+write with **two possible callers**: Argus's own **memory curator** subagent
+at the end of a session, or the external AI over MCP when Argus is a
+**Toolbox** and has no Provider to run a curator with. The curator is one way
+MEMORY gets written, not the definition of it.
+
+What separates MEMORY from **CONTEXT** is *not* speed. Once either can be
+written by whoever is driving the session, "fast-moving" stops
+discriminating. The boundary is **context cost**: MEMORY is loaded on every
+call and therefore paid for on every call; CONTEXT sits on disk and is paid
+for only when read. MEMORY is whatever earns the price of being present in
+every conversation — which means it has a **size ceiling**, and past it
+something must migrate to CONTEXT. Distinct from SOUL, which is also always
+loaded but fixes the organization's slow-moving identity rather than what
+happened lately. See ADR 0023.
 
 Accepted false positives recorded here are **advisory, not a global mute**:
 the agent reads them as context and re-judges per situation, so the same
@@ -266,6 +277,11 @@ on the first slash only, so a model id that itself contains a slash still
 qualifies unambiguously; a bare model id stays valid whenever it resolves
 to exactly one Provider on its own.
 
+**The absence of a Provider is meaningful.** A daemon with none configured
+does not fail to start — it runs as a **Toolbox**, and configuring the first
+Provider is what makes it a **Colleague**. No separate setting chooses
+between the two: the Provider *is* the switch. See ADR 0023.
+
 The only cost signal a Provider yields is a token count, correct for every
 model and every endpoint. Argus reports it and caps nothing — no spend
 control is enforced anywhere in the daemon (see **Role**). _Avoid_: naming
@@ -273,6 +289,38 @@ a Provider type after a vendor or a runtime; "model" for the Provider (one
 Provider serves many models); "backend"; and bare "provider" when the
 **CodeHost** is meant — that entry reserves this word for this one.
 See ADR 0020 and ADR 0021.
+
+---
+
+## Deployment shape
+
+Which of the two an instance is depends on one thing only: whether an **LLM
+Provider** is configured. It is derived, never declared.
+
+### Toolbox
+
+Argus with **no Provider configured**. It does not reason. It exposes
+deterministic capabilities — the scanners, the knowledge (SOUL, CONTEXT,
+MEMORY), the Skills — over the MCP channel, and the reasoning is supplied by
+whoever calls it: typically a coding agent running on the caller's own
+machine, authenticated as that person. **Review** and **Consult** do not
+exist here, because both start Argus's agent loop; neither do automatic
+reviews, since nothing can reason when nobody has asked.
+
+The exposed surface admits only what the caller does not already have — the
+scanners and the organization's knowledge, never `read_file` / `grep` /
+`list_files`. _Avoid_ reading "Toolbox" as a degraded Colleague: it is the
+floor both shapes stand on. Note also that the word is used **approvingly**
+here, where ADR 0011 used it for the thing Argus was not; ADR 0023 records
+the reversal and why the original argument was right for its scenario.
+
+### Colleague
+
+Argus with **at least one Provider configured**. It reasons on its own
+behalf — Review, Consult, the memory curator, automatic PR review — and it
+has the whole Toolbox as well. The two are not alternatives: the Colleague is
+a storey above the Toolbox, not a fork of it. One binary, one MCP endpoint,
+one surface of two possible extents.
 
 ---
 
@@ -319,17 +367,28 @@ Each implementation:
   Slack events.
 - **MCP** — HTTP server exposing Resources + Tools per the Model Context
   Protocol. Identity = `mcp:<token-hash>` from the bearer token. The MCP
-  client is an *external generalist AI* (Claude Desktop, Cursor, …) for whom
-  Argus is a **consultable colleague**, not a toolbox: the surface is a few
-  coarse capabilities (a security `review` — whose target is either
-  caller-supplied files, a Snapshot review, or a codehost repo reference,
-  a Repo review — and an org-knowledge `consult`) plus
-  Resources over the org knowledge (SOUL, CONTEXT, recent reports), never the
-  low-level scanner tools. So the external AI delegates and Argus runs its own
-  org-aware loop — SOUL/MEMORY/CONTEXT stay inside Argus. **Non-goal:** generic
-  security Q&A ("what is path traversal?") the external AI already answers on
-  its own; the exposed surface is deliberately limited to what needs Argus's
-  unique value (the org's shared knowledge + the real scanners).
+  client is an *external generalist AI* (Claude Desktop, Cursor, …), and what
+  it is offered depends on the **Deployment shape** — one endpoint, two
+  extents:
+  - **Colleague** — Argus is a **consultable colleague**: a few coarse
+    capabilities (a security `review` — whose target is either
+    caller-supplied files, a Snapshot review, or a codehost repo reference,
+    a Repo review — and an org-knowledge `consult`) plus Resources over the
+    org knowledge (SOUL, CONTEXT, recent reports), never the low-level
+    scanner tools. The external AI delegates and Argus runs its own org-aware
+    loop — SOUL/MEMORY/CONTEXT stay inside Argus.
+  - **Toolbox** — Argus cannot reason, so `review` and `consult` are simply
+    absent and the deterministic surface is what remains: the scanners, the
+    knowledge tools, the Skills (also offered as MCP prompts). The knowledge
+    still reaches the caller, *pulled* by them rather than pushed by Argus
+    into a system prompt it does not have.
+
+  The admission rule is the same one in both: **expose only what the caller
+  does not already have**. That is why generic security Q&A ("what is path
+  traversal?") is a **non-goal** — the external AI answers it already — and
+  equally why `read_file` / `grep` / `list_files` are never offered. ADR 0011
+  read that rule as excluding a toolbox outright; ADR 0023 keeps the rule and
+  narrows the exclusion to the Colleague.
 - **GitHub** — a GitHub App (installation) receiving signed events for the
   repos it is installed on. One transport, two event paths:
   - **`pull_request` opened/synchronize** → an automatic review. The
@@ -423,6 +482,10 @@ The word alone is ambiguous, so we always qualify the target:
   though Argus does not own the repo. No `request_files` tool exists — the
   ordinary file-scoped tools drive the collaboration implicitly.
 
+All three exist only in the **Colleague** shape: each starts Argus's agent
+loop, so a **Toolbox** has no Review at all — it has the scanners, driven by
+the caller.
+
 _Avoid_ using bare "review" when the target matters.
 
 ### Untrusted review content
@@ -489,6 +552,16 @@ on the same CodeHost. _Avoid_: "codesource", "provider" (that word is taken by t
 **LLM Provider**). Note the vocabulary gap a second host will expose: GitLab's
 equivalent of a PR is a **Merge Request**, and it authenticates with a
 token rather than an App. See ADR 0010.
+
+A CodeHost is either **platform-aware** — GitHub today: it knows what a Pull
+Request is, reads changed files from the API, and writes back as
+`argus[bot]` — or **platform-blind**, speaking only the git protocol with the
+identity already authenticated on the daemon host. A platform-blind host
+reaches any server without an integration per vendor, and in exchange has no
+Pull Request, no changed-files API and no writing at all: it implements the
+read half of this interface and explicitly fails the rest. That is why a
+first-class GitLab CodeHost stays necessary even once a platform-blind one
+exists — automatic reviews need the half it cannot implement. See ADR 0024.
 
 ### GitHub App
 
