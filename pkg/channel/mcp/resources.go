@@ -24,6 +24,7 @@ import (
 // single-segment scheme is unambiguous and traversal is rejected on read.
 const (
 	soulURI          = "argus://soul"
+	memoryURI        = "argus://memory"
 	contextURIPrefix = "argus://context/"
 	reportURIPrefix  = "argus://report/"
 )
@@ -105,6 +106,19 @@ func (s *Server) listResources() []resourceDecl {
 			MimeType:    mimeMarkdown,
 		})
 	}
+	// MEMORY is the other half of what save_memory and mark_false_positive
+	// write. In a Colleague it reaches the agent through its own system prompt;
+	// in a Toolbox there is no such prompt, so the only way what Argus remembers
+	// can reach the reasoning is for the caller to pull it — which makes writing
+	// it worth anything at all.
+	if mem, err := s.dc.MemoryStore().Load(); err == nil && strings.TrimSpace(mem) != "" {
+		out = append(out, resourceDecl{
+			URI:         memoryURI,
+			Name:        "MEMORY",
+			Description: "What Argus remembers across sessions: preferences, decisions, and accepted false positives — the last of which are advisory context to re-judge, never a mute.",
+			MimeType:    mimeMarkdown,
+		})
+	}
 	for _, name := range listMarkdown(s.contextDir()) {
 		base := strings.TrimSuffix(name, ".md")
 		out = append(out, resourceDecl{
@@ -164,6 +178,8 @@ func (s *Server) readResource(uri string) (string, error) {
 	switch {
 	case uri == soulURI:
 		return readFile(s.soulPath())
+	case uri == memoryURI:
+		return s.readMemoryResource()
 	case strings.HasPrefix(uri, contextURIPrefix):
 		return s.readContextResource(strings.TrimPrefix(uri, contextURIPrefix))
 	case strings.HasPrefix(uri, reportURIPrefix):
@@ -171,6 +187,21 @@ func (s *Server) readResource(uri string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown resource: %q", uri)
 	}
+}
+
+// readMemoryResource reads MEMORY through the daemon's memory mechanism rather
+// than off disk, so a read that lands mid-curation gets one whole version of
+// what Argus remembers. A daemon that has never remembered anything has nothing
+// to return, which is a missing resource rather than an empty one.
+func (s *Server) readMemoryResource() (string, error) {
+	mem, err := s.dc.MemoryStore().Load()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(mem) == "" {
+		return "", fmt.Errorf("this daemon has not remembered anything yet")
+	}
+	return mem, nil
 }
 
 // readContextResource reads one CONTEXT document by its flat name. The .md
@@ -200,7 +231,9 @@ func (s *Server) readReportResource(rest string) (string, error) {
 
 // soulPath / contextDir / reportsDir derive the on-disk layout from the daemon
 // home, mirroring how daemon.Build wires SOUL.md, context/, and the report
-// Writer — the channel reads the same files those produce.
+// Writer — the channel reads the same files those produce. MEMORY is not here:
+// it is read through the daemon's memory mechanism, which is also what writes
+// it.
 func (s *Server) soulPath() string   { return filepath.Join(s.dc.Home, "SOUL.md") }
 func (s *Server) contextDir() string { return filepath.Join(s.dc.Home, "context") }
 func (s *Server) reportsDir() string { return filepath.Join(s.dc.Home, "reports") }

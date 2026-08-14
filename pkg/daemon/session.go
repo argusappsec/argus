@@ -14,6 +14,7 @@ import (
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/memory"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/security"
@@ -474,6 +475,8 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Expose(tool.NewListContext(contextDir(dc)))
 	reg.Expose(tool.NewReadContext(contextDir(dc)))
 	reg.Expose(tool.NewWriteContext(contextDir(dc)))
+	reg.Expose(memory.NewSaveMemory(dc.MemoryStore()))
+	reg.Expose(memory.NewMarkFalsePositive(dc.MemoryStore()))
 	reg.Register(tool.NewStartReviewLocal(toolState))
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.CodeHost))
 	reg.Register(tool.NewPRDiff(toolState))

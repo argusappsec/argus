@@ -31,10 +31,10 @@ var skillTools = []string{"list_skills", "read_skill", "read_skill_file"}
 // reads them out of tools/list — by name, which is the stable order the
 // Registry projects. Each slice of the Toolbox work contributes its own names
 // to it — the knowledge above, the skills here, the scanners in
-// scanners_test.go — so that the listing is asserted exactly, in one place,
-// against the whole of what was admitted.
+// scanners_test.go, the memory writes in memory_test.go — so that the listing
+// is asserted exactly, in one place, against the whole of what was admitted.
 func deterministicSurface() []string {
-	return slices.Sorted(slices.Values(slices.Concat(knowledgeTools, skillTools, scannerTools)))
+	return slices.Sorted(slices.Values(slices.Concat(knowledgeTools, skillTools, scannerTools, memoryTools)))
 }
 
 // callerOwnFileTools are the Tools the daemon registers for its own agent loop

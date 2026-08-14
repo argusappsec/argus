@@ -143,6 +143,13 @@ something must migrate to CONTEXT. Distinct from SOUL, which is also always
 loaded but fixes the organization's slow-moving identity rather than what
 happened lately. See ADR 0023.
 
+The ceiling is `memory.Ceiling` (8 KiB, roughly two thousand tokens on every
+call). It is a signal, not an enforcement: a write past it **still lands, in
+full**, and returns `memory.FullSignal` — an explanation that MEMORY is full,
+that nothing was truncated or dropped, and that material should move into a
+CONTEXT document. Both callers get it: the external AI in its tool result, the
+curator in the result of its own rewrite.
+
 Accepted false positives recorded here are **advisory, not a global mute**:
 the agent reads them as context and re-judges per situation, so the same
 finding ID (rule + snippet) in a genuinely vulnerable context elsewhere can
@@ -432,7 +439,7 @@ Each implementation:
     capabilities (a security `review` — whose target is either
     caller-supplied files, a Snapshot review, or a codehost repo reference,
     a Repo review — and an org-knowledge `consult`) plus Resources over the
-    org knowledge (SOUL, CONTEXT, recent reports), never the low-level
+    org knowledge (SOUL, MEMORY, CONTEXT, recent reports), never the low-level
     scanner tools. The external AI delegates and Argus runs its own org-aware
     loop — SOUL/MEMORY/CONTEXT stay inside Argus.
   - **Toolbox** — Argus cannot reason, so `review` and `consult` are simply

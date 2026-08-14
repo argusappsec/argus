@@ -40,8 +40,10 @@ type suppressFinding struct {
 	number int
 	// recordAdvisory persists the soft, advisory MEMORY note. It is wired to the
 	// daemon's serialized MEMORY writer so the note cannot be lost to a
-	// concurrent curator rewrite.
-	recordAdvisory func(line string) error
+	// concurrent curator rewrite. It returns that writer's signal — empty while
+	// MEMORY has room, and past its size ceiling an explanation the agent relays
+	// in the thread, so a full MEMORY reaches a person here too.
+	recordAdvisory func(line string) (string, error)
 }
 
 func (t *suppressFinding) Name() string { return "suppress_finding" }
@@ -108,13 +110,18 @@ func (t *suppressFinding) Execute(ctx context.Context, args map[string]any) (str
 	if err := t.host.PostReview(ctx, t.repo, t.number, review, true); err != nil {
 		return "", fmt.Errorf("suppress_finding: re-post review: %w", err)
 	}
-	if err := t.recordAdvisory(memoryAdvisory(t.repo.FullName, t.number, *match, reason)); err != nil {
+	signal, err := t.recordAdvisory(memoryAdvisory(t.repo.FullName, t.number, *match, reason))
+	if err != nil {
 		return "", fmt.Errorf("suppress_finding: record advisory: %w", err)
 	}
 
-	return fmt.Sprintf("Suppressed finding %q at %s on this PR and re-posted the review without it. "+
+	confirmation := fmt.Sprintf("Suppressed finding %q at %s on this PR and re-posted the review without it. "+
 		"Recorded as advisory in MEMORY (re-judged per context in future reviews, not a global mute).",
-		ruleID, location(*match)), nil
+		ruleID, location(*match))
+	if signal != "" {
+		confirmation += " " + signal
+	}
+	return confirmation, nil
 }
 
 // matchFinding finds the finding on the review to suppress: by rule_id, narrowed
