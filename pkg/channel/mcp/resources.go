@@ -63,11 +63,13 @@ type readResourceResult struct {
 	Contents []resourceContents `json:"contents"`
 }
 
-// canReadResources reports whether role may list and read the org-knowledge
-// Resources. Reading is read-only — it mutates nothing — so it mirrors consult:
-// open to viewers as well as analysts and admins. A non-reading service role
+// canReadKnowledge reports whether role may list and read the organization's
+// knowledge on this channel — the Resources, and the Skills offered as prompts
+// (prompts.go). Reading is read-only — it mutates nothing — so it mirrors
+// consult: open to viewers as well as analysts and admins, the same policy
+// viewerReads states for the knowledge Tools. A non-reading service role
 // (ci-trigger / mirror-read) holding an MCP token sees nothing and cannot read.
-func canReadResources(role auth.Role) bool {
+func canReadKnowledge(role auth.Role) bool {
 	return role == auth.RoleAdmin || role == auth.RoleAnalyst || role == auth.RoleViewer
 }
 
@@ -80,7 +82,7 @@ const errResourceDenied = "permission denied: reading Argus resources requires t
 // resolved Person. A caller without a reading role gets an empty list (it sees
 // nothing) rather than an error, which clients tolerate gracefully.
 func (s *Server) handleResourcesList(principal auth.Principal, req rpcRequest) rpcResponse {
-	if !canReadResources(principal.Role) {
+	if !canReadKnowledge(principal.Role) {
 		s.audit("mcp_resources_list_denied", principal, map[string]any{"reason": "insufficient role"})
 		return result(req.ID, resourcesListResult{Resources: []resourceDecl{}})
 	}
@@ -129,7 +131,7 @@ func (s *Server) listResources() []resourceDecl {
 // CallToolResult shape for resources); an unknown or unreadable URI is a
 // resource-not-found error.
 func (s *Server) handleResourceRead(principal auth.Principal, req rpcRequest) rpcResponse {
-	if !canReadResources(principal.Role) {
+	if !canReadKnowledge(principal.Role) {
 		s.audit("mcp_resource_read_denied", principal, map[string]any{"reason": "insufficient role"})
 		return errorResponse(req.ID, codeForbidden, errResourceDenied)
 	}

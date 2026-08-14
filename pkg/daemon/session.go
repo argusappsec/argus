@@ -479,9 +479,9 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
 	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))
 	reg.Register(security.NewOSVScanner(toolState, security.ExecRunner{}))
-	reg.Register(tool.NewListSkills(dc.Skills))
-	reg.Register(tool.NewReadSkill(dc.Skills))
-	reg.Register(tool.NewReadSkillFile(dc.Skills))
+	reg.Expose(tool.NewListSkills(dc.Skills))
+	reg.Expose(tool.NewReadSkill(dc.Skills))
+	reg.Expose(tool.NewReadSkillFile(dc.Skills))
 	return reg
 }
 

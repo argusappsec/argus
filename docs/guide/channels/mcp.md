@@ -55,6 +55,9 @@ low-level scanner tools:
   (SOUL, curated context, recent findings).
 - **Resources** — read-only org knowledge: SOUL, your context documents
   (`~/.argus/context/`), recent reports.
+- **Prompts** — your [skills](/guide/skills/), one per entry in your client's
+  own prompt menu. Pick one and its instructions go to your AI tool, which
+  follows them with Argus's capabilities alongside its own.
 
 ## What it's *not*
 

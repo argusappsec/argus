@@ -129,11 +129,15 @@ func (sf surface) withholds(name string) bool {
 
 // capabilities is the handshake's capability set: what this shape will actually
 // serve, not a fixed advertisement. Resources are the organization's knowledge
-// and need no Provider, so they are offered in both shapes; tools are offered
-// when this shape serves any, so the handshake never promises a listing that
-// comes back empty.
+// and prompts are its Skills — neither needs a Provider, so both are offered in
+// both shapes; tools are offered when this shape serves any, so no shape's
+// handshake promises a listing that comes back empty. (What the caller's Role
+// then lets them see is the handler's business, not the shape's.)
 func (sf surface) capabilities() map[string]any {
-	caps := map[string]any{"resources": map[string]any{}}
+	caps := map[string]any{
+		"resources": map[string]any{},
+		"prompts":   map[string]any{},
+	}
 	if len(sf.tools()) > 0 {
 		caps["tools"] = map[string]any{}
 	}
