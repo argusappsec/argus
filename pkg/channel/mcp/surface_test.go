@@ -69,12 +69,7 @@ func handshakeCapabilities(t *testing.T, s *Server) map[string]any {
 // response body.
 func callTool(t *testing.T, s *Server, name string) []byte {
 	t.Helper()
-	body := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"` + name + `","arguments":{}}}`
-	rec := post(t, s, testToken, body)
-	if rec.Code != 200 {
-		t.Fatalf("tools/call code = %d, want 200", rec.Code)
-	}
-	return rec.Body.Bytes()
+	return callToolRaw(t, s, name, `{}`)
 }
 
 // reasoningCapabilityNames is what a client may name that only exists where
@@ -93,10 +88,12 @@ func TestToolsList_ToolboxServesNoReasoningCapability(t *testing.T) {
 }
 
 func TestToolsList_ColleagueAdvertisesReviewAndConsult(t *testing.T) {
+	// A Colleague is the Toolbox plus reasoning: the two coarse capabilities lead
+	// the listing, and the deterministic surface follows (ADR 0023).
 	s, _ := reviewServer(t, &scriptedProvider{responses: textAnswer("ok")}, auth.RoleAnalyst)
 	names := listedTools(t, s)
-	if !slices.Equal(names, []string{toolReview, toolConsult}) {
-		t.Errorf("a Colleague's tool listing = %v, want [review consult] unchanged", names)
+	if !slices.Equal(names, append([]string{toolReview, toolConsult}, knowledgeTools...)) {
+		t.Errorf("a Colleague's tool listing = %v, want review and consult above the deterministic surface", names)
 	}
 }
 

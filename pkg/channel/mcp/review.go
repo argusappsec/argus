@@ -278,16 +278,26 @@ func (s *Server) handleRepoReview(ctx context.Context, principal auth.Principal,
 	return result(req.ID, reviewToolResult(rep, nil))
 }
 
-// canReview reports whether role may request a Snapshot review. Review is an
-// analyst+ capability (the caller is typically a developer); viewers are
-// read-only across channels and get consult, not review, in a later slice.
-func canReview(role auth.Role) bool {
+// atLeastAnalyst reports whether role is analyst or admin: the one line this
+// channel draws between the read-only viewer and a Principal who may ask Argus
+// to do something. Review sits above it, and so do the knowledge writes on the
+// deterministic surface (toolbox.go).
+func atLeastAnalyst(role auth.Role) bool {
 	return role == auth.RoleAdmin || role == auth.RoleAnalyst
 }
 
+// canReview reports whether role may request a Snapshot review. Review is an
+// analyst+ capability (the caller is typically a developer); viewers are
+// read-only across channels and get consult, not review, in a later slice.
+func canReview(role auth.Role) bool { return atLeastAnalyst(role) }
+
+// roleIsReadOnly closes every Role refusal on this channel, so a viewer reads
+// the same explanation whichever capability they reached for.
+const roleIsReadOnly = "; your role is read-only on this channel"
+
 // errReviewDenied is the tool-layer refusal a viewer's review attempt gets,
 // phrased so the external AI relays it to the developer.
-const errReviewDenied = "permission denied: requesting a security review requires the analyst or admin role; your role is read-only on this channel"
+const errReviewDenied = "permission denied: requesting a security review requires the analyst or admin role" + roleIsReadOnly
 
 // reviewToolResult renders the report as an MCP tool result: a human-readable
 // text block plus the structured findings the caller can act on. When the run

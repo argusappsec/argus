@@ -187,16 +187,13 @@ func TestToolsList_AdvertisesReviewWithSchema(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	// What else the listing holds is the surface's business (surface_test.go,
+	// toolbox_test.go): ADR 0023 puts the deterministic tools in both shapes, so
+	// this test asks only that review is there and is described.
 	var tool *toolDecl
 	for i := range resp.Result.Tools {
 		if resp.Result.Tools[i].Name == toolReview {
 			tool = &resp.Result.Tools[i]
-		}
-		// The scanners are never advertised as tools (ADR 0011).
-		for _, name := range []string{"run_semgrep", "run_gitleaks", "run_osv_scanner"} {
-			if resp.Result.Tools[i].Name == name {
-				t.Errorf("low-level scanner %q must not be exposed as an MCP tool", name)
-			}
 		}
 	}
 	if tool == nil {

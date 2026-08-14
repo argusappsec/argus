@@ -49,14 +49,20 @@ type capability struct {
 
 // catalog is every capability this channel knows how to serve, in the order a
 // client sees them in tools/list, with its handler already bound to the server.
-// It is built per request: the declarations are plain data and nothing caches
-// them, which is also what lets the extent follow a shape that changed after
-// the daemon started.
+// It is built per request and nothing caches it, which is what lets the extent
+// follow a shape — and a Registry — that changed after the daemon started. The
+// cost is assembling the declarations and one tool Registry per request, which
+// is a map of plain data next to the I/O every request already does.
+//
+// The two coarse capabilities are written here because their work is Argus's
+// own agent loop. Everything deterministic is projected from the daemon's tool
+// Registry instead (toolbox.go) — one source, no hand-maintained second list.
 func (s *Server) catalog() []capability {
-	return []capability{
+	caps := []capability{
 		{decl: reviewToolDecl(), handle: s.handleReview, needsReasoning: true},
 		{decl: consultToolDecl(), handle: s.handleConsult, needsReasoning: true},
 	}
+	return append(caps, s.registryCapabilities()...)
 }
 
 // reasoningOnlyNames are tool names that exist only where Argus reasons but are

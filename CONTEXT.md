@@ -180,6 +180,20 @@ specific binary like `semgrep` with structured args is a Tool;
 forwarding an arbitrary command string from the LLM to the OS shell is
 not. See ADR 0006.
 
+**Admission.** A Tool is either merely *registered* — available to Argus's own
+agent loop and nothing else — or *exposed*, which also admits it onto the MCP
+surface, of which it is a filtered projection. The decision is recorded per
+Tool where the Tools are assembled, so one place knows both which Tools exist
+and which of them an outside caller may see, and a Tool added for the agent
+loop cannot reach the surface by default. The rule for the second verb is ADR
+0023's: **expose only what the caller does not already have.**
+
+Admission says a Tool *may* be seen; the **Deployment shape** says whether this
+deployment can serve it, and the two filters are independent — a Toolbox
+withholds Review because it cannot reason, never because Review was not
+admitted. Neither is authorization: the Registry carries no Role (see
+**Role**), so a Role gate on an exposed Tool belongs to the Channel serving it.
+
 ### Skill
 
 A **directory bundle**: a `SKILL.md` (frontmatter — `name`, `description`,
