@@ -1,12 +1,15 @@
 // Package mcp is the MCP channel (ADR 0011): an HTTP server that lets an
 // external AI consult Argus as a colleague over the Model Context Protocol.
 //
-// Slice 1 is the spine — it stands the server up as a daemon goroutine sharing
+// This file is the spine — it stands the server up as a daemon goroutine sharing
 // the common DaemonContext (ADR 0004), authenticates the caller by bearer token
 // (`auth.Resolver.ResolveMCPToken` → a Person, no anonymous access), and answers
-// the MCP initialize handshake. The coarse capabilities (review, consult,
-// Resources) plug into the same dispatch in later slices; the low-level scanners
-// are never exposed (ADR 0011).
+// the MCP initialize handshake. The capabilities (review, consult, Resources)
+// plug into the same dispatch.
+//
+// There is one endpoint and one handshake, and two extents: what the channel
+// serves follows the daemon's Deployment shape (ADR 0023), which surface.go
+// derives per request. The low-level scanners are never exposed (ADR 0011).
 package mcp
 
 import (
@@ -172,17 +175,15 @@ func (s *Server) dispatch(ctx context.Context, principal auth.Principal, session
 }
 
 // handleInitialize answers the MCP handshake: advertise the protocol version,
-// the coarse capability set (tools — review and consult — and resources: SOUL,
-// CONTEXT documents, recent reports), and identify the server. The params are not
-// read — the surface is fixed by ADR 0011, not negotiated.
+// the capability set this deployment will actually serve (see surface.go — it
+// follows the Deployment shape as it is at this request, ADR 0023), and identify
+// the server. The params are not read: the surface is what Argus can do, not
+// something negotiated with the client.
 func (s *Server) handleInitialize(req rpcRequest) rpcResponse {
 	return result(req.ID, initializeResult{
 		ProtocolVersion: protocolVersion,
-		Capabilities: map[string]any{
-			"tools":     map[string]any{},
-			"resources": map[string]any{},
-		},
-		ServerInfo: serverInfo{Name: serverName, Version: serverVersion},
+		Capabilities:    s.surface().capabilities(),
+		ServerInfo:      serverInfo{Name: serverName, Version: serverVersion},
 	})
 }
 

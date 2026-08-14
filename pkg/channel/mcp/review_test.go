@@ -107,9 +107,18 @@ func findingThenFinalize() []provider.Response {
 	}
 }
 
-// reviewServer builds an MCP channel over a full DaemonContext wired to the
-// given provider and a single Person with role on an MCP token == testToken.
+// reviewServer builds a Colleague MCP channel over a full DaemonContext wired to
+// the given provider and a single Person with role on an MCP token == testToken.
 func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server, string) {
+	t.Helper()
+	return shapedServer(t, deployment.Colleague, prov, role)
+}
+
+// shapedServer builds an MCP channel over a full DaemonContext in the given
+// Deployment shape. A nil provider is the Toolbox's reality — nothing to reason
+// with — and asking for one fails loudly, so a test that reaches for the agent
+// loop where it does not exist says so rather than passing quietly.
+func shapedServer(t *testing.T, shape deployment.Shape, prov provider.Provider, role auth.Role) (*Server, string) {
 	t.Helper()
 	home := t.TempDir()
 	users := "persons:\n" +
@@ -131,15 +140,20 @@ func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server
 
 	dc := &daemon.Context{
 		Home:         home,
-		Shape:        deployment.Colleague,
+		Shape:        shape,
 		DefaultModel: "gemini-2.5-flash",
 		Auth:         auth.NewResolver(usersPath),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
 		Skills:       skill.NewCatalog(skill.Builtin(), filepath.Join(home, "skills")),
-		NewProvider:  func(context.Context, string) (provider.Provider, error) { return prov, nil },
-		LoadSoul:     func() (*soul.Soul, error) { return &soul.Soul{}, nil },
-		LoadMemory:   func() (string, error) { return "", nil },
+		NewProvider: func(context.Context, string) (provider.Provider, error) {
+			if prov == nil {
+				return nil, errors.New("no provider configured")
+			}
+			return prov, nil
+		},
+		LoadSoul:   func() (*soul.Soul, error) { return &soul.Soul{}, nil },
+		LoadMemory: func() (string, error) { return "", nil },
 	}
 	dc.Sessions = daemon.NewSessionManager(dc, 4)
 	return NewServer(dc), auditPath
