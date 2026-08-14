@@ -1,10 +1,14 @@
-// Package memory implements the memory-curator subagent.
+// Package memory owns MEMORY: the Store every writer goes through (store.go),
+// the save_memory / mark_false_positive Tools an external AI calls over MCP
+// (tools.go), and the memory-curator subagent below. One mechanism, two callers
+// (ADR 0023) — Argus's own curator is not privileged over the client's write,
+// and neither has a way round the size ceiling.
 //
-// At the end of a review session, the main agent is done but the conversation
-// log on disk holds the *process* — what was looked at, what was decided, why
-// a finding was filed or skipped. Some of that is worth keeping across
-// sessions; most of it isn't. The curator's job is to read the transcript
-// and decide what to append to MEMORY.md.
+// The curator, then. At the end of a review session, the main agent is done but
+// the conversation log on disk holds the *process* — what was looked at, what
+// was decided, why a finding was filed or skipped. Some of that is worth
+// keeping across sessions; most of it isn't. The curator's job is to read the
+// transcript and decide what MEMORY should hold next.
 //
 // Pedagogically this is the first concrete subagent in Argus. Its
 // implementation is deliberately minimal: it re-uses the main agent loop
@@ -73,7 +77,7 @@ func Curate(ctx context.Context, opts Options) error {
 
 	defer opts.Store.hold()()
 
-	existing, err := opts.Store.load()
+	existing, err := opts.Store.Load()
 	if err != nil {
 		return fmt.Errorf("memory.Curate: read existing memory: %w", err)
 	}
@@ -208,9 +212,9 @@ func (u *updateMemory) Execute(_ context.Context, args map[string]any) (string, 
 	if content == "" {
 		return "", errors.New("update_memory: content required")
 	}
-	w, err := u.store.replace(content)
+	st, err := u.store.replace(content)
 	if err != nil {
 		return "", err
 	}
-	return join("ok", w.Signal()), nil
+	return withSignal("ok", st.Signal()), nil
 }

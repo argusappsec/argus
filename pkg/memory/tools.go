@@ -51,11 +51,11 @@ func (t *saveMemory) Execute(_ context.Context, args map[string]any) (string, er
 	if strings.TrimSpace(content) == "" {
 		return "", errors.New("save_memory: content required")
 	}
-	w, err := t.store.Append(content)
+	st, err := t.store.Append(content)
 	if err != nil {
 		return "", err
 	}
-	return join("Saved to MEMORY; Argus will have it in every future conversation.", w.Signal()), nil
+	return withSignal("Saved to MEMORY; Argus will have it in every future conversation.", st.Signal()), nil
 }
 
 // NewMarkFalsePositive returns the mark_false_positive Tool: an accepted false
@@ -103,14 +103,14 @@ func (t *markFalsePositive) Execute(_ context.Context, args map[string]any) (str
 	file, _ := args["file"].(string)
 	reason, _ := args["reason"].(string)
 
-	w, err := t.store.Append(advisory(ruleID, file, reason))
+	st, err := t.store.Append(advisory(ruleID, file, reason))
 	if err != nil {
 		return "", err
 	}
-	return join(fmt.Sprintf(
+	return withSignal(fmt.Sprintf(
 		"Recorded in MEMORY: finding %q%s was accepted as a false positive. It is advisory — future reviews "+
 			"re-judge the same pattern in context, so this is not a global mute.", ruleID, at(file)),
-		w.Signal()), nil
+		st.Signal()), nil
 }
 
 // advisory renders an accepted false positive as the line MEMORY carries. The
@@ -136,9 +136,9 @@ func at(file string) string {
 	return " at `" + file + "`"
 }
 
-// join appends the Store's signal to a confirmation when there is one, so a
-// caller reads one message rather than two fields.
-func join(confirmation, signal string) string {
+// withSignal appends the Store's signal to a confirmation when there is one, so
+// a caller reads one message rather than two fields.
+func withSignal(confirmation, signal string) string {
 	if signal == "" {
 		return confirmation
 	}

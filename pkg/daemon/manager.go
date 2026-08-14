@@ -238,11 +238,16 @@ func (m *SessionManager) Release(s *Session) {
 // curator rewrite. There is no second write path to MEMORY: the curator, the
 // save_memory / mark_false_positive Tools on the MCP surface and this all go
 // through the same Store (ADR 0023).
-func (m *SessionManager) AppendMemory(line string) error {
-	if _, err := m.dc.MemoryStore().Append(line); err != nil {
-		return fmt.Errorf("daemon: %w", err)
+//
+// It returns the Store's signal — empty while there is room, and past the size
+// ceiling an explanation that MEMORY is full and material should migrate to
+// CONTEXT. Every caller of the write is told; none of them is silently trimmed.
+func (m *SessionManager) AppendMemory(line string) (string, error) {
+	st, err := m.dc.MemoryStore().Append(line)
+	if err != nil {
+		return "", fmt.Errorf("daemon: %w", err)
 	}
-	return nil
+	return st.Signal(), nil
 }
 
 // Drain blocks until pending curations finish or the timeout elapses.

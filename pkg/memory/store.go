@@ -14,8 +14,8 @@ import (
 // mechanism: the single writer of MEMORY.md, whoever is asking. The external AI
 // reaches it through the save_memory / mark_false_positive Tools on the MCP
 // surface; Argus's own memory curator reaches it through Curate, which rewrites
-// the whole file at the end of a session. There is no third way to write MEMORY
-// and no path that bypasses the ceiling below.
+// the whole file at the end of a session. There is no way to write MEMORY that
+// does not pass the ceiling below.
 
 // Ceiling is the size in bytes past which MEMORY is full. MEMORY is loaded into
 // every LLM call, so its size is a fixed cost on every single request — roughly
@@ -23,7 +23,7 @@ import (
 // deterministic append by an external client does not, which is why the limit is
 // stated here rather than left to whoever is writing.
 //
-// It is not an enforcement: a write past it still lands in full (see Write).
+// It is not an enforcement: a write past it still lands in full (see State).
 // The ceiling is what turns unbounded growth from something a developer
 // discovers in a bill into something they are told about at the moment they
 // cause it.
@@ -34,11 +34,11 @@ const Ceiling = 8 << 10 // 8 KiB
 // signal rather than quote a sentence that will be reworded.
 const FullSignal = "MEMORY is full"
 
-// Write is the outcome of one MEMORY write, reported to whoever made it. Both
-// callers get the same Write for the same file, which is the point of having one
+// State is what MEMORY is like after a write, reported to whoever made it. Both
+// callers get the same State for the same file, which is the point of having one
 // mechanism: a Colleague's curator is told MEMORY is full on exactly the terms an
 // external AI is.
-type Write struct {
+type State struct {
 	// Size is how large MEMORY is after the write, in bytes.
 	Size int
 	// Full reports that MEMORY is past the Ceiling. The write still happened —
@@ -51,8 +51,8 @@ type Write struct {
 // nothing was dropped, and where the material should go instead. CONTEXT is the
 // destination because the boundary between the two is context cost: MEMORY is
 // paid for on every call, a CONTEXT document only when it is read.
-func (w Write) Signal() string {
-	if !w.Full {
+func (st State) Signal() string {
+	if !st.Full {
 		return ""
 	}
 	return fmt.Sprintf(
@@ -60,7 +60,7 @@ func (w Write) Signal() string {
 			"wrote was saved in full — but MEMORY is loaded into every call, so everything in it is now a fixed "+
 			"cost on every request. Move the material that does not need to be present in every conversation out "+
 			"into a CONTEXT document with write_context, and keep MEMORY for what earns that price.",
-		FullSignal, w.Size, Ceiling)
+		FullSignal, st.Size, Ceiling)
 }
 
 // Store is the one writer of one MEMORY.md. Its lock serializes every writer in
@@ -68,6 +68,12 @@ func (w Write) Signal() string {
 // surface, a false positive a teammate accepted on a pull request — so a note
 // written while a curation is in flight cannot be lost to the rewrite that
 // follows it.
+//
+// Readers do not take that lock and are never made to wait for a writer: a
+// curation holds it across an LLM call, and a Session snapshotting MEMORY at
+// that moment must not block behind somebody else's model. What makes that safe
+// is that every write lands by rename (see write), so a reader sees one whole
+// version of MEMORY or the other, never half of each.
 type Store struct {
 	path string
 	mu   sync.Mutex
@@ -80,27 +86,23 @@ func NewStore(path string) *Store { return &Store{path: path} }
 // Load returns the current MEMORY. A file that does not exist yet is empty
 // memory, not an error — a daemon that has never remembered anything is normal.
 func (s *Store) Load() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.load()
+	b, err := os.ReadFile(s.path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("memory: read: %w", err)
+	}
+	return string(b), nil
 }
 
 // Append adds one entry to MEMORY and reports the state it leaves it in. The
 // entry is stored exactly as given (as a Markdown list item when it is not
 // already one) — a full MEMORY is signalled, never silently trimmed.
-func (s *Store) Append(entry string) (Write, error) {
+func (s *Store) Append(entry string) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.append(entry)
-}
-
-// Replace rewrites MEMORY wholesale. This is the curator's shape of write: it
-// reads what is there, decides what still earns its place, and hands back the
-// whole file.
-func (s *Store) Replace(content string) (Write, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.replace(content)
 }
 
 // hold takes the writers' lock for a caller whose write spans more than one
@@ -115,54 +117,60 @@ func (s *Store) hold() func() {
 	return s.mu.Unlock
 }
 
-func (s *Store) load() (string, error) {
-	b, err := os.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil
-		}
-		return "", fmt.Errorf("memory: read: %w", err)
-	}
-	return string(b), nil
-}
-
-func (s *Store) append(entry string) (Write, error) {
+// append adds one entry to the end of MEMORY. Callers must hold the lock.
+func (s *Store) append(entry string) (State, error) {
 	line := listItem(entry)
 	if line == "" {
-		return Write{}, errors.New("memory: nothing to save")
+		return State{}, errors.New("memory: nothing to save")
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return Write{}, fmt.Errorf("memory: mkdir: %w", err)
-	}
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	existing, err := s.Load()
 	if err != nil {
-		return Write{}, fmt.Errorf("memory: open: %w", err)
+		return State{}, err
 	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
-		return Write{}, fmt.Errorf("memory: append: %w", err)
+	// A previous writer may have left MEMORY mid-line — a curator rewrite is
+	// whatever the model produced. Starting a list item on the end of somebody
+	// else's sentence would lose both.
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		existing += "\n"
 	}
-	return s.measure()
+	return s.write(existing + line)
 }
 
-func (s *Store) replace(content string) (Write, error) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return Write{}, fmt.Errorf("memory: mkdir: %w", err)
-	}
-	if err := os.WriteFile(s.path, []byte(content), 0o600); err != nil {
-		return Write{}, fmt.Errorf("memory: write: %w", err)
-	}
-	return s.measure()
+// replace rewrites MEMORY wholesale — the curator's shape of write: it reads
+// what is there, decides what still earns its place, and hands back the whole
+// file. Callers must hold the lock.
+func (s *Store) replace(content string) (State, error) {
+	return s.write(content)
 }
 
-// measure sizes MEMORY after a write and decides whether it is full.
-func (s *Store) measure() (Write, error) {
-	info, err := os.Stat(s.path)
-	if err != nil {
-		return Write{}, fmt.Errorf("memory: size: %w", err)
+// write puts content in MEMORY's place and sizes what is now there. It lands by
+// rename so a concurrent reader — a Session taking its snapshot, a
+// resources/read on the MCP surface — sees one whole version or the other and
+// never a torn file. Callers must hold the lock.
+func (s *Store) write(content string) (State, error) {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return State{}, fmt.Errorf("memory: mkdir: %w", err)
 	}
-	size := int(info.Size())
-	return Write{Size: size, Full: size > Ceiling}, nil
+	tmp, err := os.CreateTemp(dir, ".MEMORY-*.tmp")
+	if err != nil {
+		return State{}, fmt.Errorf("memory: temp file: %w", err)
+	}
+	defer os.Remove(tmp.Name()) // no-op once the rename below has succeeded
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return State{}, fmt.Errorf("memory: write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return State{}, fmt.Errorf("memory: write: %w", err)
+	}
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return State{}, fmt.Errorf("memory: chmod: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), s.path); err != nil {
+		return State{}, fmt.Errorf("memory: replace: %w", err)
+	}
+	return State{Size: len(content), Full: len(content) > Ceiling}, nil
 }
 
 // listItem renders one entry as a line of MEMORY.md: a Markdown list item,
