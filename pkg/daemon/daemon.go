@@ -15,9 +15,9 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
@@ -25,6 +25,7 @@ import (
 	"github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/deployment"
+	"github.com/argusappsec/argus/pkg/memory"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
@@ -97,6 +98,23 @@ type Context struct {
 	LoadMemory func() (string, error)
 
 	Sessions *SessionManager
+
+	// memoryOnce / memoryStore back MemoryStore below.
+	memoryOnce  sync.Once
+	memoryStore *memory.Store
+}
+
+// MemoryStore is the daemon's one writer of MEMORY.md (ADR 0023): the
+// save_memory / mark_false_positive Tools, the memory curator's end-of-session
+// rewrite and the advisory a teammate accepts on a pull request all go through
+// this one Store, so they serialize against each other and meet the same size
+// ceiling. It is derived from Home rather than configured, and built on first
+// use so a Context assembled by hand — a test's, a channel's — has it too.
+func (dc *Context) MemoryStore() *memory.Store {
+	dc.memoryOnce.Do(func() {
+		dc.memoryStore = memory.NewStore(filepath.Join(dc.Home, "MEMORY.md"))
+	})
+	return dc.memoryStore
 }
 
 // Build assembles a Context from the home directory and its argus.yaml.
@@ -166,17 +184,11 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		LoadSoul: func() (*soul.Soul, error) {
 			return soul.Load(filepath.Join(home, "SOUL.md"))
 		},
-		LoadMemory: func() (string, error) {
-			b, err := os.ReadFile(filepath.Join(home, "MEMORY.md"))
-			if err != nil {
-				if os.IsNotExist(err) {
-					return "", nil
-				}
-				return "", err
-			}
-			return string(b), nil
-		},
 	}
+	// MEMORY is snapshotted through the same Store that writes it, so a Session
+	// created while a curation or a save_memory is in flight reads a whole file
+	// rather than half of one.
+	dc.LoadMemory = dc.MemoryStore().Load
 	// Build the one authenticated codehost client from codehosts: and share it
 	// (ADR 0015). Validate has already guaranteed a github channel has its
 	// github codehost, so any consumer that needs the client finds it here.

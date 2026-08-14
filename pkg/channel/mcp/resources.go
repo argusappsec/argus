@@ -24,6 +24,7 @@ import (
 // single-segment scheme is unambiguous and traversal is rejected on read.
 const (
 	soulURI          = "argus://soul"
+	memoryURI        = "argus://memory"
 	contextURIPrefix = "argus://context/"
 	reportURIPrefix  = "argus://report/"
 )
@@ -103,6 +104,19 @@ func (s *Server) listResources() []resourceDecl {
 			MimeType:    mimeMarkdown,
 		})
 	}
+	// MEMORY is the other half of what save_memory and mark_false_positive
+	// write. In a Colleague it reaches the agent through its own system prompt;
+	// in a Toolbox there is no such prompt, so the only way what Argus remembers
+	// can reach the reasoning is for the caller to pull it — which makes writing
+	// it worth anything at all.
+	if fileExists(s.memoryPath()) {
+		out = append(out, resourceDecl{
+			URI:         memoryURI,
+			Name:        "MEMORY",
+			Description: "What Argus remembers across sessions: preferences, decisions, and accepted false positives — the last of which are advisory context to re-judge, never a mute.",
+			MimeType:    mimeMarkdown,
+		})
+	}
 	for _, name := range listMarkdown(s.contextDir()) {
 		base := strings.TrimSuffix(name, ".md")
 		out = append(out, resourceDecl{
@@ -162,6 +176,8 @@ func (s *Server) readResource(uri string) (string, error) {
 	switch {
 	case uri == soulURI:
 		return readFile(s.soulPath())
+	case uri == memoryURI:
+		return readFile(s.memoryPath())
 	case strings.HasPrefix(uri, contextURIPrefix):
 		return s.readContextResource(strings.TrimPrefix(uri, contextURIPrefix))
 	case strings.HasPrefix(uri, reportURIPrefix):
@@ -196,10 +212,12 @@ func (s *Server) readReportResource(rest string) (string, error) {
 	return readUnder(s.reportsDir(), filepath.Join(slug, sha+".md"))
 }
 
-// soulPath / contextDir / reportsDir derive the on-disk layout from the daemon
-// home, mirroring how daemon.Build wires SOUL.md, context/, and the report
-// Writer — the channel reads the same files those produce.
+// soulPath / memoryPath / contextDir / reportsDir derive the on-disk layout from
+// the daemon home, mirroring how daemon.Build wires SOUL.md, MEMORY.md,
+// context/, and the report Writer — the channel reads the same files those
+// produce.
 func (s *Server) soulPath() string   { return filepath.Join(s.dc.Home, "SOUL.md") }
+func (s *Server) memoryPath() string { return filepath.Join(s.dc.Home, "MEMORY.md") }
 func (s *Server) contextDir() string { return filepath.Join(s.dc.Home, "context") }
 func (s *Server) reportsDir() string { return filepath.Join(s.dc.Home, "reports") }
 

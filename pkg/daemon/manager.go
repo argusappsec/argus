@@ -7,10 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -56,9 +54,9 @@ type SessionManager struct {
 	active map[string]*Session
 
 	// curations tracks in-flight memory curations so graceful shutdown can
-	// wait for them; curationMu serializes MEMORY.md writers (ADR 0004).
-	curations  sync.WaitGroup
-	curationMu sync.Mutex
+	// wait for them. Serializing MEMORY's writers is the Store's job, not this
+	// one's: it is the same lock for every caller of the write (ADR 0023).
+	curations sync.WaitGroup
 }
 
 // NewSessionManager creates a manager bound to dc with the given cap.
@@ -219,12 +217,11 @@ func (m *SessionManager) Release(s *Session) {
 	m.curations.Add(1)
 	go func() {
 		defer m.curations.Done()
-		m.curationMu.Lock()
-		defer m.curationMu.Unlock()
-
+		// Curations serialize against each other, and against every other
+		// writer of MEMORY, on the Store's own lock (ADR 0023).
 		err := memory.Curate(context.Background(), memory.Options{
 			ConversationPath: s.convoPath,
-			MemoryPath:       filepath.Join(m.dc.Home, "MEMORY.md"),
+			Store:            m.dc.MemoryStore(),
 			Provider:         s.provider,
 		})
 		if err != nil {
@@ -235,27 +232,15 @@ func (m *SessionManager) Release(s *Session) {
 	}()
 }
 
-// AppendMemory appends one advisory line to MEMORY.md under the same lock that
-// serializes the memory curator, so a channel-driven note — e.g. a false
-// positive a teammate accepted on a PR (ADR 0008 / slice 6) — cannot be lost to
-// a concurrent curator rewrite. The curator owns MEMORY.md's full-file rewrites;
-// this is the one sanctioned out-of-band writer, and it shares the curator's
-// lock rather than racing it. A trailing newline is ensured.
+// AppendMemory appends one advisory line to MEMORY through the daemon's one
+// memory writer, so a channel-driven note — e.g. a false positive a teammate
+// accepted on a PR (ADR 0008 / slice 6) — cannot be lost to a concurrent
+// curator rewrite. There is no second write path to MEMORY: the curator, the
+// save_memory / mark_false_positive Tools on the MCP surface and this all go
+// through the same Store (ADR 0023).
 func (m *SessionManager) AppendMemory(line string) error {
-	m.curationMu.Lock()
-	defer m.curationMu.Unlock()
-
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
-	}
-	path := filepath.Join(m.dc.Home, "MEMORY.md")
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("daemon: open MEMORY: %w", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
-		return fmt.Errorf("daemon: append MEMORY: %w", err)
+	if _, err := m.dc.MemoryStore().Append(line); err != nil {
+		return fmt.Errorf("daemon: %w", err)
 	}
 	return nil
 }

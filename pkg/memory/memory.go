@@ -19,9 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/argusappsec/argus/pkg/agent"
@@ -34,8 +31,15 @@ import (
 // Options bundles the curator's dependencies.
 type Options struct {
 	ConversationPath string
-	MemoryPath       string
-	Provider         provider.Provider
+
+	// Store is the mechanism MEMORY is written through — the same one the
+	// save_memory / mark_false_positive Tools use (ADR 0023). The curator is
+	// handed it rather than a path because it is one of two callers of one
+	// write, not the owner of a memory of its own: it shares the writers' lock
+	// and meets the same size ceiling.
+	Store *Store
+
+	Provider provider.Provider
 
 	// MaxTurns optionally caps the curator's loop. Default: 5.
 	// The curator typically needs 2 turns (update_memory + finalize_report);
@@ -45,13 +49,18 @@ type Options struct {
 
 // Curate runs the memory-curator subagent. It reads the conversation at
 // opts.ConversationPath, hands it to the LLM, and applies any update_memory
-// calls to opts.MemoryPath.
+// calls through opts.Store.
+//
+// The whole run holds the Store's writers' lock: the curator reads the current
+// MEMORY into its prompt, thinks for as long as an LLM call takes, and then
+// rewrites the whole file, so a save_memory that landed in between would be
+// erased by that rewrite.
 func Curate(ctx context.Context, opts Options) error {
 	if opts.Provider == nil {
 		return errors.New("memory.Curate: provider required")
 	}
-	if opts.ConversationPath == "" || opts.MemoryPath == "" {
-		return errors.New("memory.Curate: conversation and memory paths required")
+	if opts.ConversationPath == "" || opts.Store == nil {
+		return errors.New("memory.Curate: conversation path and memory store required")
 	}
 
 	records, err := conversation.ReadAll(opts.ConversationPath)
@@ -62,7 +71,9 @@ func Curate(ctx context.Context, opts Options) error {
 		return fmt.Errorf("memory.Curate: conversation %s is empty, nothing to curate", opts.ConversationPath)
 	}
 
-	existing, err := loadExistingMemory(opts.MemoryPath)
+	defer opts.Store.hold()()
+
+	existing, err := opts.Store.load()
 	if err != nil {
 		return fmt.Errorf("memory.Curate: read existing memory: %w", err)
 	}
@@ -70,7 +81,7 @@ func Curate(ctx context.Context, opts Options) error {
 	transcript := renderTranscript(records)
 
 	reg := tool.NewRegistry()
-	reg.Register(newUpdateMemoryTool(opts.MemoryPath))
+	reg.Register(newUpdateMemoryTool(opts.Store))
 
 	curatorSoul := &soul.Soul{
 		Persona: curatorPersona(existing),
@@ -160,24 +171,13 @@ func truncate(s string, max int) string {
 	return s[:max] + "... [truncated]"
 }
 
-func loadExistingMemory(path string) (string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil
-		}
-		return "", err
-	}
-	return string(b), nil
+// newUpdateMemoryTool returns the curator-private `update_memory` tool. It is
+// the curator's shape of the one write: the whole file, replaced.
+func newUpdateMemoryTool(store *Store) tool.Tool {
+	return &updateMemory{store: store}
 }
 
-// newUpdateMemoryTool returns the curator-private `update_memory` tool.
-// It writes the entire MEMORY.md atomically (rename-from-tmp pattern).
-func newUpdateMemoryTool(memoryPath string) tool.Tool {
-	return &updateMemory{path: memoryPath}
-}
-
-type updateMemory struct{ path string }
+type updateMemory struct{ store *Store }
 
 func (u *updateMemory) Name() string { return "update_memory" }
 
@@ -199,16 +199,18 @@ func (u *updateMemory) Schema() map[string]any {
 	}
 }
 
+// Execute replaces MEMORY through the Store, whose lock Curate is already
+// holding for this run — hence the unlocked internal rather than the method.
+// The curator is told when it has left MEMORY full, on the same terms the
+// external AI is, and can act on it in the turn it has left.
 func (u *updateMemory) Execute(_ context.Context, args map[string]any) (string, error) {
 	content, _ := args["content"].(string)
 	if content == "" {
 		return "", errors.New("update_memory: content required")
 	}
-	if err := os.MkdirAll(filepath.Dir(u.path), 0o700); err != nil {
-		return "", fmt.Errorf("update_memory: mkdir: %w", err)
+	w, err := u.store.replace(content)
+	if err != nil {
+		return "", err
 	}
-	if err := os.WriteFile(u.path, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("update_memory: write: %w", err)
-	}
-	return "ok", nil
+	return join("ok", w.Signal()), nil
 }

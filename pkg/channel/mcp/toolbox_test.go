@@ -28,6 +28,16 @@ var knowledgeTools = []string{"list_context", "read_context", "write_context"}
 // its own context (ADR 0023).
 var callerOwnFileTools = []string{"read_file", "grep", "list_files"}
 
+// admittedTools is the whole of the deterministic surface, in the order the
+// Registry projects it (sorted by name). Each group of capabilities declares
+// itself in its own file — the knowledge above, the memory writes in
+// memory_test.go — and this is where they add up.
+func admittedTools() []string {
+	all := slices.Concat(knowledgeTools, memoryTools)
+	slices.Sort(all)
+	return all
+}
+
 func TestToolsList_ToolboxServesTheKnowledgeTools(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
 	names := listedTools(t, s)
@@ -44,8 +54,9 @@ func TestToolsList_AdmitsNothingByDefault(t *testing.T) {
 	// own agent loop; exactly the ones somebody admitted come out here, so a Tool
 	// added later cannot arrive on the surface merely by being registered.
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
-	if names := listedTools(t, s); !slices.Equal(names, knowledgeTools) {
-		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, knowledgeTools)
+	want := admittedTools()
+	if names := listedTools(t, s); !slices.Equal(names, want) {
+		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, want)
 	}
 }
 

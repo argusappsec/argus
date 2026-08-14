@@ -63,7 +63,7 @@ func TestCurate_TracerBullet(t *testing.T) {
 
 	if err := memory.Curate(context.Background(), memory.Options{
 		ConversationPath: convoPath,
-		MemoryPath:       memPath,
+		Store:            memory.NewStore(memPath),
 		Provider:         fp,
 	}); err != nil {
 		t.Fatalf("curate: %v", err)
@@ -117,7 +117,7 @@ func TestCurate_MissingMemoryFileCreatesIt(t *testing.T) {
 	}
 	if err := memory.Curate(context.Background(), memory.Options{
 		ConversationPath: convoPath,
-		MemoryPath:       memPath,
+		Store:            memory.NewStore(memPath),
 		Provider:         fp,
 	}); err != nil {
 		t.Fatalf("curate: %v", err)
@@ -134,7 +134,7 @@ func TestCurate_MissingMemoryFileCreatesIt(t *testing.T) {
 func TestCurate_MissingConversationIsError(t *testing.T) {
 	err := memory.Curate(context.Background(), memory.Options{
 		ConversationPath: filepath.Join(t.TempDir(), "nope.jsonl"),
-		MemoryPath:       filepath.Join(t.TempDir(), "MEMORY.md"),
+		Store:            memory.NewStore(filepath.Join(t.TempDir(), "MEMORY.md")),
 		Provider:         &scriptedProvider{},
 	})
 	if err == nil {
@@ -150,10 +150,70 @@ func TestCurate_EmptyConversationIsError(t *testing.T) {
 	}
 	err := memory.Curate(context.Background(), memory.Options{
 		ConversationPath: convoPath,
-		MemoryPath:       filepath.Join(tmp, "MEMORY.md"),
+		Store:            memory.NewStore(filepath.Join(tmp, "MEMORY.md")),
 		Provider:         &scriptedProvider{},
 	})
 	if err == nil {
 		t.Error("expected error for empty conversation (nothing to curate)")
+	}
+}
+
+// TestCurate_WritesThroughTheOneMechanismAndIsToldWhenMemoryIsFull: the curator
+// is one of two callers of the same write (ADR 0023), not a second memory of its
+// own. Proven where it is visible: what it writes lands through the Store the
+// external AI writes through, and past the ceiling the curator is told exactly
+// what an external AI would be — in the tool result it reads on its next turn,
+// with nothing dropped from what it wrote.
+func TestCurate_WritesThroughTheOneMechanismAndIsToldWhenMemoryIsFull(t *testing.T) {
+	tmp := t.TempDir()
+	convoPath := filepath.Join(tmp, "convo.jsonl")
+	store := memory.NewStore(filepath.Join(tmp, "MEMORY.md"))
+
+	w, _ := conversation.NewWriter(convoPath, "sess-full")
+	_ = w.Append(conversation.Record{Message: provider.Message{Role: "user", Content: "review the payments service"}})
+	w.Close()
+
+	curated := strings.Repeat("- The payments service pins its own TLS roots.\n", memory.Ceiling/40)
+	fp := &scriptedProvider{
+		responses: []provider.Response{
+			{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "update_memory", Args: map[string]any{"content": curated}}}},
+			{ToolCalls: []provider.ToolCall{{ID: "c2", Name: "finalize_report", Args: map[string]any{"summary": "done"}}}},
+		},
+	}
+	if err := memory.Curate(context.Background(), memory.Options{
+		ConversationPath: convoPath,
+		Store:            store,
+		Provider:         fp,
+	}); err != nil {
+		t.Fatalf("curate: %v", err)
+	}
+
+	// The curator reads the signal on its next turn, in the result of the write
+	// it just made.
+	var told string
+	for _, req := range fp.requests {
+		for _, m := range req.Messages {
+			for _, tr := range m.ToolResults {
+				if tr.Name == "update_memory" {
+					told = tr.Output
+				}
+			}
+		}
+	}
+	if !strings.Contains(told, memory.FullSignal) {
+		t.Errorf("the curator must be told MEMORY is full on the same terms an external AI is; got %q", told)
+	}
+	if !strings.Contains(told, "write_context") {
+		t.Errorf("the signal must name where the material should migrate to; got %q", told)
+	}
+
+	// Nothing was truncated: the curator's rewrite is on disk in full, and the
+	// Store is the one that has it.
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got != curated {
+		t.Error("a full MEMORY tells its writer; it never edits what it was given")
 	}
 }
