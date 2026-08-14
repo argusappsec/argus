@@ -464,7 +464,8 @@ func (dc *Context) NewToolRegistry() *tool.Registry {
 // Argus's own agent loop's alone, an exposed one is also offered to whoever
 // calls the MCP channel. The rule for the second verb is "expose only what the
 // caller does not already have" — which is why the file tools below are
-// registered and the organization's knowledge is exposed.
+// registered, and the scanners, the organization's knowledge and its skills
+// are exposed.
 func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewListFiles(toolState))
@@ -476,9 +477,9 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(tool.NewStartReviewLocal(toolState))
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.CodeHost))
 	reg.Register(tool.NewPRDiff(toolState))
-	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
-	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))
-	reg.Register(security.NewOSVScanner(toolState, security.ExecRunner{}))
+	reg.Expose(security.NewSemgrep(toolState, dc.commands()))
+	reg.Expose(security.NewGitleaks(toolState, dc.commands()))
+	reg.Expose(security.NewOSVScanner(toolState, dc.commands()))
 	reg.Expose(tool.NewListSkills(dc.Skills))
 	reg.Expose(tool.NewReadSkill(dc.Skills))
 	reg.Expose(tool.NewReadSkillFile(dc.Skills))

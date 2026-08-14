@@ -27,6 +27,7 @@ import (
 	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
+	"github.com/argusappsec/argus/pkg/security"
 	"github.com/argusappsec/argus/pkg/skill"
 	"github.com/argusappsec/argus/pkg/soul"
 )
@@ -78,6 +79,16 @@ type Context struct {
 	// GitHub-free install (MCP-only, snapshot reviews, consult) is legitimate,
 	// so consumers must guard for nil with a clear, user-facing error.
 	CodeHost codehost.CodeHost
+
+	// Commands is what the scanner Tools shell out through (semgrep, gitleaks,
+	// osv-scanner). It lives on the Context rather than at Registry construction
+	// because both places that build a Registry — a Session and the MCP surface
+	// projected from one — must reach the same executor, and because a test that
+	// drives the surface has to substitute it instead of running real binaries.
+	//
+	// Nil means the real executor (security.ExecRunner): a Context assembled by
+	// hand runs actual scanners unless it deliberately says otherwise.
+	Commands security.Runner
 
 	// NewProvider builds a provider for modelID, validating it against the
 	// configured providers. Called once per Session (cheap), so a --model
@@ -190,6 +201,17 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 
 	dc.Sessions = NewSessionManager(dc, cfg.Daemon.SessionCap())
 	return dc, nil
+}
+
+// commands is the Runner the scanner Tools shell out through: the one injected
+// on the Context, or the real executor when nothing was injected. The default
+// lives next to the field it defaults, so there is one answer to what "nothing
+// injected" means and both Registry callers get it.
+func (dc *Context) commands() security.Runner {
+	if dc.Commands != nil {
+		return dc.Commands
+	}
+	return security.ExecRunner{}
 }
 
 // Close releases the Context's resources. It does NOT wait for in-flight

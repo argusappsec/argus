@@ -27,13 +27,14 @@ var knowledgeTools = []string{"list_context", "read_context", "write_context"}
 // client through the prompts surface (skills_test.go).
 var skillTools = []string{"list_skills", "read_skill", "read_skill_file"}
 
-// admittedTools is every Tool the Registry admits onto the surface, in the
-// order a client sees them in tools/list — by name, which is the stable order
-// the Registry projects.
-func admittedTools() []string {
-	names := slices.Concat(knowledgeTools, skillTools)
-	slices.Sort(names)
-	return names
+// deterministicSurface is every Tool the Registry admits, in the order a client
+// reads them out of tools/list — by name, which is the stable order the
+// Registry projects. Each slice of the Toolbox work contributes its own names
+// to it — the knowledge above, the skills here, the scanners in
+// scanners_test.go — so that the listing is asserted exactly, in one place,
+// against the whole of what was admitted.
+func deterministicSurface() []string {
+	return slices.Sorted(slices.Values(slices.Concat(knowledgeTools, skillTools, scannerTools)))
 }
 
 // callerOwnFileTools are the Tools the daemon registers for its own agent loop
@@ -58,7 +59,7 @@ func TestToolsList_AdmitsNothingByDefault(t *testing.T) {
 	// own agent loop; exactly the ones somebody admitted come out here, so a Tool
 	// added later cannot arrive on the surface merely by being registered.
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
-	if names, want := listedTools(t, s), admittedTools(); !slices.Equal(names, want) {
+	if names, want := listedTools(t, s), deterministicSurface(); !slices.Equal(names, want) {
 		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, want)
 	}
 }
