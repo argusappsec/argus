@@ -22,6 +22,20 @@ import (
 // Argus has no system prompt to push it into.
 var knowledgeTools = []string{"list_context", "read_context", "write_context"}
 
+// skillTools is the organization's security workflow on the same surface, for
+// an agent that goes looking for it by name. The same catalog also reaches a
+// client through the prompts surface (skills_test.go).
+var skillTools = []string{"list_skills", "read_skill", "read_skill_file"}
+
+// admittedTools is every Tool the Registry admits onto the surface, in the
+// order a client sees them in tools/list — by name, which is the stable order
+// the Registry projects.
+func admittedTools() []string {
+	names := slices.Concat(knowledgeTools, skillTools)
+	slices.Sort(names)
+	return names
+}
+
 // callerOwnFileTools are the Tools the daemon registers for its own agent loop
 // that the calling agent already has, and better. They are never admitted:
 // routing them through Argus makes the client pay for the same content twice in
@@ -44,8 +58,8 @@ func TestToolsList_AdmitsNothingByDefault(t *testing.T) {
 	// own agent loop; exactly the ones somebody admitted come out here, so a Tool
 	// added later cannot arrive on the surface merely by being registered.
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
-	if names := listedTools(t, s); !slices.Equal(names, knowledgeTools) {
-		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, knowledgeTools)
+	if names, want := listedTools(t, s), admittedTools(); !slices.Equal(names, want) {
+		t.Errorf("a Toolbox's tool listing = %v, want exactly the admitted Tools %v", names, want)
 	}
 }
 

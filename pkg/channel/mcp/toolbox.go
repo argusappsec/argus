@@ -29,7 +29,7 @@ import (
 // Enforcement lives at the Channel, the way review's does: CONTEXT.md puts it in
 // the Channels and not in the shared Registry, which Argus's own agent loop runs
 // against too.
-var viewerReads = []string{"list_context", "read_context"}
+var viewerReads = []string{"list_context", "read_context", "list_skills", "read_skill", "read_skill_file"}
 
 // errToolDenied is the refusal a read-only caller gets, naming the capability
 // so the external AI can relay it to the developer.

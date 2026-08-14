@@ -165,6 +165,10 @@ func (s *Server) dispatch(ctx context.Context, principal auth.Principal, session
 		return s.handleToolsList(req), true, ""
 	case "tools/call":
 		return s.handleToolCall(ctx, principal, sessionID, req), true, ""
+	case "prompts/list":
+		return s.handlePromptsList(principal, req), true, ""
+	case "prompts/get":
+		return s.handlePromptGet(principal, req), true, ""
 	case "resources/list":
 		return s.handleResourcesList(principal, req), true, ""
 	case "resources/read":

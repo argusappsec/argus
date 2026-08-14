@@ -14,15 +14,23 @@ enforced at the tool layer).
 
 ## Using skills
 
-Two ways a skill gets used, equivalent in outcome:
+Three ways a skill gets used, equivalent in outcome:
 
 - **You invoke it**: type `/<name>` in chat (e.g. `/authz-audit`). The body
   is injected into the conversation as one agent turn and stays in context
   for follow-ups.
 - **The agent finds it**: the agent lists the catalog, judges a skill
   relevant from its description, and loads it on its own.
+- **Your own AI tool invokes it**: connect a coding agent to Argus over the
+  [MCP channel](/guide/channels/mcp/) and every skill appears in that client's
+  own prompt menu. Picking one hands its instructions to your agent, which
+  follows them using Argus's capabilities alongside its own — you never need
+  to know a tool name.
 
-Skills are an **analyst+** capability: viewers can't enumerate or run them.
+Reading a skill is open to anyone Argus recognizes; *acting* on one is not. A
+skill can never do more than the person following it could do themselves — the
+permission check sits on each capability it reaches for, so a read-only user
+following a skill that writes simply gets refused at that step.
 
 ## Managing skills
 
@@ -97,3 +105,16 @@ Start from a built-in as a template. Keep the `description` sharp (it is the
 routing signal), keep heavyweight reference material in supporting files the
 body loads on demand, and iterate against a real repository before trusting
 the results — that is how the built-ins earned their place.
+
+:::note[Write for two readers]
+A skill body reaches two kinds of agent. One is Argus, following it with the
+tools Argus has. The other is your own coding agent, which picks the skill out
+of its prompt menu and follows it with *its* tools plus the ones Argus offers
+it — a different set, on a different machine, with no `read_file` or `grep`
+coming from Argus at all.
+
+So a skill can never assume that every tool it names is present. Write the
+workflow as steps and judgement, and name a tool as the best way to carry a
+step out rather than the only one. An agent missing one adapts and gets there
+another way; an agent told to stop unless it has a particular tool just stops.
+:::

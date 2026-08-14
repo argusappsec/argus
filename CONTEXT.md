@@ -236,6 +236,20 @@ LLM-facing surface:
   bundle, sandboxed within that skill's directory (built-in or user-curated,
   transparent to the caller).
 
+The same catalog is also the MCP channel's **prompts** surface: one prompt per
+skill, its body retrieved through the protocol's prompts methods. Same catalog,
+same bodies, no second store — it is what makes a **Toolbox** discoverable,
+since a client that never learns Argus's tool names can still invoke the
+organization's workflow from its own prompt menu.
+
+A skill body therefore has **two possible consumers**: Argus's own agent,
+holding the Session's registry, and an external agent holding the *client's*
+tools plus the ones Argus exposes. The set of Tools present differs between
+them, so a skill cannot assume the Tools it names are there — it never could
+(see the degradation above), and now what is missing depends on who is reading.
+This is an **authoring** consequence, not a runtime check: nothing validates a
+skill's tool references, and nothing should.
+
 User-explicit trigger: `/<name>` in chat. Client-side commands (`/help`,
 `/quit`, …) never leave the client; any other `/<name>` travels raw and
 is resolved **on the daemon**, against the organization's catalog — the
@@ -245,14 +259,22 @@ the agent as one turn — deterministic, with no dependence on the model
 choosing to call `read_skill`. The body enters the conversation, so it
 stays in context for follow-up turns.
 
-Skills are *intended* as an analyst+ capability, and nothing enforces that
-today: `list_skills`, `read_skill` and `read_skill_file` sit in every
-Session's registry whatever the caller's Role, and `/<name>` resolves
-against the catalog without a Role check. The gate arrives with the
-Tool-layer enforcement above, once channel auth (stream A) lands.
-**Contradicts ADR 0005**, whose RBAC section states that gate as present
-fact ("`list_skills` and `read_skill` are gated behind the **analyst**
-role"); read its no-op line, cited above, instead.
+ADR 0005 intended skills as an analyst+ capability. The Tool layer still does
+not enforce it — `list_skills`, `read_skill` and `read_skill_file` sit in
+every Session's registry whatever the caller's Role, and `/<name>` resolves
+against the catalog without a Role check — so ADR 0005's RBAC section, which
+states that gate as present fact ("`list_skills` and `read_skill` are gated
+behind the **analyst** role"), is **contradicted**; read its no-op line,
+cited above, instead.
+
+Where a Channel does gate, the answer it settled on is *not* analyst+: on the
+**MCP** channel reading a skill is a **viewer** read, on both the Tool and the
+prompts surface, because it mutates nothing and a read-only Role means the
+same thing on every surface. Following a skill is where a Role bites, on
+whatever capability the skill reaches for — which is the ADR's own
+"a skill cannot escalate the caller's permissions", arrived at from the other
+end. Intent and enforcement have therefore diverged deliberately, not by
+oversight.
 
 ---
 
