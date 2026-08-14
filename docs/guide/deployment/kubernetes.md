@@ -86,6 +86,13 @@ Argus splits its files by a single question — *is it mutated at runtime?*
 
 ## Step 1 — Author the seed config locally
 
+:::note[This guide deploys a colleague]
+It assumes Argus reasons on its own behalf — a provider, and automatic
+pull-request reviews. A **toolbox** scans code on the host it runs on, so it
+belongs next to the code and the developer it serves rather than on a cluster.
+See [Deployment shapes](/guide/deployment-shapes/).
+:::
+
 `argus init` is interactive, so run it **on your laptop** (the local loop is
 supported) to produce `argus.yaml` and `SOUL.md`:
 
