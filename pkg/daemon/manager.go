@@ -17,6 +17,7 @@ import (
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/conversation"
 	"github.com/argusappsec/argus/pkg/memory"
+	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/session"
 )
 
@@ -130,9 +131,17 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 	if modelID == "" {
 		modelID = dc.DefaultModel
 	}
-	prov, err := dc.NewProvider(ctx, modelID)
-	if err != nil {
-		return nil, fmt.Errorf("daemon: provider for model %q: %w", modelID, err)
+	// A Toolbox acquires no Provider: there is none to build, and the Session
+	// exists for the deterministic capabilities, which are Session-scoped all
+	// the same. Anything that would need the agent loop is refused per turn
+	// with ErrNoReasoning (Session.run).
+	var prov provider.Provider
+	if !dc.Shape.IsToolbox() {
+		p, err := dc.NewProvider(ctx, modelID)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: provider for model %q: %w", modelID, err)
+		}
+		prov = p
 	}
 
 	soulSnap, err := dc.LoadSoul()
@@ -201,8 +210,9 @@ func (m *SessionManager) Release(s *Session) {
 
 	// An ephemeral one-shot Session (e.g. an MCP Snapshot review) carries no
 	// conversation worth distilling; skip curation rather than burn an agent loop
-	// on a single machine-written seed.
-	if s.userMessages() == 0 || s.ephemeral {
+	// on a single machine-written seed. A Toolbox has no Provider to run the
+	// curator with at all — MEMORY is written deterministically there (ADR 0023).
+	if s.userMessages() == 0 || s.ephemeral || m.dc.Shape.IsToolbox() {
 		return
 	}
 

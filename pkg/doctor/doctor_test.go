@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/tool"
 )
@@ -109,7 +110,7 @@ func TestRun_DetectsConfiguredProvider(t *testing.T) {
 	t.Setenv("PATH", "")
 	t.Setenv("GEMINI_API_KEY", "stub")
 
-	checks := doctor.Run(doctor.Options{Home: home})
+	checks := doctor.Run(doctor.Options{Home: home, Shape: deployment.Colleague})
 
 	for _, c := range checks {
 		if c.Name == "argus.yaml" {
@@ -141,7 +142,7 @@ func TestRun_BlocksWhenDefaultModelResolvesToNoProvider(t *testing.T) {
 	}
 	t.Setenv("PATH", "")
 
-	checks := doctor.Run(doctor.Options{Home: home})
+	checks := doctor.Run(doctor.Options{Home: home, Shape: deployment.Colleague})
 	c := findCheck(checks, "argus.yaml")
 	if c == nil || c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
 		t.Fatalf("check = %+v, want a blocking Fail", c)
@@ -151,6 +152,58 @@ func TestRun_BlocksWhenDefaultModelResolvesToNoProvider(t *testing.T) {
 	}
 	if !doctor.Summarize(checks).HasBlockingFailure() {
 		t.Error("a default_model that names no configured provider must block")
+	}
+}
+
+// doctor reports the Deployment shape the daemon derived — it is told the
+// shape rather than deriving a second opinion of its own.
+func TestRun_ReportsTheDeploymentShape(t *testing.T) {
+	t.Setenv("PATH", "")
+	t.Setenv("GEMINI_API_KEY", "")
+
+	toolbox := findCheck(doctor.Run(doctor.Options{Home: t.TempDir(), Shape: deployment.Toolbox}), "deployment")
+	if toolbox == nil {
+		t.Fatal("no deployment row")
+	}
+	if toolbox.Status != doctor.Info || !strings.Contains(toolbox.Message, "toolbox") {
+		t.Errorf("toolbox row = %+v, want an Info naming the toolbox shape", toolbox)
+	}
+
+	home := writeProviders(t, "gemini-2.5-flash", map[string]config.ProviderConfig{
+		"gemini": {Type: "gemini", APIKey: "literal"},
+	})
+	colleague := findCheck(doctor.Run(doctor.Options{Home: home, Shape: deployment.Colleague}), "deployment")
+	if colleague == nil {
+		t.Fatal("no deployment row")
+	}
+	if colleague.Status != doctor.Info || !strings.Contains(colleague.Message, "colleague") {
+		t.Errorf("colleague row = %+v, want an Info naming the colleague shape", colleague)
+	}
+}
+
+// A Toolbox is a Deployment shape, not a broken Colleague: having no Provider
+// and no model is exactly what it is, so nothing about it may be reported as a
+// failure — least of all a blocking one.
+func TestRun_ToolboxIsNotReportedAsBroken(t *testing.T) {
+	t.Setenv("PATH", "")
+	t.Setenv("GEMINI_API_KEY", "")
+
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), Shape: deployment.Toolbox})
+	for _, c := range checks {
+		if c.Status == doctor.Fail {
+			t.Errorf("check %q failed in a Toolbox: %s", c.Name, c.Hint)
+		}
+	}
+	if doctor.Summarize(checks).HasBlockingFailure() {
+		t.Error("a Toolbox must not be reported as an environment that is not ready")
+	}
+
+	yaml := findCheck(checks, "argus.yaml")
+	if yaml == nil || yaml.Status == doctor.Fail {
+		t.Fatalf("argus.yaml row = %+v, want no failure for a config that configures no Provider", yaml)
+	}
+	if !strings.Contains(yaml.Message, "toolbox") {
+		t.Errorf("argus.yaml row should say why there is no Provider: %q", yaml.Message)
 	}
 }
 
@@ -169,6 +222,12 @@ func TestRun_SurfacesLegacyConfigKeyError(t *testing.T) {
 	}
 	if !strings.Contains(c.Hint, "codehosts:") {
 		t.Errorf("hint should name the v2 replacement, got %q", c.Hint)
+	}
+	// A shape derived from a config nobody could read is a guess. Doctor says
+	// nothing rather than announcing a toolbox next to a file that may well
+	// declare a Provider.
+	if d := findCheck(checks, "deployment"); d != nil {
+		t.Errorf("deployment row = %+v, want none when argus.yaml cannot be read", d)
 	}
 }
 
@@ -375,7 +434,7 @@ func TestRun_BinariesOnly_SkipsNonBinaryChecks(t *testing.T) {
 
 	for _, c := range checks {
 		switch c.Name {
-		case "argus.yaml", "gemini api key", "llm provider", "SOUL.md", "context/", "github":
+		case "deployment", "argus.yaml", "gemini api key", "llm provider", "SOUL.md", "context/", "github":
 			t.Errorf("non-binary check %q must not run in binaries-only mode", c.Name)
 		}
 	}

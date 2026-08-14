@@ -15,6 +15,7 @@ import (
 	"github.com/argusappsec/argus/pkg/codehost"
 	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
@@ -130,6 +131,7 @@ func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server
 
 	dc := &daemon.Context{
 		Home:         home,
+		Shape:        deployment.Colleague,
 		DefaultModel: "gemini-2.5-flash",
 		Auth:         auth.NewResolver(usersPath),
 		Audit:        aud,

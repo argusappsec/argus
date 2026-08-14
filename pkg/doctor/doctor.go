@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/soul"
 	"github.com/argusappsec/argus/pkg/tool"
 )
@@ -65,6 +66,14 @@ type ExtraBinary struct {
 // Options control which environment doctor inspects.
 type Options struct {
 	Home string // ~/.argus directory; required
+
+	// Shape is the daemon's derived Deployment shape (daemon.ShapeOf). It is
+	// passed in rather than re-derived: the condition that decides it lives on
+	// the daemon Context, and doctor holding a second opinion is how the two
+	// come to disagree. It decides which checks apply at all — a Toolbox is a
+	// deployment shape, not a Colleague missing its Provider, so it is never
+	// reported as broken for having none.
+	Shape deployment.Shape
 
 	// Registry is the tool registry to inspect for binary deps. Tools that
 	// implement tool.Requirer are asked what they need; tools that don't are
@@ -142,7 +151,7 @@ func Run(opts Options) []Check {
 
 	var out []Check
 	out = append(out, binaryChecks(opts.Registry, opts.ExtraBinaries)...)
-	out = append(out, configChecks(opts.Home)...)
+	out = append(out, configChecks(opts.Home, opts.Shape)...)
 	// Straight after the configuration rows: those say what is configured, this
 	// one says whether it works.
 	if opts.Provider != nil {
@@ -157,6 +166,23 @@ func Run(opts Options) []Check {
 		out = append(out, frontDoorCheck(opts.FrontDoorAddr, opts.FrontDoorProbe))
 	}
 	return out
+}
+
+// deploymentCheck reports the Deployment shape this installation runs as. It is
+// informational by construction: neither shape is a fault, and naming the one in
+// force is what keeps an operator from hunting for a Review that this daemon was
+// never going to offer (ADR 0023).
+func deploymentCheck(shape deployment.Shape) Check {
+	c := Check{Name: "deployment", Status: Info, Severity: SeverityInfo}
+	if shape.IsToolbox() {
+		c.Message = "toolbox — no LLM Provider configured: Argus serves its scanners, the organization's " +
+			"knowledge and its Skills over MCP and does not reason on its own behalf (review, consult and " +
+			"automatic PR review need a Provider — `argus init` adds one)"
+		return c
+	}
+	c.Message = "colleague — an LLM Provider is configured: Argus reasons on its own behalf (review, consult, " +
+		"automatic PR review) and serves the toolbox as well"
+	return c
 }
 
 // frontDoorCheck verifies the daemon's single HTTP front door (ADR 0015) is
@@ -277,12 +303,24 @@ func severityFromRequired(required bool) Severity {
 	return SeverityOptional
 }
 
-func configChecks(home string) []Check {
+func configChecks(home string, shape deployment.Shape) []Check {
 	var out []Check
 
 	// argus.yaml
 	yamlPath := filepath.Join(home, "argus.yaml")
 	cfg, err := config.LoadConfig(yamlPath)
+
+	// The Deployment shape leads the configuration rows, because it is what
+	// they have to be read against: the same absent Provider is a fault in one
+	// shape and the shape itself in the other. It is omitted when the config
+	// could not be read at all — the caller derived the shape from an
+	// environment it could only half see, and a confident "toolbox" beside a
+	// config that may well declare Providers would be a guess presented as an
+	// answer. The row below carries the real problem.
+	if err == nil {
+		out = append(out, deploymentCheck(shape))
+	}
+
 	yamlCheck := Check{Name: "argus.yaml", Severity: SeverityOptional}
 	switch {
 	case err != nil:
@@ -292,6 +330,14 @@ func configChecks(home string) []Check {
 		// generic "run init" — the config's own message is the actionable one.
 		yamlCheck.Status = Fail
 		yamlCheck.Hint = err.Error()
+	case shape.IsToolbox():
+		// No Provider and no model is not an incomplete config here: it is the
+		// Toolbox, which the deployment row above has already explained.
+		// Reporting it as a fault would tell an operator to fix the thing they
+		// chose.
+		yamlCheck.Status = Info
+		yamlCheck.Severity = SeverityInfo
+		yamlCheck.Message = "no `providers:` configured, and none is needed in a toolbox"
 	case cfg.DefaultModel == "" || len(cfg.Providers) == 0:
 		yamlCheck.Status = Fail
 		yamlCheck.Hint = "incomplete config; run `argus init` to (re-)populate"
@@ -327,7 +373,7 @@ func configChecks(home string) []Check {
 	// A config that failed to load yields a nil cfg; apiKeyChecks reads that as
 	// "no Providers known" and reports the fallback credential, which is what
 	// Argus would actually reach for.
-	out = append(out, apiKeyChecks(cfg, envPath)...)
+	out = append(out, apiKeyChecks(cfg, envPath, shape)...)
 
 	return out
 }

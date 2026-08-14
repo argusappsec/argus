@@ -340,6 +340,14 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 // through cb. reports may be nil — a Snapshot review (ADR 0011) returns its
 // findings to the MCP caller transiently and writes no report file.
 func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, reports *report.Writer, cb RunCallbacks) (*report.Report, error) {
+	// The one place the agent loop starts, so the one place a Toolbox has to
+	// decline it: no Provider means no loop, and every caller — a chat turn on
+	// the socket, a review or a consult over MCP — gets the same explanation of
+	// the shape rather than a nil-Provider failure further down (ADR 0023).
+	if s.dc.Shape.IsToolbox() {
+		return nil, ErrNoReasoning
+	}
+
 	ag := agent.New(agent.Options{
 		Provider:     s.provider,
 		Audit:        s.audit,

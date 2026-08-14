@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 )
 
@@ -196,9 +197,9 @@ func quotedSample(models []string) string {
 // openai-compatible — for a key they correctly do not have — and a local-runtime
 // user has no API key at all, which is precisely the user this Provider exists
 // to attract.
-func apiKeyChecks(cfg *config.Config, envPath string) []Check {
+func apiKeyChecks(cfg *config.Config, envPath string, shape deployment.Shape) []Check {
 	if cfg == nil || len(cfg.Providers) == 0 {
-		return []Check{fallbackAPIKeyCheck(envPath)}
+		return []Check{fallbackAPIKeyCheck(envPath, shape)}
 	}
 	// Sorted: map iteration would reorder the rows on every run.
 	names := slices.Sorted(maps.Keys(cfg.Providers))
@@ -251,13 +252,27 @@ func apiKeyCheck(name string, p config.ProviderConfig, envPath string) Check {
 	return c
 }
 
-// fallbackAPIKeyCheck covers an install with no providers: block at all. Provider
-// construction falls back to a Gemini client keyed by GEMINI_API_KEY there (see
-// daemon.ProviderSpecForModel), so that variable is genuinely the credential
-// Argus would use — and genuinely blocking when unset. The name is this
-// fallback's, not a naming rule: `argus init` owns which variable a Provider type
-// defaults to.
-func fallbackAPIKeyCheck(envPath string) Check {
+// fallbackAPIKeyCheck covers an install with no providers: block at all. Which
+// row that deserves is the Deployment shape's answer, and the two cases are
+// genuinely different questions:
+//
+//   - A **Toolbox** has no Provider by definition, so there is no credential to
+//     hold it to. Demanding one would report a deployment shape as a broken
+//     Colleague (ADR 0023).
+//   - A **Colleague** with no `providers:` block is the environment-variable
+//     fallback: provider construction reaches for a Gemini client keyed by
+//     GEMINI_API_KEY (see daemon.ProviderSpecForModel), so that variable is
+//     genuinely the credential Argus would use. The name is this fallback's, not
+//     a naming rule: `argus init` owns which variable a Provider type defaults to.
+func fallbackAPIKeyCheck(envPath string, shape deployment.Shape) Check {
+	if shape.IsToolbox() {
+		return Check{
+			Name:     "llm api key",
+			Status:   Info,
+			Severity: SeverityInfo,
+			Message:  "no LLM Provider configured — nothing to check: a toolbox reasons through its caller, not through a key of its own",
+		}
+	}
 	c := Check{Name: provider.TypeGemini + " api key", Severity: SeverityRequired}
 	if v := os.Getenv("GEMINI_API_KEY"); v != "" {
 		c.Status = Pass

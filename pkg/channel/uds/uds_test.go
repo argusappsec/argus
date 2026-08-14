@@ -14,6 +14,7 @@ import (
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
@@ -50,6 +51,14 @@ func (f *scriptedProvider) Generate(ctx context.Context, _ provider.Request) (pr
 // socket path and returns the path. Everything is torn down with the test.
 func startServer(t *testing.T, prov provider.Provider) (socketPath string, dc *daemon.Context) {
 	t.Helper()
+	return startShapedServer(t, prov, nil)
+}
+
+// startShapedServer is startServer with a hook that adjusts the daemon Context
+// before the server goroutine exists — a Context the server is already reading
+// must not be written to.
+func startShapedServer(t *testing.T, prov provider.Provider, shape func(*daemon.Context)) (socketPath string, dc *daemon.Context) {
+	t.Helper()
 	home := t.TempDir()
 
 	aud, err := audit.NewLogger(filepath.Join(home, "audit.log.jsonl"))
@@ -62,6 +71,7 @@ func startServer(t *testing.T, prov provider.Provider) (socketPath string, dc *d
 
 	dc = &daemon.Context{
 		Home:         home,
+		Shape:        deployment.Colleague,
 		DefaultModel: "gemini-2.5-flash",
 		SocketPath:   socketPath,
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
@@ -73,6 +83,9 @@ func startServer(t *testing.T, prov provider.Provider) (socketPath string, dc *d
 		},
 		LoadSoul:   func() (*soul.Soul, error) { return &soul.Soul{}, nil },
 		LoadMemory: func() (string, error) { return "", nil },
+	}
+	if shape != nil {
+		shape(dc)
 	}
 	dc.Sessions = daemon.NewSessionManager(dc, 2)
 
@@ -173,6 +186,41 @@ func TestEndToEnd_MessageRoundTrip(t *testing.T) {
 	}
 	if !sawUsage {
 		t.Errorf("usage frame missing or token counts wrong; frames: %+v", frames)
+	}
+}
+
+// The TUI Channel against a Toolbox: possession of the socket is how the
+// operator administers the daemon, so the connection is accepted as always —
+// and the conversational turn comes back with an explanation of the shape
+// instead of an obscure failure.
+func TestEndToEnd_ToolboxExplainsWhyItCannotChat(t *testing.T) {
+	path, _ := startShapedServer(t, nil, func(dc *daemon.Context) {
+		dc.Shape = deployment.Toolbox
+		dc.DefaultModel = ""
+		dc.NewProvider = func(context.Context, string) (provider.Provider, error) {
+			t.Error("a Toolbox must not try to acquire a Provider")
+			return nil, errors.New("no provider")
+		}
+	})
+
+	c, err := Dial(path, HelloOptions{})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	if err := c.SendMessage("what do you think of this code?"); err != nil {
+		t.Fatal(err)
+	}
+	frames := collectUntilTerminal(t, c)
+	last := frames[len(frames)-1]
+	if last.Type != TypeError {
+		t.Fatalf("terminal frame = %+v, want an error carrying the explanation", last)
+	}
+	for _, want := range []string{"Toolbox", "Provider", "argus init"} {
+		if !strings.Contains(last.Reason, want) {
+			t.Errorf("explanation %q does not mention %q", last.Reason, want)
+		}
 	}
 }
 
@@ -350,7 +398,7 @@ func TestEndToEnd_StaleSocketIsReplaced(t *testing.T) {
 	aud, _ := audit.NewLogger(filepath.Join(home, "audit.log.jsonl"))
 	t.Cleanup(func() { aud.Close() })
 	dc := &daemon.Context{
-		Home: home, DefaultModel: "m", SocketPath: stale,
+		Home: home, Shape: deployment.Colleague, DefaultModel: "m", SocketPath: stale,
 		Auth: auth.NewResolver(filepath.Join(home, "users.yaml")), Audit: aud,
 		Reports: report.NewWriter(filepath.Join(home, "reports")),
 		Skills:  skill.NewCatalog(skill.Builtin(), filepath.Join(home, "skills")),
