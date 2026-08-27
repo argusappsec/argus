@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/argusappsec/argus/pkg/audit"
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
@@ -61,6 +63,7 @@ func testContext(t *testing.T, prov provider.Provider, cap int) *Context {
 
 	dc := &Context{
 		Home:         home,
+		Shape:        deployment.Colleague,
 		DefaultModel: "gemini-2.5-flash",
 		Auth:         auth.NewResolver(filepath.Join(home, "users.yaml")),
 		Audit:        aud,
@@ -74,6 +77,49 @@ func testContext(t *testing.T, prov provider.Provider, cap int) *Context {
 	}
 	dc.Sessions = NewSessionManager(dc, cap)
 	return dc
+}
+
+// testToolboxContext builds a Context for a daemon with no Provider at all —
+// the Toolbox shape, where NewProvider is never called because there is nothing
+// for it to build.
+func testToolboxContext(t *testing.T) *Context {
+	t.Helper()
+	dc := testContext(t, nil, 4)
+	dc.Shape = deployment.Toolbox
+	dc.DefaultModel = ""
+	dc.NewProvider = func(context.Context, string) (provider.Provider, error) {
+		t.Error("a Toolbox must not try to acquire a Provider")
+		return nil, errors.New("no provider")
+	}
+	return dc
+}
+
+// A Toolbox still allocates Sessions — the deterministic capabilities are
+// Session-scoped — and refuses the turns that would need Argus's own agent
+// loop, with an explanation of the shape rather than an obscure failure.
+func TestToolbox_SessionsExistAndConversationalTurnsExplainTheShape(t *testing.T) {
+	dc := testToolboxContext(t)
+	ctx := context.Background()
+
+	s, _, err := dc.Sessions.GetOrCreate(ctx, "uds", "k", principal(), SessionOptions{})
+	if err != nil {
+		t.Fatalf("a Toolbox refused to allocate a Session: %v", err)
+	}
+
+	_, err = s.HandleMessage(ctx, "hello", RunCallbacks{})
+	if !errors.Is(err, ErrNoReasoning) {
+		t.Fatalf("err = %v, want ErrNoReasoning", err)
+	}
+	for _, want := range []string{"Toolbox", "Provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("explanation %q does not mention %q", err, want)
+		}
+	}
+
+	// Release must not reach for the memory curator either: there is no
+	// Provider to run one with.
+	dc.Sessions.Release(s)
+	dc.Sessions.Drain(2 * time.Second)
 }
 
 func principal() auth.Principal {

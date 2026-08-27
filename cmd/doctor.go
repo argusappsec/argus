@@ -15,6 +15,7 @@ import (
 	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
@@ -61,6 +62,7 @@ func doctorCmd() *cobra.Command {
 				BinariesOnly:  binariesOnly,
 			}
 			if !binariesOnly {
+				opts.Shape = deploymentShape(home)
 				opts.GitHub, opts.GitHubMint = githubDoctorOptions(home)
 				opts.FrontDoorAddr, opts.FrontDoorProbe = frontDoorDoctorOptions(home)
 				opts.Provider, opts.ProviderModels, opts.ProviderToolCall = providerDoctorOptions(home)
@@ -168,6 +170,25 @@ func doctorRegistry() *tool.Registry {
 	// Future: trivy, trufflehog, govulncheck — adding them in
 	// pkg/security and registering them here is the only change needed.
 	return reg
+}
+
+// deploymentShape derives the Deployment shape doctor reports on, through the
+// same function the daemon uses at Build (daemon.ShapeOf) over the same inputs
+// — .env included, since the no-`providers:` fallback credential may live
+// there. Deriving it here rather than inside pkg/doctor is the same division as
+// every other row that depends on argus.yaml: the caller resolves, doctor
+// reports. A config that cannot be read leaves nothing worth deriving from —
+// doctor drops the row rather than guess, and the argus.yaml row carries the
+// real problem.
+func deploymentShape(home string) deployment.Shape {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		cfg = nil
+	}
+	if e, lerr := config.LoadEnv(filepath.Join(home, ".env")); lerr == nil {
+		e.ApplyToProcess()
+	}
+	return daemon.ShapeOf(cfg)
 }
 
 // githubDoctorOptions loads the github codehost from argus.yaml and, when it is

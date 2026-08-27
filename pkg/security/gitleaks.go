@@ -2,7 +2,6 @@ package security
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -24,13 +23,16 @@ type gitleaks struct {
 func (g *gitleaks) Name() string { return "run_gitleaks" }
 
 func (g *gitleaks) Description() string {
-	return "Run gitleaks to detect secrets in the cloned repository. Returns JSON findings."
+	return "Run gitleaks to detect committed secrets in a directory on the machine Argus runs on. " +
+		"Returns gitleaks's JSON findings."
 }
 
 func (g *gitleaks) Schema() map[string]any {
 	return map[string]any{
-		"type":       "object",
-		"properties": map[string]any{},
+		"type": "object",
+		"properties": map[string]any{
+			"path": targetSchemaProperty(),
+		},
 	}
 }
 
@@ -42,10 +44,10 @@ func (g *gitleaks) Requires() []tool.Requirement {
 	}}
 }
 
-func (g *gitleaks) Execute(ctx context.Context, _ map[string]any) (string, error) {
-	root := g.sess.Root()
-	if root == "" {
-		return "", errors.New("no target set: call start_review_local or start_review_github first")
+func (g *gitleaks) Execute(ctx context.Context, args map[string]any) (string, error) {
+	root, err := scanTarget(g.sess, args)
+	if err != nil {
+		return "", err
 	}
 
 	// gitleaks insists on a file for --report-path. Passing "/dev/stdout"

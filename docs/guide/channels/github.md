@@ -45,6 +45,17 @@ With `auto_enroll: true` (the current default when unset) every installed
 repo is reviewed; prefer the allow-list — on a public repo, "anyone who can
 open a PR" is the whole internet.
 
+:::note[Automatic reviews need a model]
+An automatic review is Argus reasoning on its own behalf, so it needs an LLM
+provider. On an installation that has none, configuring this channel **fails at
+startup**, naming the reason — a configured integration is never silently dead.
+Since `auto_enroll` is on when unset, that is *any* github channel unless you
+write `auto_enroll: false` with no `enabled_repos`. Do that and the channel runs:
+it reviews nothing by itself, and replies on threads are declined one turn at a
+time with an explanation instead. See
+[Deployment shapes](/guide/deployment-shapes/).
+:::
+
 ## Talking to Argus on a thread
 
 Argus reads PR and issue comments on enrolled repos and answers when the

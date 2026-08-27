@@ -16,6 +16,7 @@ import (
 	"github.com/argusappsec/argus/pkg/channel/uds"
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/deployment"
 )
 
 // daemonCmd runs argusd: the long-running shared daemon every Channel lives
@@ -55,6 +56,9 @@ func daemonCmd() *cobra.Command {
 			defer stop()
 
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: home %s\n", home)
+			for _, line := range shapeNotice(dc.Shape) {
+				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: listening on %s\n", dc.SocketPath)
 
 			// The UDS channel owns its own transport (a Unix socket); it runs
@@ -107,4 +111,21 @@ func daemonCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")
 	return c
+}
+
+// shapeNotice is what argusd says at startup about the Deployment shape it
+// derived (ADR 0023). A Colleague gets one line. A Toolbox gets the
+// consequences too, because the operator has to learn here why Review is
+// missing — the alternative is learning it while looking for it.
+func shapeNotice(shape deployment.Shape) []string {
+	if !shape.IsToolbox() {
+		return []string{"argusd: deployment shape: colleague (an LLM Provider is configured)"}
+	}
+	return []string{
+		"argusd: deployment shape: toolbox — no LLM Provider is configured",
+		"argusd:   Argus does not reason on its own behalf here: review, consult and automatic",
+		"argusd:   PR review are unavailable. Its scanners, the organization's knowledge and its",
+		"argusd:   Skills are served over MCP, for an AI that reasons on your machine to drive.",
+		"argusd:   Configure a provider in argus.yaml (`argus init`) to run as a colleague.",
+	}
 }

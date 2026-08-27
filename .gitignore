@@ -21,3 +21,4 @@ vendor/
 coverage.txt
 
 .worktrees/ralph/**
+.claude/worktrees/

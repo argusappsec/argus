@@ -66,15 +66,22 @@ func reviewToolDecl() toolDecl {
 	}
 }
 
-// handleToolsList advertises the coarse capabilities (ADR 0011). The low-level
-// scanners are deliberately absent — they stay inside Argus's own agent loop.
+// handleToolsList advertises what this deployment actually serves — the extent
+// of the surface for the daemon's current Deployment shape (see surface.go).
+// The low-level scanners are deliberately absent — they stay inside Argus's own
+// agent loop.
 func (s *Server) handleToolsList(req rpcRequest) rpcResponse {
-	return result(req.ID, toolsListResult{Tools: []toolDecl{reviewToolDecl(), consultToolDecl()}})
+	return result(req.ID, toolsListResult{Tools: s.surface().tools()})
 }
 
 // handleToolCall routes a tools/call to the named capability. sessionID is the
 // caller's MCP session (empty for a sessionless one-shot client), threaded to
 // review so follow-up calls accumulate onto the same Snapshot workspace.
+//
+// A name this deployment cannot serve is answered with the reason as a tool
+// error, so a client that learned it against a Colleague is told what changed
+// rather than left to guess; a name Argus has never had stays a JSON-RPC
+// method-not-found.
 func (s *Server) handleToolCall(ctx context.Context, principal auth.Principal, sessionID string, req rpcRequest) rpcResponse {
 	var params struct {
 		Name      string          `json:"name"`
@@ -83,14 +90,15 @@ func (s *Server) handleToolCall(ctx context.Context, principal auth.Principal, s
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return errorResponse(req.ID, codeInvalidParams, "invalid tools/call params")
 	}
-	switch params.Name {
-	case toolReview:
-		return s.handleReview(ctx, principal, sessionID, req, params.Arguments)
-	case toolConsult:
-		return s.handleConsult(ctx, principal, sessionID, req, params.Arguments)
-	default:
-		return errorResponse(req.ID, codeMethodNotFound, "unknown tool: "+params.Name)
+	surf := s.surface()
+	if c, ok := surf.lookup(params.Name); ok {
+		return c.handle(ctx, principal, sessionID, req, params.Arguments)
 	}
+	if surf.withholds(params.Name) {
+		s.audit("mcp_tool_withheld", principal, map[string]any{"tool": params.Name, "shape": surf.shape.String()})
+		return result(req.ID, toolError(withheldReason(params.Name)))
+	}
+	return errorResponse(req.ID, codeMethodNotFound, "unknown tool: "+params.Name)
 }
 
 // reviewFile is one caller-supplied file in a review call.
@@ -270,16 +278,26 @@ func (s *Server) handleRepoReview(ctx context.Context, principal auth.Principal,
 	return result(req.ID, reviewToolResult(rep, nil))
 }
 
-// canReview reports whether role may request a Snapshot review. Review is an
-// analyst+ capability (the caller is typically a developer); viewers are
-// read-only across channels and get consult, not review, in a later slice.
-func canReview(role auth.Role) bool {
+// atLeastAnalyst reports whether role is analyst or admin: the one line this
+// channel draws between the read-only viewer and a Principal who may ask Argus
+// to do something. Review sits above it, and so do the knowledge writes on the
+// deterministic surface (toolbox.go).
+func atLeastAnalyst(role auth.Role) bool {
 	return role == auth.RoleAdmin || role == auth.RoleAnalyst
 }
 
+// canReview reports whether role may request a Snapshot review. Review is an
+// analyst+ capability (the caller is typically a developer); viewers are
+// read-only across channels and get consult, not review, in a later slice.
+func canReview(role auth.Role) bool { return atLeastAnalyst(role) }
+
+// roleIsReadOnly closes every Role refusal on this channel, so a viewer reads
+// the same explanation whichever capability they reached for.
+const roleIsReadOnly = "; your role is read-only on this channel"
+
 // errReviewDenied is the tool-layer refusal a viewer's review attempt gets,
 // phrased so the external AI relays it to the developer.
-const errReviewDenied = "permission denied: requesting a security review requires the analyst or admin role; your role is read-only on this channel"
+const errReviewDenied = "permission denied: requesting a security review requires the analyst or admin role" + roleIsReadOnly
 
 // reviewToolResult renders the report as an MCP tool result: a human-readable
 // text block plus the structured findings the caller can act on. When the run

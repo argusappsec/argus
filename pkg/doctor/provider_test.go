@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/config"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/provider"
 )
@@ -415,21 +416,39 @@ func TestAPIKeyCheck_ResolvedKeysPass(t *testing.T) {
 func TestAPIKeyCheck_NoProvidersFallsBackToGeminiKey(t *testing.T) {
 	// With no providers: block, provider construction falls back to a Gemini
 	// client keyed by GEMINI_API_KEY, so that variable is genuinely what Argus
-	// would use — and genuinely blocking when unset.
+	// would use — and an install that has it exported is a Colleague.
 	t.Setenv("PATH", "")
-	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "gem-secret")
 
-	checks := doctor.Run(doctor.Options{Home: t.TempDir()})
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), Shape: deployment.Colleague})
 	c := findCheck(checks, "gemini api key")
 	if c == nil {
 		t.Fatal("no api key row for the no-providers fallback")
 	}
-	if c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
-		t.Fatalf("status/severity = %v/%v, want Fail/SeverityRequired", c.Status, c.Severity)
+	if c.Status != doctor.Pass {
+		t.Fatalf("status = %v, want Pass (%s)", c.Status, c.Hint)
 	}
-	for _, want := range []string{"GEMINI_API_KEY", "init"} {
-		if !strings.Contains(c.Hint, want) {
-			t.Errorf("hint %q should contain %q", c.Hint, want)
-		}
+	if !strings.Contains(c.Message, "GEMINI_API_KEY") {
+		t.Errorf("message %q should name the variable Argus fell back to", c.Message)
+	}
+}
+
+func TestAPIKeyCheck_ToolboxHasNoCredentialToCheck(t *testing.T) {
+	// No providers and no fallback key is the Toolbox, so there is no
+	// credential to demand: reporting a missing GEMINI_API_KEY here would call
+	// a deployment shape a broken one.
+	t.Setenv("PATH", "")
+	t.Setenv("GEMINI_API_KEY", "")
+
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), Shape: deployment.Toolbox})
+	if c := findCheck(checks, "gemini api key"); c != nil {
+		t.Errorf("a Toolbox has no Gemini fallback to report on: %+v", c)
+	}
+	c := findCheck(checks, "llm api key")
+	if c == nil {
+		t.Fatal("no api key row at all")
+	}
+	if c.Status != doctor.Info || c.Severity != doctor.SeverityInfo {
+		t.Fatalf("status/severity = %v/%v, want Info/SeverityInfo (%s)", c.Status, c.Severity, c.Hint)
 	}
 }

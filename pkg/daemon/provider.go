@@ -52,10 +52,8 @@ func ProviderSpecForModel(cfg *config.Config, modelID string) (provider.Spec, er
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-	if len(cfg.Providers) == 0 {
-		if k := os.Getenv("GEMINI_API_KEY"); k != "" {
-			return provider.Spec{Type: provider.TypeGemini, APIKey: k, Model: fallbackWireModel(modelID)}, nil
-		}
+	if len(cfg.Providers) == 0 && hasFallbackAPIKey() {
+		return provider.Spec{Type: provider.TypeGemini, APIKey: os.Getenv(fallbackAPIKeyEnv), Model: fallbackWireModel(modelID)}, nil
 	}
 
 	// Resolution errors travel out as they are: config names the candidates, the
@@ -81,6 +79,17 @@ func ProviderSpecForModel(cfg *config.Config, modelID string) (provider.Spec, er
 		MaxOutputTokens: p.MaxOutputTokens,
 	}, nil
 }
+
+// fallbackAPIKeyEnv is the credential the no-`providers:` fallback above is
+// keyed by. The variable name belongs to that fallback, not to a naming rule:
+// `argus init` owns which variable a configured Provider type defaults to.
+const fallbackAPIKeyEnv = "GEMINI_API_KEY"
+
+// hasFallbackAPIKey reports whether the fallback credential is present. It is
+// asked here, next to the fallback it describes, because the Deployment shape
+// asks it too (ShapeOf): an install the fallback would serve is a Colleague,
+// and the two answers must not be able to disagree.
+func hasFallbackAPIKey() bool { return os.Getenv(fallbackAPIKeyEnv) != "" }
 
 // fallbackWireModel strips the qualification off a model id on the GEMINI_API_KEY
 // path. There is no providers: block there to resolve against, so nothing else

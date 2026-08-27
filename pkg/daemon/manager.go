@@ -7,16 +7,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/conversation"
 	"github.com/argusappsec/argus/pkg/memory"
+	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/session"
 )
 
@@ -55,9 +54,9 @@ type SessionManager struct {
 	active map[string]*Session
 
 	// curations tracks in-flight memory curations so graceful shutdown can
-	// wait for them; curationMu serializes MEMORY.md writers (ADR 0004).
-	curations  sync.WaitGroup
-	curationMu sync.Mutex
+	// wait for them. Serializing MEMORY's writers is the Store's job, not this
+	// one's: it is the same lock for every caller of the write (ADR 0023).
+	curations sync.WaitGroup
 }
 
 // NewSessionManager creates a manager bound to dc with the given cap.
@@ -130,9 +129,17 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 	if modelID == "" {
 		modelID = dc.DefaultModel
 	}
-	prov, err := dc.NewProvider(ctx, modelID)
-	if err != nil {
-		return nil, fmt.Errorf("daemon: provider for model %q: %w", modelID, err)
+	// A Toolbox acquires no Provider: there is none to build, and the Session
+	// exists for the deterministic capabilities, which are Session-scoped all
+	// the same. Anything that would need the agent loop is refused per turn
+	// with ErrNoReasoning (Session.run).
+	var prov provider.Provider
+	if !dc.Shape.IsToolbox() {
+		p, err := dc.NewProvider(ctx, modelID)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: provider for model %q: %w", modelID, err)
+		}
+		prov = p
 	}
 
 	soulSnap, err := dc.LoadSoul()
@@ -201,20 +208,20 @@ func (m *SessionManager) Release(s *Session) {
 
 	// An ephemeral one-shot Session (e.g. an MCP Snapshot review) carries no
 	// conversation worth distilling; skip curation rather than burn an agent loop
-	// on a single machine-written seed.
-	if s.userMessages() == 0 || s.ephemeral {
+	// on a single machine-written seed. A Toolbox has no Provider to run the
+	// curator with at all — MEMORY is written deterministically there (ADR 0023).
+	if s.userMessages() == 0 || s.ephemeral || m.dc.Shape.IsToolbox() {
 		return
 	}
 
 	m.curations.Add(1)
 	go func() {
 		defer m.curations.Done()
-		m.curationMu.Lock()
-		defer m.curationMu.Unlock()
-
+		// Curations serialize against each other, and against every other
+		// writer of MEMORY, on the Store's own lock (ADR 0023).
 		err := memory.Curate(context.Background(), memory.Options{
 			ConversationPath: s.convoPath,
-			MemoryPath:       filepath.Join(m.dc.Home, "MEMORY.md"),
+			Store:            m.dc.MemoryStore(),
 			Provider:         s.provider,
 		})
 		if err != nil {
@@ -225,29 +232,22 @@ func (m *SessionManager) Release(s *Session) {
 	}()
 }
 
-// AppendMemory appends one advisory line to MEMORY.md under the same lock that
-// serializes the memory curator, so a channel-driven note — e.g. a false
-// positive a teammate accepted on a PR (ADR 0008 / slice 6) — cannot be lost to
-// a concurrent curator rewrite. The curator owns MEMORY.md's full-file rewrites;
-// this is the one sanctioned out-of-band writer, and it shares the curator's
-// lock rather than racing it. A trailing newline is ensured.
-func (m *SessionManager) AppendMemory(line string) error {
-	m.curationMu.Lock()
-	defer m.curationMu.Unlock()
-
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
-	}
-	path := filepath.Join(m.dc.Home, "MEMORY.md")
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+// AppendMemory appends one advisory line to MEMORY through the daemon's one
+// memory writer, so a channel-driven note — e.g. a false positive a teammate
+// accepted on a PR (ADR 0008 / slice 6) — cannot be lost to a concurrent
+// curator rewrite. There is no second write path to MEMORY: the curator, the
+// save_memory / mark_false_positive Tools on the MCP surface and this all go
+// through the same Store (ADR 0023).
+//
+// It returns the Store's signal — empty while there is room, and past the size
+// ceiling an explanation that MEMORY is full and material should migrate to
+// CONTEXT. Every caller of the write is told; none of them is silently trimmed.
+func (m *SessionManager) AppendMemory(line string) (string, error) {
+	st, err := m.dc.MemoryStore().Append(line)
 	if err != nil {
-		return fmt.Errorf("daemon: open MEMORY: %w", err)
+		return "", fmt.Errorf("daemon: %w", err)
 	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
-		return fmt.Errorf("daemon: append MEMORY: %w", err)
-	}
-	return nil
+	return st.Signal(), nil
 }
 
 // Drain blocks until pending curations finish or the timeout elapses.

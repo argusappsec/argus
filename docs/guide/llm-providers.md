@@ -5,8 +5,15 @@ sidebar:
   order: 30
 ---
 
-An **LLM provider** is the model backend Argus generates through. A provider's
-`type` names a **protocol, not a vendor**, and there are two:
+An **LLM provider** is the model backend Argus generates through. Configuring
+one is what makes Argus reason on its own behalf — it is not a prerequisite for
+running Argus at all. With no provider configured the daemon starts as a
+**toolbox** and serves your own AI tool instead; see
+[Deployment shapes](/guide/deployment-shapes/). This page is for the other
+shape: you have decided Argus should think for itself, and now it needs a model
+that can.
+
+A provider's `type` names a **protocol, not a vendor**, and there are two:
 
 | Type | What it speaks |
 | --- | --- |
@@ -92,8 +99,9 @@ real figure above it:
 
 - **Your SOUL and MEMORY.** The measurement uses a SOUL with every field set but
   deliberately short prose. Your own `SOUL.md` persona body and your `MEMORY.md`
-  are **your bytes, on top, on every call** — and MEMORY grows as the curator
-  appends to it.
+  are **your bytes, on top, on every call** — and MEMORY grows as things are
+  remembered, up to the ceiling that
+  [bounds it](/guide/channels/mcp/#memory) at roughly two thousand tokens.
 - **A PR comment turn declares two more tools.** The GitHub channel adds
   `suppress_finding` and `rescope_review` for the turn that handles a comment.
 - **The wire envelope.** The figure is measured on the provider-agnostic value,

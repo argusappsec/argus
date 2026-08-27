@@ -16,6 +16,7 @@ import (
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
@@ -174,6 +175,7 @@ func testChannel(t *testing.T, host codehost.CodeHost, prov provider.Provider, a
 
 	dc := &daemon.Context{
 		Home:         home,
+		Shape:        deployment.Colleague,
 		DefaultModel: "gemini-2.5-flash",
 		Auth:         auth.NewResolver(usersPath),
 		Audit:        aud,

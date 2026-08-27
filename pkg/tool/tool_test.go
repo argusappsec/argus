@@ -50,6 +50,47 @@ func TestRegistry_DeclsExposeAllRegistered(t *testing.T) {
 	}
 }
 
+func TestRegistry_AdmissionIsAPerToolDecision(t *testing.T) {
+	// Admission onto an external surface is a decision someone makes per Tool
+	// (ADR 0023): registering is not it. What the surface then does with the
+	// admitted Tools is asserted through the MCP protocol (pkg/channel/mcp);
+	// what is asserted here is the half a client cannot see — that a merely
+	// registered Tool stays available to Argus's own agent loop.
+	r := tool.NewRegistry()
+	r.Register(tool.NewListFiles(sessionWith("/tmp")))
+	r.Expose(tool.NewListContext(t.TempDir()))
+
+	if got := exposedNames(r); len(got) != 1 || got[0] != "list_context" {
+		t.Errorf("Exposed() = %v, want [list_context]: registration alone must never admit a Tool", got)
+	}
+	for _, name := range []string{"list_files", "list_context"} {
+		if _, ok := r.Get(name); !ok {
+			t.Errorf("%q must stay callable by Argus's own agent loop whatever its admission", name)
+		}
+	}
+}
+
+func TestRegistry_WithCarriesTheAdmissionDecision(t *testing.T) {
+	// A per-run copy (a channel layering request-scoped tools) must not silently
+	// widen or narrow what the surface serves.
+	r := tool.NewRegistry()
+	r.Expose(tool.NewListContext(t.TempDir()))
+	copied := r.With(tool.NewListFiles(sessionWith("/tmp")))
+
+	if got := exposedNames(copied); len(got) != 1 || got[0] != "list_context" {
+		t.Errorf("Exposed() on the copy = %v, want [list_context]", got)
+	}
+}
+
+// exposedNames is the names of the Tools a Registry admits, in order.
+func exposedNames(r *tool.Registry) []string {
+	names := make([]string, 0)
+	for _, tl := range r.Exposed() {
+		names = append(names, tl.Name())
+	}
+	return names
+}
+
 func TestListFiles_ReturnsRepoRelativePaths(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.go"), "package main\n")

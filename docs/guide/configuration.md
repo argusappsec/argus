@@ -14,9 +14,11 @@ deferred to the environment with the `env(NAME)` syntax.
 ```yaml
 # Which model the agent uses by default. Bare, or qualified as
 # `<provider-name>/<model-id>` when more than one provider could serve it.
+# Omit it, and `providers:` below, to run as a toolbox.
 default_model: gemini-2.5-pro
 
-# LLM providers. A `type` names a protocol, not a vendor.
+# LLM providers. A `type` names a protocol, not a vendor. Optional: with none
+# configured Argus does not reason on its own behalf, and your AI tool does.
 providers:
   gemini:
     type: gemini
@@ -73,6 +75,14 @@ channels:
 Each entry under `providers:` is one model backend, keyed by a **logical name
 you choose**. The name is what a model id qualifies against, so a short one is
 worth picking.
+
+**The whole section is optional.** A config with no `providers:` and no
+`default_model` is valid: Argus starts as a **toolbox**, serving its scanners,
+your organization's knowledge and its skills to an AI tool that reasons
+elsewhere. Configuring the first provider is what turns the same installation
+into a colleague — see [Deployment shapes](/guide/deployment-shapes/), which
+also covers the one way an empty `providers:` still yields a colleague: a
+`GEMINI_API_KEY` exported in the daemon's environment.
 
 A provider's `type` names a **protocol, not a vendor**. There are two:
 
@@ -221,7 +231,7 @@ aggregate.
 
 | Key | Meaning |
 | --- | --- |
-| `default_model` | Model used by the agent unless a session overrides it; bare or `<provider>/<model-id>` |
+| `default_model` | Model used by the agent unless a session overrides it; bare or `<provider>/<model-id>`. Required as soon as Argus has a model to reach — a configured provider, or the `GEMINI_API_KEY` fallback — and meaningless in a toolbox |
 | `providers.<name>.type` | Protocol the provider speaks (`gemini`, `openai-compatible`) |
 | `providers.<name>.api_key` | API key, inline or `env(...)`; optional for `openai-compatible` |
 | `providers.<name>.url` | Base URL; empty means the provider's default endpoint; ignored on a `gemini` entry |

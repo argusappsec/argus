@@ -55,6 +55,16 @@ For running on a cluster, see [Kubernetes deployment](/guide/deployment/kubernet
 ./argus          # opens the chat (same as `argus chat`)
 ```
 
+:::note[A model is not required to start]
+`argus init` sets Argus up to reason on its own behalf, which needs an LLM
+provider. It is not the only way to run Argus: with no provider configured the
+daemon starts as a **toolbox** and serves its scanners, your organization's
+knowledge and its skills to the AI tool you already use, which does the
+reasoning itself. That path skips `init` — see
+[Deployment shapes](/guide/deployment-shapes/) for the handful of lines of
+configuration it takes instead.
+:::
+
 `init` walks you through:
 
 1. **Provider** — Gemini, or any server speaking the OpenAI-compatible
@@ -81,7 +91,9 @@ container image, whose default command is exactly that).
   channel; pull-request reviews then fire automatically. See
   [GitHub channel](/guide/channels/github/).
 - **MCP** — mint a token with `argus user mcp-token create` and point your
-  AI tool at the daemon's `/mcp` endpoint. See [MCP channel](/guide/channels/mcp/).
+  AI tool at the daemon's `/mcp` endpoint. This is the channel a toolbox is
+  reached on, and it works the same on a colleague. See
+  [MCP channel](/guide/channels/mcp/).
 
 ## Command reference
 
@@ -91,7 +103,7 @@ container image, whose default command is exactly that).
 | `argus chat` | Open an interactive chat with the Argus agent |
 | `argus init` | Interactive bootstrap: provider, API key, instance name, and `SOUL.md` |
 | `argus codehost setup` | Onboard a GitHub code host + webhook channel |
-| `argus doctor` | Check that dependencies and configuration are ready |
+| `argus doctor` | Check that dependencies and configuration are ready, and report which deployment shape this installation runs as |
 | `argus user add/ls/rm/grant` | Manage **Persons** — the people Argus recognizes, each of whom may sign in from several places (`~/.argus/users.yaml`) |
 | `argus user mcp-token create/revoke` | Manage MCP bearer tokens |
 | `argus skill ls` / `argus skill rm <name>` | Manage agent skills |
@@ -105,7 +117,7 @@ Everything is file-based under `~/.argus/` (or `ARGUS_HOME`):
 | --- | --- |
 | `argus.yaml` | Configuration — see [Configuration](/guide/configuration/) |
 | `SOUL.md` | Organization identity, injected into every model call |
-| `MEMORY.md` | Curated cross-session summary |
+| `MEMORY.md` | What Argus remembers across sessions — bounded, so it stays cheap on every call |
 | `context/*.md` | Topical knowledge base, loaded on demand |
 | `skills/<name>/SKILL.md` | User-curated skill bundles |
 | `users.yaml` | The Persons Argus recognizes, and their role grants |

@@ -15,6 +15,7 @@ import (
 	"github.com/argusappsec/argus/pkg/codehost"
 	cdgithub "github.com/argusappsec/argus/pkg/codehost/github"
 	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/skill"
@@ -106,9 +107,18 @@ func findingThenFinalize() []provider.Response {
 	}
 }
 
-// reviewServer builds an MCP channel over a full DaemonContext wired to the
-// given provider and a single Person with role on an MCP token == testToken.
+// reviewServer builds a Colleague MCP channel over a full DaemonContext wired to
+// the given provider and a single Person with role on an MCP token == testToken.
 func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server, string) {
+	t.Helper()
+	return shapedServer(t, deployment.Colleague, prov, role)
+}
+
+// shapedServer builds an MCP channel over a full DaemonContext in the given
+// Deployment shape. A nil provider is the Toolbox's reality — nothing to reason
+// with — and asking for one fails loudly, so a test that reaches for the agent
+// loop where it does not exist says so rather than passing quietly.
+func shapedServer(t *testing.T, shape deployment.Shape, prov provider.Provider, role auth.Role) (*Server, string) {
 	t.Helper()
 	home := t.TempDir()
 	users := "persons:\n" +
@@ -130,14 +140,20 @@ func reviewServer(t *testing.T, prov provider.Provider, role auth.Role) (*Server
 
 	dc := &daemon.Context{
 		Home:         home,
+		Shape:        shape,
 		DefaultModel: "gemini-2.5-flash",
 		Auth:         auth.NewResolver(usersPath),
 		Audit:        aud,
 		Reports:      report.NewWriter(filepath.Join(home, "reports")),
 		Skills:       skill.NewCatalog(skill.Builtin(), filepath.Join(home, "skills")),
-		NewProvider:  func(context.Context, string) (provider.Provider, error) { return prov, nil },
-		LoadSoul:     func() (*soul.Soul, error) { return &soul.Soul{}, nil },
-		LoadMemory:   func() (string, error) { return "", nil },
+		NewProvider: func(context.Context, string) (provider.Provider, error) {
+			if prov == nil {
+				return nil, errors.New("no provider configured")
+			}
+			return prov, nil
+		},
+		LoadSoul:   func() (*soul.Soul, error) { return &soul.Soul{}, nil },
+		LoadMemory: func() (string, error) { return "", nil },
 	}
 	dc.Sessions = daemon.NewSessionManager(dc, 4)
 	return NewServer(dc), auditPath
@@ -171,16 +187,13 @@ func TestToolsList_AdvertisesReviewWithSchema(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	// What else the listing holds is the surface's business (surface_test.go,
+	// toolbox_test.go): ADR 0023 puts the deterministic tools in both shapes, so
+	// this test asks only that review is there and is described.
 	var tool *toolDecl
 	for i := range resp.Result.Tools {
 		if resp.Result.Tools[i].Name == toolReview {
 			tool = &resp.Result.Tools[i]
-		}
-		// The scanners are never advertised as tools (ADR 0011).
-		for _, name := range []string{"run_semgrep", "run_gitleaks", "run_osv_scanner"} {
-			if resp.Result.Tools[i].Name == name {
-				t.Errorf("low-level scanner %q must not be exposed as an MCP tool", name)
-			}
 		}
 	}
 	if tool == nil {
@@ -545,13 +558,13 @@ func TestReview_DeleteClosesSession(t *testing.T) {
 
 func TestToolCall_UnknownToolIsMethodNotFound(t *testing.T) {
 	s, _ := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleAnalyst)
-	body := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_semgrep","arguments":{}}}`
+	body := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_trivy","arguments":{}}}`
 	rec := post(t, s, testToken, body)
 	var resp rpcResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Error == nil || resp.Error.Code != codeMethodNotFound {
-		t.Fatalf("error = %+v, want method-not-found (the scanners are not callable tools)", resp.Error)
+		t.Fatalf("error = %+v, want method-not-found (a name this daemon serves no capability under)", resp.Error)
 	}
 }

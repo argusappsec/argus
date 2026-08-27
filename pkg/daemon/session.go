@@ -14,6 +14,7 @@ import (
 	"github.com/argusappsec/argus/pkg/auth"
 	"github.com/argusappsec/argus/pkg/codehost"
 	"github.com/argusappsec/argus/pkg/conversation"
+	"github.com/argusappsec/argus/pkg/memory"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/report"
 	"github.com/argusappsec/argus/pkg/security"
@@ -340,6 +341,14 @@ func (s *Session) runReviewTarget(ctx context.Context, target agent.Target, seed
 // through cb. reports may be nil — a Snapshot review (ADR 0011) returns its
 // findings to the MCP caller transiently and writes no report file.
 func (s *Session) run(ctx context.Context, seed []provider.Message, target agent.Target, registry *tool.Registry, reports *report.Writer, cb RunCallbacks) (*report.Report, error) {
+	// The one place the agent loop starts, so the one place a Toolbox has to
+	// decline it: no Provider means no loop, and every caller — a chat turn on
+	// the socket, a review or a consult over MCP — gets the same explanation of
+	// the shape rather than a nil-Provider failure further down (ADR 0023).
+	if s.dc.Shape.IsToolbox() {
+		return nil, ErrNoReasoning
+	}
+
 	ag := agent.New(agent.Options{
 		Provider:     s.provider,
 		Audit:        s.audit,
@@ -439,26 +448,44 @@ func (s *Session) Usage() (tokensIn, tokensOut int) {
 	return s.tokensIn, s.tokensOut
 }
 
+// NewToolRegistry assembles the daemon's tool Registry outside a Session, over
+// a tool state of its own. It is the same Registry a Session gets, and it is
+// what the MCP channel projects its deterministic surface from (ADR 0023) —
+// there is one place that knows which Tools exist, so a Tool added for the agent
+// loop and a Tool offered over MCP can never drift apart.
+func (dc *Context) NewToolRegistry() *tool.Registry {
+	return buildRegistry(session.New(), dc)
+}
+
 // buildRegistry assembles the per-Session tool registry around its tool
 // state. Mirrors what the single-process CLI used to register; new tools are
 // added here once and every channel sees them.
+//
+// Register or Expose is the admission decision (ADR 0023): a registered Tool is
+// Argus's own agent loop's alone, an exposed one is also offered to whoever
+// calls the MCP channel. The rule for the second verb is "expose only what the
+// caller does not already have" — which is why the file tools below are
+// registered, and the scanners, the organization's knowledge and its skills
+// are exposed.
 func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewListFiles(toolState))
 	reg.Register(tool.NewReadFile(toolState))
 	reg.Register(tool.NewGrep(toolState))
-	reg.Register(tool.NewListContext(contextDir(dc)))
-	reg.Register(tool.NewReadContext(contextDir(dc)))
-	reg.Register(tool.NewWriteContext(contextDir(dc)))
+	reg.Expose(tool.NewListContext(contextDir(dc)))
+	reg.Expose(tool.NewReadContext(contextDir(dc)))
+	reg.Expose(tool.NewWriteContext(contextDir(dc)))
+	reg.Expose(memory.NewSaveMemory(dc.MemoryStore()))
+	reg.Expose(memory.NewMarkFalsePositive(dc.MemoryStore()))
 	reg.Register(tool.NewStartReviewLocal(toolState))
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.CodeHost))
 	reg.Register(tool.NewPRDiff(toolState))
-	reg.Register(security.NewSemgrep(toolState, security.ExecRunner{}))
-	reg.Register(security.NewGitleaks(toolState, security.ExecRunner{}))
-	reg.Register(security.NewOSVScanner(toolState, security.ExecRunner{}))
-	reg.Register(tool.NewListSkills(dc.Skills))
-	reg.Register(tool.NewReadSkill(dc.Skills))
-	reg.Register(tool.NewReadSkillFile(dc.Skills))
+	reg.Expose(security.NewSemgrep(toolState, dc.commands()))
+	reg.Expose(security.NewGitleaks(toolState, dc.commands()))
+	reg.Expose(security.NewOSVScanner(toolState, dc.commands()))
+	reg.Expose(tool.NewListSkills(dc.Skills))
+	reg.Expose(tool.NewReadSkill(dc.Skills))
+	reg.Expose(tool.NewReadSkillFile(dc.Skills))
 	return reg
 }
 

@@ -24,6 +24,7 @@ import (
 // single-segment scheme is unambiguous and traversal is rejected on read.
 const (
 	soulURI          = "argus://soul"
+	memoryURI        = "argus://memory"
 	contextURIPrefix = "argus://context/"
 	reportURIPrefix  = "argus://report/"
 )
@@ -63,11 +64,13 @@ type readResourceResult struct {
 	Contents []resourceContents `json:"contents"`
 }
 
-// canReadResources reports whether role may list and read the org-knowledge
-// Resources. Reading is read-only — it mutates nothing — so it mirrors consult:
-// open to viewers as well as analysts and admins. A non-reading service role
+// canReadKnowledge reports whether role may list and read the organization's
+// knowledge on this channel — the Resources, and the Skills offered as prompts
+// (prompts.go). Reading is read-only — it mutates nothing — so it mirrors
+// consult: open to viewers as well as analysts and admins, the same policy
+// viewerReads states for the knowledge Tools. A non-reading service role
 // (ci-trigger / mirror-read) holding an MCP token sees nothing and cannot read.
-func canReadResources(role auth.Role) bool {
+func canReadKnowledge(role auth.Role) bool {
 	return role == auth.RoleAdmin || role == auth.RoleAnalyst || role == auth.RoleViewer
 }
 
@@ -80,7 +83,7 @@ const errResourceDenied = "permission denied: reading Argus resources requires t
 // resolved Person. A caller without a reading role gets an empty list (it sees
 // nothing) rather than an error, which clients tolerate gracefully.
 func (s *Server) handleResourcesList(principal auth.Principal, req rpcRequest) rpcResponse {
-	if !canReadResources(principal.Role) {
+	if !canReadKnowledge(principal.Role) {
 		s.audit("mcp_resources_list_denied", principal, map[string]any{"reason": "insufficient role"})
 		return result(req.ID, resourcesListResult{Resources: []resourceDecl{}})
 	}
@@ -100,6 +103,19 @@ func (s *Server) listResources() []resourceDecl {
 			URI:         soulURI,
 			Name:        "SOUL",
 			Description: "The organization's security identity: stack, infra, compliance posture, risk tolerance, and persona.",
+			MimeType:    mimeMarkdown,
+		})
+	}
+	// MEMORY is the other half of what save_memory and mark_false_positive
+	// write. In a Colleague it reaches the agent through its own system prompt;
+	// in a Toolbox there is no such prompt, so the only way what Argus remembers
+	// can reach the reasoning is for the caller to pull it — which makes writing
+	// it worth anything at all.
+	if mem, err := s.dc.MemoryStore().Load(); err == nil && strings.TrimSpace(mem) != "" {
+		out = append(out, resourceDecl{
+			URI:         memoryURI,
+			Name:        "MEMORY",
+			Description: "What Argus remembers across sessions: preferences, decisions, and accepted false positives — the last of which are advisory context to re-judge, never a mute.",
 			MimeType:    mimeMarkdown,
 		})
 	}
@@ -129,7 +145,7 @@ func (s *Server) listResources() []resourceDecl {
 // CallToolResult shape for resources); an unknown or unreadable URI is a
 // resource-not-found error.
 func (s *Server) handleResourceRead(principal auth.Principal, req rpcRequest) rpcResponse {
-	if !canReadResources(principal.Role) {
+	if !canReadKnowledge(principal.Role) {
 		s.audit("mcp_resource_read_denied", principal, map[string]any{"reason": "insufficient role"})
 		return errorResponse(req.ID, codeForbidden, errResourceDenied)
 	}
@@ -162,6 +178,8 @@ func (s *Server) readResource(uri string) (string, error) {
 	switch {
 	case uri == soulURI:
 		return readFile(s.soulPath())
+	case uri == memoryURI:
+		return s.readMemoryResource()
 	case strings.HasPrefix(uri, contextURIPrefix):
 		return s.readContextResource(strings.TrimPrefix(uri, contextURIPrefix))
 	case strings.HasPrefix(uri, reportURIPrefix):
@@ -169,6 +187,21 @@ func (s *Server) readResource(uri string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown resource: %q", uri)
 	}
+}
+
+// readMemoryResource reads MEMORY through the daemon's memory mechanism rather
+// than off disk, so a read that lands mid-curation gets one whole version of
+// what Argus remembers. A daemon that has never remembered anything has nothing
+// to return, which is a missing resource rather than an empty one.
+func (s *Server) readMemoryResource() (string, error) {
+	mem, err := s.dc.MemoryStore().Load()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(mem) == "" {
+		return "", fmt.Errorf("this daemon has not remembered anything yet")
+	}
+	return mem, nil
 }
 
 // readContextResource reads one CONTEXT document by its flat name. The .md
@@ -198,7 +231,9 @@ func (s *Server) readReportResource(rest string) (string, error) {
 
 // soulPath / contextDir / reportsDir derive the on-disk layout from the daemon
 // home, mirroring how daemon.Build wires SOUL.md, context/, and the report
-// Writer — the channel reads the same files those produce.
+// Writer — the channel reads the same files those produce. MEMORY is not here:
+// it is read through the daemon's memory mechanism, which is also what writes
+// it.
 func (s *Server) soulPath() string   { return filepath.Join(s.dc.Home, "SOUL.md") }
 func (s *Server) contextDir() string { return filepath.Join(s.dc.Home, "context") }
 func (s *Server) reportsDir() string { return filepath.Join(s.dc.Home, "reports") }
