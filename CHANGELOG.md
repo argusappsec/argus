@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/argusappsec/argus/compare/v0.3.0...v0.4.0) (2026-08-27)
+
+
+### Features
+
+* the Toolbox deployment shape — Argus runs without a Provider ([#88](https://github.com/argusappsec/argus/issues/88)) ([5e38926](https://github.com/argusappsec/argus/commit/5e389261bad4b63920f3c0c5f953011fd46db21e)), closes [#87](https://github.com/argusappsec/argus/issues/87)
+
 ## [0.3.0](https://github.com/argusappsec/argus/compare/v0.2.0...v0.3.0) (2026-07-30)
 
 
