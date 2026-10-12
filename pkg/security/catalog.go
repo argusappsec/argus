@@ -213,20 +213,20 @@ func (d Discovery) Disable(ids []string) Discovery {
 		return d
 	}
 	var out Discovery
-	for _, e := range d.Installed {
-		if slices.Contains(ids, e.ID) {
-			out.Disabled = append(out.Disabled, e)
-		} else {
-			out.Installed = append(out.Installed, e)
+	// keep returns the entries not disabled, moving the rest to out.Disabled.
+	keep := func(entries []Entry) []Entry {
+		var kept []Entry
+		for _, e := range entries {
+			if slices.Contains(ids, e.ID) {
+				out.Disabled = append(out.Disabled, e)
+			} else {
+				kept = append(kept, e)
+			}
 		}
+		return kept
 	}
-	for _, e := range d.Missing {
-		if slices.Contains(ids, e.ID) {
-			out.Disabled = append(out.Disabled, e)
-		} else {
-			out.Missing = append(out.Missing, e)
-		}
-	}
+	out.Installed = keep(d.Installed)
+	out.Missing = keep(d.Missing)
 	out.Disabled = append(out.Disabled, d.Disabled...)
 	slices.SortFunc(out.Disabled, func(a, b Entry) int { return strings.Compare(a.ID, b.ID) })
 	return out

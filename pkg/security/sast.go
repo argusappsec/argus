@@ -221,8 +221,7 @@ func parseSemgrep(engine string, body []byte, files *checkoutFiles) (string, err
 			f.Details = map[string]any{"metadata": r.Extra.Metadata}
 		}
 		if inCheckout {
-			above := files.lines(file, r.Start.Line-1, r.Start.Line-1)
-			own := files.lines(file, r.Start.Line, max(r.End.Line, r.Start.Line))
+			above, own := files.findingLines(file, r.Start.Line, r.End.Line)
 			if word := firstMatch(own, nosemInline); word != "" {
 				f.suppressed(word + " comment in the code")
 			} else if word := firstMatch(above, nosemAbove); word != "" {
@@ -234,8 +233,7 @@ func parseSemgrep(engine string, body []byte, files *checkoutFiles) (string, err
 	for _, e := range out.Errors {
 		msg := strings.TrimSpace(e.Message)
 		if e.Path != "" {
-			p, _ := files.rel(e.Path)
-			msg = p + ": " + msg
+			msg = files.located(e.Path, 0, e.Message)
 		}
 		rep.Errors = append(rep.Errors, msg)
 	}

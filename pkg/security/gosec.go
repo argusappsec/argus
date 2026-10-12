@@ -65,7 +65,7 @@ func init() {
 		// without one; the catalog recommends both to Go organizations.
 		Manifest: false,
 		Binaries: []Binary{
-			{Name: "go", InstallHint: "brew install go  (or see https://go.dev/doc/install)"},
+			goBinary,
 			{Name: "gosec", InstallHint: "go install github.com/securego/gosec/v2/cmd/gosec@latest  (or brew install gosec)"},
 		},
 		// gosec loads the reviewed packages through the go command, which
@@ -174,13 +174,8 @@ func parseGosec(body []byte, files *checkoutFiles) (string, error) {
 		rep.Findings = append(rep.Findings, f)
 	}
 	for path, errs := range out.Errors {
-		p, _ := files.rel(path)
 		for _, e := range errs {
-			msg := p + ": " + strings.TrimSpace(e.Error)
-			if e.Line > 0 {
-				msg = p + ":" + strconv.Itoa(e.Line) + ": " + strings.TrimSpace(e.Error)
-			}
-			rep.Errors = append(rep.Errors, msg)
+			rep.Errors = append(rep.Errors, files.located(path, e.Line, e.Error))
 		}
 	}
 	slices.Sort(rep.Errors) // the report's errors are a map: give them a stable order
@@ -209,13 +204,14 @@ func gosecLines(s string) (start, end int) {
 // gosec, but is not looked for here: such a finding is still reported, just
 // without the marker.
 func gosecSuppression(files *checkoutFiles, file string, start, end int, rule string) string {
+	above, own := files.findingLines(file, start, end)
 	var candidates []string
-	for _, l := range files.lines(file, start-1, start-1) {
+	for _, l := range above {
 		if t := strings.TrimSpace(l); strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") {
 			candidates = append(candidates, l)
 		}
 	}
-	candidates = append(candidates, files.lines(file, start, max(end, start))...)
+	candidates = append(candidates, own...)
 	for _, l := range candidates {
 		m := gosecDirective.FindStringSubmatch(l)
 		if m == nil {

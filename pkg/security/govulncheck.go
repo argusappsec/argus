@@ -77,7 +77,7 @@ func init() {
 		// run without one (ADR 0027): Go organizations add both themselves.
 		Manifest: false,
 		Binaries: []Binary{
-			{Name: "go", InstallHint: "brew install go  (or see https://go.dev/doc/install)"},
+			goBinary,
 			{Name: "govulncheck", InstallHint: "go install golang.org/x/vuln/cmd/govulncheck@latest"},
 		},
 		// govulncheck loads and type-checks the reviewed packages through the

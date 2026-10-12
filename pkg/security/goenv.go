@@ -11,6 +11,10 @@ const (
 	goSumDB = "sum.golang.org"
 )
 
+// goBinary is the go command, which every Tool that loads the reviewed
+// packages through it (gosec, govulncheck) requires next to its own binary.
+var goBinary = Binary{Name: "go", InstallHint: "brew install go  (or see https://go.dev/doc/install)"}
+
 // goEnv is the hardened Go profile every Tool that drives the go command over
 // the code under review (gosec, govulncheck, osv-scanner's Go call analysis)
 // runs with, on top of the scratch allow-list (ADR 0027). The go command's

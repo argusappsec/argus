@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/argusappsec/argus/pkg/session"
@@ -133,6 +134,23 @@ func (c *checkoutFiles) lines(rel string, from, to int) []string {
 		}
 	}
 	return out
+}
+
+// findingLines returns where an in-code suppression marker for a finding on
+// lines start..end of a checkout file can sit: the line just above it, and
+// its own lines. An end before start means the finding is one line.
+func (c *checkoutFiles) findingLines(rel string, start, end int) (above, own []string) {
+	return c.lines(rel, start-1, start-1), c.lines(rel, start, max(end, start))
+}
+
+// located prefixes a scanner's message about a file with that file, relative
+// to the checkout, and with the line when there is one: "path:line: msg".
+func (c *checkoutFiles) located(path string, line int, msg string) string {
+	p, _ := c.rel(path)
+	if line > 0 {
+		p += ":" + strconv.Itoa(line)
+	}
+	return p + ": " + strings.TrimSpace(msg)
 }
 
 // anyLine reports whether any of lines satisfies match.
