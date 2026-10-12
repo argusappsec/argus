@@ -320,11 +320,12 @@ func catalogCheck(lookPath func(string) (string, error), e security.Entry) Check
 	c := Check{Name: e.ID}
 	found, ok := e.Resolve(lookPath)
 	if ok {
+		e.Found = found
 		c.Status = Pass
 		c.Severity = SeverityOptional
 		c.Message = "installed — " + e.Tool + " tool"
-		if e.Alternatives {
-			c.Message += ", running " + found[0]
+		if engine := e.Engine(); engine != "" {
+			c.Message += ", running " + engine
 		}
 		return c
 	}

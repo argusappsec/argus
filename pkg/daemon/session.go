@@ -519,7 +519,7 @@ func buildRegistry(toolState *session.Session, dc *Context, automatic bool) (*to
 			continue
 		}
 		d := deps
-		d.Found = e.Found
+		d.Engine = e.Engine()
 		reg.Expose(e.New(d))
 	}
 	reg.Expose(tool.NewListSkills(dc.Skills))

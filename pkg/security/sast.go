@@ -95,20 +95,17 @@ func init() {
 		Alternatives: true,      // opengrep first: the preferred engine
 		Trust:        TrustSafe, // pattern-matches source files; never builds them
 		New: func(d Deps) tool.Tool {
-			return NewSAST(d.Session, d.Commands, sastEngine(d.Found))
+			return NewSAST(d.Session, d.Commands, sastEngine(d.Engine))
 		},
 	})
 }
 
-// sastEngine is the engine to run given the binaries discovery found, in the
-// Entry's order of preference. A Tool built without discovery runs semgrep,
-// the engine Argus has always run.
-func sastEngine(found []string) Engine {
-	for _, name := range found {
-		switch e := Engine(name); e {
-		case EngineOpengrep, EngineSemgrep:
-			return e
-		}
+// sastEngine is the engine to run given the one discovery picked (the
+// Entry's Engine). A Tool built without discovery runs semgrep, the engine
+// Argus has always run.
+func sastEngine(name string) Engine {
+	if e := Engine(name); e == EngineOpengrep {
+		return e
 	}
 	return EngineSemgrep
 }

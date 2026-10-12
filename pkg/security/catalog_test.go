@@ -239,7 +239,6 @@ func TestDiscover_InstallsTheSASTEntryWhenEitherEngineResolves(t *testing.T) {
 // The SAST Tool is built over the first engine discovery found: opengrep when
 // it is there, semgrep otherwise.
 func TestCatalog_TheSASTEntryBuildsOverThePreferredEngineFound(t *testing.T) {
-	e := sastEntry(t)
 	for _, c := range []struct {
 		found []string
 		want  string
@@ -248,8 +247,17 @@ func TestCatalog_TheSASTEntryBuildsOverThePreferredEngineFound(t *testing.T) {
 		{[]string{"opengrep"}, "opengrep"},
 		{[]string{"semgrep"}, "semgrep"},
 	} {
+		installed := security.Discover(onPath(c.found...)).Installed
+		i := slices.IndexFunc(installed, func(e security.Entry) bool { return e.ID == "sast" })
+		if i < 0 {
+			t.Fatalf("found %v: sast is not installed", c.found)
+		}
+		e := installed[i]
+		if e.Engine() != c.want {
+			t.Errorf("found %v: Engine = %q, want %q", c.found, e.Engine(), c.want)
+		}
 		fr := &fakeRunner{out: `{"results":[],"errors":[]}`}
-		built := e.New(security.Deps{Session: sessionAt(checkout(t)), Commands: fr, Found: c.found})
+		built := e.New(security.Deps{Session: sessionAt(checkout(t)), Commands: fr, Engine: e.Engine()})
 		if _, err := built.Execute(context.Background(), map[string]any{}); err != nil {
 			t.Fatalf("execute: %v", err)
 		}

@@ -128,8 +128,8 @@ func toolsNotice(d security.Discovery) []string {
 		ids := make([]string, 0, len(d.Installed))
 		for _, e := range d.Installed {
 			// A Tool over alternative engines names the one it will run.
-			if e.Alternatives && len(e.Found) > 0 {
-				ids = append(ids, e.ID+" ("+e.Found[0]+")")
+			if engine := e.Engine(); engine != "" {
+				ids = append(ids, e.ID+" ("+engine+")")
 				continue
 			}
 			ids = append(ids, e.ID)

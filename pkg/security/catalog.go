@@ -89,10 +89,10 @@ type Deps struct {
 	// switches that mode off.
 	Automatic bool
 
-	// Found is the Entry's binaries that resolved on PATH at discovery, in the
-	// Entry's order. A Tool whose binaries are Alternatives (the SAST engines)
-	// is built over the first one found.
-	Found []string
+	// Engine is the binary a Tool over Alternatives runs (the SAST Tool's
+	// opengrep or semgrep): the installed Entry's Engine. Empty for every
+	// other Tool.
+	Engine string
 }
 
 // Entry is one catalogued Tool.
@@ -149,6 +149,17 @@ type Entry struct {
 // Tool under it, at a URL that is stable because it is the Entry's ID. The
 // guide's links are site-absolute, so this is too.
 const CatalogPath = "/guide/scanners/"
+
+// Engine is the binary an installed Entry over Alternatives runs: the first
+// of Found, which is in order of preference. It is "" for an Entry whose
+// binaries are not alternatives, or that discovery found nothing for. The
+// registry builds the Tool over it, and doctor and the startup log name it.
+func (e Entry) Engine() string {
+	if !e.Alternatives || len(e.Found) == 0 {
+		return ""
+	}
+	return e.Found[0]
+}
 
 // URL is the Tool's catalog page, which doctor and the startup log point an
 // operator at to install a missing Tool.
