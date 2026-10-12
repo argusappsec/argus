@@ -113,7 +113,8 @@ func TestRender_CatalogPagesFollowTheGuideConventions(t *testing.T) {
 			}
 			for _, m := range mdLink.FindAllStringSubmatch(page, -1) {
 				target := m[1]
-				internal := strings.HasPrefix(target, "/guide/") && strings.HasSuffix(target, "/")
+				path, _, _ := strings.Cut(target, "#") // a section anchor follows the page path
+				internal := strings.HasPrefix(path, "/guide/") && strings.HasSuffix(path, "/")
 				if !internal && !strings.HasPrefix(target, "https://") {
 					t.Errorf("link %q is neither https nor an absolute /guide/…/ path", target)
 				}

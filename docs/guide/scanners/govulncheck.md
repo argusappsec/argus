@@ -30,7 +30,7 @@ govulncheck runs a toolchain or package manager over the code under review, whic
 
 ## Install
 
-The official Argus container image does not ship govulncheck. Install every one of these binaries on the daemon host:
+The official Argus container image does not ship govulncheck: add it by [building your own image](/guide/deployment/official-image/#build-your-own-image) on top of the official one, or install every one of these binaries on the daemon host:
 
 - `go`: `brew install go  (or see https://go.dev/doc/install)`
 - `govulncheck`: `go install golang.org/x/vuln/cmd/govulncheck@latest`

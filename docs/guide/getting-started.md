@@ -45,6 +45,8 @@ door (webhooks + MCP). The image's entrypoint runs `argus daemon`; for the
 interactive setup commands below, exec into the container or run them with
 the same volume mounted.
 
+For what the image ships and why, and how to add a scanner it leaves out by
+building your own image on top of it, see [The official image](/guide/deployment/official-image/).
 For running on a cluster, see [Kubernetes deployment](/guide/deployment/kubernetes/).
 
 ## Bootstrap

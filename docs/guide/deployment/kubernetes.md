@@ -68,7 +68,9 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   the scanners it ships — `opengrep` (SAST), `gitleaks` and `osv-scanner` — so
   the GitHub pull-request review channel works out of the box with no derived
   image or sidecar. The [scanner catalog](/guide/scanners/) marks which
-  scanners the image includes. The image runs as nonroot (uid `65532`) and exposes
+  scanners the image includes; to add one it leaves out, build
+  [your own image on top of it](/guide/deployment/official-image/#build-your-own-image)
+  and point the StatefulSet at that instead. The image runs as nonroot (uid `65532`) and exposes
   a single HTTP front door on `:8080` — the daemon serves every configured HTTP
   channel (the GitHub webhook at `/webhooks/github`, MCP at `/mcp`) plus its
   `/healthz` probe on that one port. It is published multi-arch for

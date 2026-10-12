@@ -53,4 +53,5 @@ repository carries: a pull request cannot silence its own findings.
 
 Scanners marked **Included** ship in the official Argus container image, which
 guarantees they are installed. Any other scanner is yours to add: install it on
-the daemon host, or build your own image on top of the official one.
+the daemon host, or [build your own image](/guide/deployment/official-image/#build-your-own-image) on top of
+the [official one](/guide/deployment/official-image/).
