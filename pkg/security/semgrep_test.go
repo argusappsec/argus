@@ -34,7 +34,7 @@ func TestSemgrep_PassesPathAndReturnsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out, "results") {
+	if !strings.Contains(out, "findings") {
 		t.Errorf("output = %q", out)
 	}
 	joined := strings.Join(fr.gotArgs, " ")

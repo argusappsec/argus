@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,6 +64,39 @@ func (s *scratch) command(extraEnv []string, args ...string) Command {
 		"TMPDIR=" + s.tmp(),
 	}
 	return Command{Dir: s.dir, Env: append(env, extraEnv...), Args: args}
+}
+
+// write puts an Argus-owned file (a ruleset, a config) in the scratch
+// directory and returns its path. Handing the scanner this path is how it is
+// told to use Argus's settings instead of any it would find in the checkout.
+func (s *scratch) write(name string, body []byte) (string, error) {
+	path := s.file(name)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return "", fmt.Errorf("write %s: %w", name, err)
+	}
+	return path, nil
+}
+
+// runForReport runs cmd and reads back the report it wrote to reportPath.
+//
+// Scanners exit non-zero when they find something, which is the expected
+// outcome here, and they log progress to stderr, which the Runner merges with
+// stdout. So the report file is the source of truth: if it is there and not
+// empty, the scan succeeded whatever the exit code. A missing or empty report
+// next to a run error is a genuine failure (binary absent, bad flags).
+func runForReport(ctx context.Context, r Runner, tool string, cmd Command, reportPath string) ([]byte, error) {
+	runOut, runErr := r.Run(ctx, cmd)
+	body, readErr := os.ReadFile(reportPath)
+	switch {
+	case readErr == nil && len(body) > 0:
+		return body, nil
+	case runErr != nil:
+		return nil, fmt.Errorf("%s failed: %w (output: %s)", tool, runErr, runOut)
+	case readErr != nil:
+		return nil, fmt.Errorf("%s: read report: %w", tool, readErr)
+	default:
+		return nil, fmt.Errorf("%s: wrote an empty report", tool)
+	}
 }
 
 // remove deletes the scratch directory and everything the run left in it.

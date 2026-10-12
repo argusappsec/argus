@@ -1,0 +1,601 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "$CHECKOUT/svc/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "golang.org/x/text",
+            "version": "0.3.5",
+            "ecosystem": "Go"
+          },
+          "groups": [
+            {
+              "ids": [
+                "GO-2021-0113",
+                "GHSA-ppp9-7jff-5vj2"
+              ],
+              "aliases": [
+                "CVE-2021-38561",
+                "GHSA-ppp9-7jff-5vj2",
+                "GO-2021-0113"
+              ],
+              "max_severity": "7.5"
+            },
+            {
+              "ids": [
+                "GO-2022-1059",
+                "GHSA-69ch-w2m2-3vjp"
+              ],
+              "aliases": [
+                "CVE-2022-32149",
+                "GHSA-69ch-w2m2-3vjp",
+                "GO-2022-1059"
+              ],
+              "max_severity": "7.5"
+            },
+            {
+              "ids": [
+                "GO-2026-5970"
+              ],
+              "aliases": [
+                "CVE-2026-56852",
+                "GO-2026-5970"
+              ],
+              "max_severity": ""
+            },
+            {
+              "ids": [
+                "GO-2026-6629"
+              ],
+              "aliases": [
+                "CVE-2026-56851",
+                "GO-2026-6629"
+              ],
+              "max_severity": ""
+            }
+          ],
+          "vulnerabilities": [
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://vuln.go.dev/ID/GO-2021-0113.json"
+                  },
+                  "ecosystem_specific": {
+                    "imports": [
+                      {
+                        "path": "golang.org/x/text/language",
+                        "symbols": [
+                          "MatchStrings",
+                          "MustParse",
+                          "Parse",
+                          "ParseAcceptLanguage"
+                        ]
+                      }
+                    ]
+                  },
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text",
+                    "purl": "pkg:golang/golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.3.7"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2021-38561",
+                "GHSA-ppp9-7jff-5vj2"
+              ],
+              "credits": [
+                {
+                  "name": "Guido Vranken"
+                }
+              ],
+              "database_specific": {
+                "review_status": "REVIEWED",
+                "url": "https://pkg.go.dev/vuln/GO-2021-0113"
+              },
+              "details": "Due to improper index calculation, an incorrectly formatted language tag can cause Parse to panic via an out of bounds read. If Parse is used to process untrusted user inputs, this may be used as a vector for a denial of service attack.",
+              "id": "GO-2021-0113",
+              "modified": "2026-02-04T02:31:07.297346Z",
+              "published": "2021-10-06T17:51:21Z",
+              "references": [
+                {
+                  "type": "FIX",
+                  "url": "https://go.dev/cl/340830"
+                },
+                {
+                  "type": "FIX",
+                  "url": "https://go.googlesource.com/text/+/383b2e75a7a4198c42f8f87833eefb772868a56f"
+                }
+              ],
+              "related": [
+                "CGA-rxmv-qq37-m2jc",
+                "RHBA-2023:1649",
+                "RHSA-2023:0407"
+              ],
+              "schema_version": "1.7.3",
+              "summary": "Out-of-bounds read in golang.org/x/text/language"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://vuln.go.dev/ID/GO-2022-1059.json"
+                  },
+                  "ecosystem_specific": {
+                    "imports": [
+                      {
+                        "path": "golang.org/x/text/language",
+                        "symbols": [
+                          "MatchStrings",
+                          "ParseAcceptLanguage"
+                        ]
+                      }
+                    ]
+                  },
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text",
+                    "purl": "pkg:golang/golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.3.8"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2022-32149",
+                "GHSA-69ch-w2m2-3vjp"
+              ],
+              "credits": [
+                {
+                  "name": "Adam Korczynski (ADA Logics)"
+                },
+                {
+                  "name": "OSS-Fuzz"
+                }
+              ],
+              "database_specific": {
+                "review_status": "REVIEWED",
+                "url": "https://pkg.go.dev/vuln/GO-2022-1059"
+              },
+              "details": "An attacker may cause a denial of service by crafting an Accept-Language header which ParseAcceptLanguage will take significant time to parse.",
+              "id": "GO-2022-1059",
+              "modified": "2026-02-04T03:39:03.311488Z",
+              "published": "2022-10-11T18:16:24Z",
+              "references": [
+                {
+                  "type": "REPORT",
+                  "url": "https://go.dev/issue/56152"
+                },
+                {
+                  "type": "FIX",
+                  "url": "https://go.dev/cl/442235"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://groups.google.com/g/golang-announce/c/-hjNw559_tE/m/KlGTfid5CAAJ"
+                }
+              ],
+              "related": [
+                "CGA-wf56-6rqf-4crj"
+              ],
+              "schema_version": "1.7.3",
+              "summary": "Denial of service via crafted Accept-Language header in golang.org/x/text/language"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://vuln.go.dev/ID/GO-2026-5970.json"
+                  },
+                  "ecosystem_specific": {
+                    "imports": [
+                      {
+                        "path": "golang.org/x/text/unicode/norm",
+                        "symbols": [
+                          "Form.Append",
+                          "Form.AppendString",
+                          "Form.Bytes",
+                          "Form.FirstBoundary",
+                          "Form.FirstBoundaryInString",
+                          "Form.IsNormal",
+                          "Form.IsNormalString",
+                          "Form.LastBoundary",
+                          "Form.NextBoundary",
+                          "Form.NextBoundaryInString",
+                          "Form.Properties",
+                          "Form.PropertiesString",
+                          "Form.QuickSpan",
+                          "Form.QuickSpanString",
+                          "Form.Span",
+                          "Form.SpanString",
+                          "Form.String",
+                          "Form.Transform",
+                          "Iter.Init",
+                          "Iter.InitString",
+                          "Iter.Next",
+                          "Iter.Seek",
+                          "nextComposed",
+                          "normReader.Read",
+                          "normWriter.Write"
+                        ]
+                      }
+                    ]
+                  },
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text",
+                    "purl": "pkg:golang/golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.39.0"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-56852"
+              ],
+              "credits": [
+                {
+                  "name": "Viky Choi (\"vikychoi\" on GitHub)"
+                }
+              ],
+              "database_specific": {
+                "review_status": "REVIEWED",
+                "url": "https://pkg.go.dev/vuln/GO-2026-5970"
+              },
+              "details": "A norm.Iter can enter an infinite loop when handling input containing invalid UTF-8 bytes.",
+              "id": "GO-2026-5970",
+              "modified": "2026-09-23T10:41:39.386264978Z",
+              "published": "2026-07-14T17:29:56Z",
+              "references": [
+                {
+                  "type": "REPORT",
+                  "url": "https://go.dev/issue/80142"
+                },
+                {
+                  "type": "FIX",
+                  "url": "https://go.dev/cl/794100"
+                }
+              ],
+              "related": [
+                "RHSA-2026:40964",
+                "RHSA-2026:41020",
+                "RHSA-2026:42083",
+                "RHSA-2026:42230",
+                "RHSA-2026:42241",
+                "RHSA-2026:43015",
+                "RHSA-2026:43119",
+                "RHSA-2026:43311",
+                "RHSA-2026:43554",
+                "RHSA-2026:43581",
+                "RHSA-2026:43716",
+                "RHSA-2026:43797",
+                "RHSA-2026:43799",
+                "RHSA-2026:43801",
+                "RHSA-2026:43803",
+                "RHSA-2026:43852",
+                "RHSA-2026:43866",
+                "RHSA-2026:43873",
+                "RHSA-2026:43906",
+                "RHSA-2026:44151",
+                "RHSA-2026:44152",
+                "RHSA-2026:44162",
+                "RHSA-2026:44430",
+                "RHSA-2026:44451",
+                "RHSA-2026:44479",
+                "RHSA-2026:46953",
+                "RHSA-2026:46960",
+                "RHSA-2026:46988",
+                "RHSA-2026:48306",
+                "RHSA-2026:49317",
+                "RHSA-2026:49360",
+                "RHSA-2026:51065",
+                "RHSA-2026:52912",
+                "RHSA-2026:54364",
+                "RHSA-2026:54549",
+                "RHSA-2026:68334",
+                "RHSA-2026:68335",
+                "RHSA-2026:69258",
+                "RHSA-2026:70201"
+              ],
+              "schema_version": "1.8.0",
+              "summary": "Infinite loop on invalid input in golang.org/x/text"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://vuln.go.dev/ID/GO-2026-6629.json"
+                  },
+                  "ecosystem_specific": {
+                    "imports": [
+                      {
+                        "path": "golang.org/x/text/secure/precis",
+                        "symbols": [
+                          "Profile.Append",
+                          "Profile.AppendCompareKey",
+                          "Profile.Bytes",
+                          "Profile.Compare",
+                          "Profile.CompareKey",
+                          "Profile.NewTransformer",
+                          "Profile.String",
+                          "Transformer.Bytes",
+                          "Transformer.String",
+                          "Transformer.Transform",
+                          "nickAdditionalMapping.Transform"
+                        ]
+                      }
+                    ]
+                  },
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text",
+                    "purl": "pkg:golang/golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.41.0"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-56851"
+              ],
+              "credits": [
+                {
+                  "name": "Omkhar Arasaratnam (GitHub: omkhar)"
+                }
+              ],
+              "database_specific": {
+                "review_status": "REVIEWED",
+                "url": "https://pkg.go.dev/vuln/GO-2026-6629"
+              },
+              "details": "The Nickname profile can panic with an out-of-bounds slice error when transforming crafted input into a short destination buffer.",
+              "id": "GO-2026-6629",
+              "modified": "2026-10-07T17:45:13.919634270Z",
+              "published": "2026-10-07T14:09:43Z",
+              "references": [
+                {
+                  "type": "FIX",
+                  "url": "https://go.dev/cl/793360"
+                },
+                {
+                  "type": "REPORT",
+                  "url": "https://go.dev/issue/80112"
+                }
+              ],
+              "schema_version": "1.9.0",
+              "summary": "Panic parsing crafted input in x/text/secure/precis in golang.org/x/text"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/10/GHSA-69ch-w2m2-3vjp/GHSA-69ch-w2m2-3vjp.json"
+                  },
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text",
+                    "purl": "pkg:golang/golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.3.8"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2022-32149",
+                "GO-2022-1059"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-772"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2022-10-28T20:11:26Z",
+                "nvd_published_at": "2022-10-14T15:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "The BCP 47 tag parser has quadratic time complexity due to inherent aspects of its design. Since the parser is, by design, exposed to untrusted user input, this can be leveraged to force a program to consume significant time parsing Accept-Language headers. The parser cannot be easily rewritten to fix this behavior for various reasons. Instead the solution implemented in this CL is to limit the total complexity of tags passed into ParseAcceptLanguage by limiting the number of dashes in the string to 1000. This should be more than enough for the majority of real world use cases, where the number of tags being sent is likely to be in the single digits.\n\n### Specific Go Packages Affected\ngolang.org/x/text/language",
+              "id": "GHSA-69ch-w2m2-3vjp",
+              "modified": "2026-09-10T03:49:46.240531909Z",
+              "published": "2022-10-14T19:00:40Z",
+              "references": [
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-32149"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/golang/go/issues/56152"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/golang/text/commit/434eadcdbc3b0256971992e8c70027278364c72c"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/golang/text"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://go.dev/cl/442235"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://go.dev/issue/56152"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://groups.google.com/g/golang-announce/c/-hjNw559_tE/m/KlGTfid5CAAJ"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://pkg.go.dev/vuln/GO-2022-1059"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://security.netapp.com/advisory/ntap-20230203-0006"
+                }
+              ],
+              "schema_version": "1.9.0",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "golang.org/x/text/language Denial of service via crafted Accept-Language header"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/12/GHSA-ppp9-7jff-5vj2/GHSA-ppp9-7jff-5vj2.json"
+                  },
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text",
+                    "purl": "pkg:golang/golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.3.7"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2021-38561",
+                "GO-2021-0113"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-125"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2023-01-09T20:02:12Z",
+                "nvd_published_at": "2022-12-26T06:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "golang.org/x/text/language in golang.org/x/text before 0.3.7 can panic with an out-of-bounds read during BCP 47 language tag parsing. Index calculation is mishandled. If parsing untrusted user input, this can be used as a vector for a denial-of-service attack.",
+              "id": "GHSA-ppp9-7jff-5vj2",
+              "modified": "2026-09-10T03:49:50.331764985Z",
+              "published": "2022-12-26T06:30:22Z",
+              "references": [
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-38561"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://deps.dev/advisory/OSV/GO-2021-0113"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://go.dev/cl/340830"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://go.googlesource.com/text/+/383b2e75a7a4198c42f8f87833eefb772868a56f"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://groups.google.com/g/golang-announce"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://pkg.go.dev/golang.org/x/text/language"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://pkg.go.dev/vuln/GO-2021-0113"
+                }
+              ],
+              "schema_version": "1.9.0",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "golang.org/x/text/language Out-of-bounds Read vulnerability"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "experimental_config": {
+    "licenses": {
+      "summary": false,
+      "allowlist": null
+    }
+  }
+}
