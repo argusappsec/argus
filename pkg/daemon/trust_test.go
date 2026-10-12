@@ -219,3 +219,19 @@ func auditEvents(t *testing.T, dc *Context, typ string) []map[string]any {
 	}
 	return out
 }
+
+// tools.disabled applies to automatic reviews too: a disabled scanner that is
+// safe on untrusted input is still left out of an automatic review's registry.
+func TestRegistry_AutomaticReviewLeavesOutADisabledScanner(t *testing.T) {
+	dc := testContext(t, nil, 4)
+	dc.LookPath = installed("gitleaks", "semgrep")
+	dc.DisabledTools = []string{"gitleaks"}
+
+	auto := newSession(t, dc, "github.com/o/r#1", service())
+	if _, ok := auto.registry.Get("run_gitleaks"); ok {
+		t.Error("an automatic review was offered run_gitleaks, which is disabled")
+	}
+	if _, ok := auto.registry.Get("run_semgrep"); !ok {
+		t.Error("an automatic review lost run_semgrep, which is installed and not disabled")
+	}
+}
