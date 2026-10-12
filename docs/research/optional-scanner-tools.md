@@ -584,6 +584,19 @@ should move to digest pins with signature verification in CI.
 
   It also honours a third suppression comment, `noopengrep`. The Linux (`manylinux`/`musllinux`)
   builds were not run.
+- **Update (#106, 2026-10-12): the Linux build is compatible too.** The official image now ships
+  `opengrep_manylinux_{x86,aarch64}` v1.30.1 on `python:3.13-slim` (glibc). Inside the built
+  image, on both `linux/arm64` (native) and `linux/amd64` (emulated), `run_sast` (selected by
+  discovery, so it ran opengrep) returned the same 38 results over #104's corpus as semgrep did,
+  with no errors. It also reproduced the recorded `testdata/opengrep` report, `noopengrep` and
+  `nosemgrep` markers included. `musllinux` was not run.
+- **Integrity.** Releases publish no checksum file. Each binary has a keyless Sigstore signature
+  (`.sig`, base64) and its Fulcio certificate (`.cert`, base64 PEM). The v1.30.1 certificate's
+  identity is `https://github.com/opengrep/opengrep/.github/workflows/rolling-release.yml@refs/heads/release-v1.30.1`,
+  issued by `https://token.actions.githubusercontent.com`. opengrep's own `install.sh` checks only
+  a `https://github.com/opengrep/opengrep.+` identity regexp. The Dockerfile pins each architecture's
+  sha256 (`ADD --checksum`) and runs `cosign verify-blob` against that exact identity. A
+  mismatched checksum or signature fails the build; both were checked.
 
 ---
 

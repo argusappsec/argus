@@ -29,8 +29,8 @@ what's available.
 
 ### Container image
 
-The official image is **batteries-included**: the scanners ship inside, on
-both `linux/amd64` and `linux/arm64`.
+The official image is **batteries-included**: Opengrep (SAST), Gitleaks and
+OSV-Scanner ship inside, on both `linux/amd64` and `linux/arm64`.
 
 ```sh
 docker run -it -v argus-data:/data -p 8080:8080 ghcr.io/argusappsec/argus

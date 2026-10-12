@@ -64,10 +64,11 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   docker pull ghcr.io/argusappsec/argus:latest
   ```
 
-  It is **batteries-included**: `argus` plus every binary its Tools shell out
-  to — `git` (required, for cloning), `semgrep`, `gitleaks` and `osv-scanner`
-  — so the GitHub pull-request review channel works out of the box with no
-  derived image or sidecar. The image runs as nonroot (uid `65532`) and exposes
+  It is **batteries-included**: `argus` plus `git` (required, for cloning) and
+  the scanners it ships — `opengrep` (SAST), `gitleaks` and `osv-scanner` — so
+  the GitHub pull-request review channel works out of the box with no derived
+  image or sidecar. The [scanner catalog](/guide/scanners/) marks which
+  scanners the image includes. The image runs as nonroot (uid `65532`) and exposes
   a single HTTP front door on `:8080` — the daemon serves every configured HTTP
   channel (the GitHub webhook at `/webhooks/github`, MCP at `/mcp`) plus its
   `/healthz` probe on that one port. It is published multi-arch for

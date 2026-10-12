@@ -35,8 +35,9 @@ docs-check: docs
 		{ echo "docs/guide/scanners has untracked or uncommitted pages; commit the output of make docs"; exit 1; }
 
 # Build the batteries-included image and run the image-contract gate against
-# it — the same check CI runs on every PR. Drop a scanner from the Dockerfile
-# and this fails locally instead of on GitHub. See ADR 0013.
+# it — the same check CI runs on every PR. Drop a Manifest scanner from the
+# Dockerfile and this fails locally instead of on GitHub. See ADR 0013 and
+# ADR 0027.
 image-gate:
 	docker build -t $(IMAGE) .
 	docker run --rm $(IMAGE) doctor --binaries

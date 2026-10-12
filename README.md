@@ -44,7 +44,7 @@ make build
 ./argus          # chat with your security engineer
 ```
 
-Prefer containers? The batteries-included image ships with `semgrep`,
+Prefer containers? The batteries-included image ships with `opengrep`,
 `gitleaks`, and `osv-scanner` preinstalled:
 
 ```sh
