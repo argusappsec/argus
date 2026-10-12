@@ -66,3 +66,8 @@ jobs:
       # and are not checked. Exits non-zero if any is missing, failing the PR.
       - name: Image-contract gate (the Manifest) — argus doctor --binaries
         run: docker run --rm argus:ci doctor --binaries
+      # The image runs as nonroot, uid 65532: the Kubernetes guide's
+      # `fsGroup: 65532` and every image built on this one rely on it, so a
+      # base-image change must not move it.
+      - name: Image runs as uid 65532
+        run: test "$(docker run --rm --entrypoint id argus:ci -u)" = 65532
