@@ -63,6 +63,42 @@ func TestToolsNotice_ListsRegisteredAndMissingToolsWithCatalogLinks(t *testing.T
 	}
 }
 
+// A Tool the operator switched off in argus.yaml is reported as disabled, on a
+// line of its own — not as missing with an install link, which would send the
+// operator to install something they deliberately turned off.
+func TestToolsNotice_ReportsADisabledToolAsDisabledNotMissing(t *testing.T) {
+	d := security.Discover(func(name string) (string, error) {
+		if name == "gitleaks" {
+			return "/usr/local/bin/gitleaks", nil
+		}
+		return "", exec.ErrNotFound
+	}).Disable([]string{"gitleaks", "semgrep"})
+
+	notice := toolsNotice(d)
+	text := strings.Join(notice, "\n")
+
+	var disabled string
+	for _, line := range notice {
+		if strings.Contains(line, "disabled") {
+			disabled = line
+		}
+	}
+	if !strings.Contains(disabled, "gitleaks") || !strings.Contains(disabled, "semgrep") {
+		t.Errorf("want a disabled line naming gitleaks and semgrep:\n%s", text)
+	}
+	if strings.Contains(disabled, "osv-scanner") {
+		t.Errorf("osv-scanner is missing, not disabled:\n%s", text)
+	}
+	for _, link := range []string{"/guide/scanners/gitleaks/", "/guide/scanners/semgrep/"} {
+		if strings.Contains(text, link) {
+			t.Errorf("a disabled Tool must not be offered as an install link %s:\n%s", link, text)
+		}
+	}
+	if !strings.Contains(text, "registered: none") {
+		t.Errorf("the only installed Tool is disabled, so none is registered:\n%s", text)
+	}
+}
+
 // A host with nothing installed says so rather than printing an empty list.
 func TestToolsNotice_SaysWhenNoScannerIsInstalled(t *testing.T) {
 	d := security.Discover(func(string) (string, error) { return "", exec.ErrNotFound })
