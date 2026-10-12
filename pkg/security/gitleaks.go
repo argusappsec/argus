@@ -67,26 +67,27 @@ func (g *gitleaks) Execute(ctx context.Context, args map[string]any) (string, er
 	// gitleaks insists on a file for --report-path. Passing "/dev/stdout"
 	// works on some setups but breaks under the bubbletea TUI (where stdout
 	// is bound to a pseudoterminal that gitleaks can't open for write).
-	// Use a temp file and read it back — always works, OS-independent.
-	tmp, err := os.CreateTemp("", "argus-gitleaks-*.json")
+	// Use a file in the run's scratch directory and read it back — always
+	// works, OS-independent.
+	sc, err := newScratch("gitleaks")
 	if err != nil {
-		return "", fmt.Errorf("gitleaks: create temp report: %w", err)
+		return "", err
 	}
-	reportPath := tmp.Name()
-	tmp.Close()
-	defer os.Remove(reportPath)
+	defer sc.remove()
+	reportPath := sc.file("report.json")
 
 	// gitleaks exits 1 when it finds secrets — that is the expected outcome,
 	// not an error. We treat the report file as the source of truth: if it
 	// exists and is readable after the run, the scan succeeded regardless of
 	// the binary's exit code. If the file is missing AND the run errored,
 	// that's a real failure (binary not found, permission issues, etc.).
-	runOut, runErr := g.runner.Run(ctx, root, "gitleaks", "detect",
+	// gitleaks needs nothing beyond the base allow-list.
+	runOut, runErr := g.runner.Run(ctx, sc.command(nil, "gitleaks", "detect",
 		"--source", root,
 		"--no-banner",
 		"--report-format", "json",
 		"--report-path", reportPath,
-	)
+	))
 
 	body, readErr := os.ReadFile(reportPath)
 	if readErr != nil {

@@ -75,19 +75,21 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 	// The report file is the source of truth: if it's readable after the run,
 	// the scan succeeded regardless of the binary's exit code. A missing report
 	// alongside a run error is a genuine failure (binary absent, bad flags).
-	tmp, err := os.CreateTemp("", "argus-osv-*.json")
+	sc, err := newScratch("osv-scanner")
 	if err != nil {
-		return "", fmt.Errorf("osv-scanner: create temp report: %w", err)
+		return "", err
 	}
-	reportPath := tmp.Name()
-	_ = tmp.Close()
-	defer func() { _ = os.Remove(reportPath) }()
+	defer sc.remove()
+	reportPath := sc.file("report.json")
 
-	runOut, runErr := o.runner.Run(ctx, root, "osv-scanner",
+	// osv-scanner keeps its vulnerability database cache under the user cache
+	// directory, which Go resolves through XDG_CACHE_HOME or HOME; both point
+	// into the scratch directory.
+	runOut, runErr := o.runner.Run(ctx, sc.command(sc.xdg(), "osv-scanner",
 		"--format", "json",
 		"--output", reportPath,
 		"--recursive", root,
-	)
+	))
 
 	body, readErr := os.ReadFile(reportPath)
 	if runErr != nil && (readErr != nil || len(body) == 0) {
