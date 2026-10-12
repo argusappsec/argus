@@ -224,7 +224,7 @@ func checkNames(checks []doctor.Check) []string {
 
 // imageBinaries is what the official image ships (the Dockerfile): git plus
 // the Manifest's binaries, with opengrep as its SAST engine.
-var imageBinaries = []string{"git", "opengrep", "gitleaks", "osv-scanner"}
+var imageBinaries = []string{"git", "opengrep", "gitleaks", "osv-scanner", "zizmor"}
 
 // doctorBinaries runs `argus doctor --binaries` on a PATH holding exactly the
 // given binaries (as stubs) and reports whether it passed, with its output.

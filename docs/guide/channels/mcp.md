@@ -65,6 +65,7 @@ that host:
 | `run_sast` | Code-level vulnerability patterns (SAST), with Opengrep or Semgrep |
 | `run_gitleaks` | Secrets committed to the tree |
 | `run_osv_scanner` | Known vulnerabilities in dependencies |
+| `run_zizmor` | Security issues in GitHub Actions workflows, offline |
 
 Each takes a `path`: **an absolute path to a directory on the machine Argus runs
 on**. Argus scans code it can already see locally — it is not sent your files.
@@ -84,9 +85,11 @@ scan:
   is installed and Semgrep otherwise; the report's `scanner` field names the
   one that ran. It never fetches rules from a registry and sends no metrics.
 - Config and ignore files in the scanned tree (`.semgrepignore`,
-  `.gitleaks.toml`, `.gitleaksignore`, `osv-scanner.toml`) have no effect, and
-  neither do inline comments such as `nosemgrep`, `noopengrep` or
-  `gitleaks:allow`.
+  `.gitleaks.toml`, `.gitleaksignore`, `osv-scanner.toml`, `zizmor.yml`) have
+  no effect, and neither do inline comments such as `nosemgrep`, `noopengrep`,
+  `gitleaks:allow` or `# zizmor: ignore[...]`.
+- `run_zizmor` never calls the GitHub API: it runs offline and is never handed
+  a GitHub token, so the audits that need one are skipped.
 - A finding the code tried to silence is still returned, with
   `suppressed_in_repo: true` and a `suppression` saying how. Treat it as a
   finding, and the attempt to hide it as a signal. Your organization's genuine

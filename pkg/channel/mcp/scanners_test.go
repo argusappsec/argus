@@ -27,7 +27,7 @@ import (
 // is stubbed, which is what moving it onto the Context was for.
 
 // scannerTools is the slice of the deterministic surface this file carries.
-var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_sast"}
+var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_sast", "run_zizmor"}
 
 func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
@@ -84,6 +84,7 @@ var recordedReports = map[string]string{
 	"run_gitleaks":    `[{"RuleID":"argus-fixture-rule","File":"/x/main.go","StartLine":1,"EndLine":1}]`,
 	"run_osv_scanner": `{"results":[{"source":{"path":"/x/go.mod"},"packages":[{"package":{"name":"lodash"},"vulnerabilities":[{"id":"argus-fixture-rule"}]}]}]}`,
 	"run_gosec":       `{"Golang errors":{},"Issues":[{"rule_id":"argus-fixture-rule","file":"/x/main.go","line":"1","severity":"HIGH"}]}`,
+	"run_zizmor":      `[{"ident":"argus-fixture-rule","desc":"d","determinations":{"severity":"High","confidence":"High"},"locations":[{"symbolic":{"key":{"Local":{"verbatim_path":"/x/.github/workflows/ci.yml"}},"kind":"Primary"},"concrete":{"location":{"start_point":{"row":0},"end_point":{"row":0}}}}]}]`,
 	"run_govulncheck": `{"config":{"scanner_name":"govulncheck"}}` + "\n" + `{"finding":{"osv":"argus-fixture-rule","trace":[{"module":"example.com/dep","version":"v1.0.0"}]}}`,
 }
 
