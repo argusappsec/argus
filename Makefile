@@ -41,3 +41,4 @@ docs-check: docs
 image-gate:
 	docker build -t $(IMAGE) .
 	docker run --rm $(IMAGE) doctor --binaries
+	test "$$(docker run --rm --entrypoint id $(IMAGE) -u)" = 65532

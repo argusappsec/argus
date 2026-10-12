@@ -10,7 +10,11 @@
 # digest) in this block, one fetch-and-verify stage below, and one COPY into the
 # runtime stage. Then set `Manifest: true` on its Catalog Entry, so
 # `argus doctor --binaries` owes it and CI fails if the image drops it.
-ARG PYTHON_VERSION=3.13
+
+# The runtime base: Debian slim, pinned by digest (a multi-arch index), so a
+# rebuild cannot pick up a different base behind a moved tag.
+ARG RUNTIME_IMAGE=debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+
 ARG GITLEAKS_VERSION=v8.30.1
 ARG OSV_SCANNER_VERSION=v2.6.0
 
@@ -211,17 +215,21 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/argus .
 
 # ---- runtime stage ----
-# Debian-based python:*-slim (glibc). opengrep's release binary is built for
-# glibc (manylinux), and so is zizmor's (glibc 2.34 or later, libgcc_s).
-# Python itself is no longer needed by any Manifest tool;
-# dropping it for a smaller base is tracked separately.
-FROM python:${PYTHON_VERSION}-slim
+# Debian slim (glibc), with no language runtime: no Manifest tool needs one.
+# opengrep's release binary is built for glibc (manylinux), and so is
+# zizmor's (glibc 2.34 or later, libm, libgcc_s); trixie ships glibc 2.41 and
+# libgcc_s. gitleaks, osv-scanner, trivy and argus are static. distroless/cc
+# would run them too, but it has no git, and git's HTTPS transport pulls in a
+# long chain of shared libraries best left to the package manager.
+FROM ${RUNTIME_IMAGE}
 
-# git (a required dependency — cloning repositories) via apt. Every binary
-# the Manifest promises lives on the PATH, so `argus doctor --binaries`
-# reports a healthy toolchain inside the image (the CI image-contract gate).
+# git (a required dependency — cloning repositories) and the CA certificates
+# that HTTPS clones and argus's own outbound calls verify against, via apt.
+# Every binary the Manifest promises lives on the PATH, so `argus doctor
+# --binaries` reports a healthy toolchain inside the image (the CI
+# image-contract gate).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=opengrep /opengrep/opengrep /usr/local/bin/opengrep

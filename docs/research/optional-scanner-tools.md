@@ -657,6 +657,17 @@ should move to digest pins with signature verification in CI.
     can be unpacked without Python. Their integrity story was not checked. The alternative is
     `cargo build --target *-unknown-linux-musl`. The official Docker image is no help: it
     `uv tool install`s the PyPI build on Wolfi, which is glibc.
+- **Update (#110, 2026-10-12): the image dropped Python, and stayed glibc.** The runtime base is
+  now `debian:trixie-slim` (glibc 2.41, `libgcc_s` included), pinned by digest, with only
+  `git` and `ca-certificates` added from apt. That is `python:3.13-slim` (also trixie) minus
+  Python, so neither the opengrep manylinux binary nor the zizmor tarball changed. A musl base
+  was not pursued. `distroless/cc` was rejected because it has no `git`. Verified on
+  `linux/arm64` (native) and `linux/amd64` (emulated): `doctor --binaries` passed, the image
+  still runs as uid 65532, an HTTPS `git clone` works, and `run_sast` (opengrep),
+  `run_gitleaks`, `run_osv_scanner` and `run_zizmor` returned byte-identical output to the
+  Python-based image over the `pkg/security/testdata` checkouts. The image shrank by about
+  12 MB compressed (174.4 → 162.5 MB on arm64, 176.6 → 164.6 MB on amd64). The Go plus gosec
+  custom image from the user guide still builds on it, and `run_gosec` runs there.
 - **Behaviour notes (#108).**
   - `--collect` defaults to honouring `.gitignore`. A committed `.gitignore` that lists
     `.github/` makes zizmor audit nothing. Argus passes `--collect=all`.

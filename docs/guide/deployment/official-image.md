@@ -60,11 +60,12 @@ The image runs as an unprivileged user, `nonroot` (uid and gid `65532`), keeps
 its state under `/data/.argus`, and serves every channel on port `8080`.
 
 :::note[What the base is, and why not to rely on it]
-Today the image is built on a slim Debian base (glibc). The base is an
+Today the image is built on a slim Debian base (glibc), with no language
+runtime: no scanner in the Manifest needs Python or any other. The base is an
 implementation detail: what the image promises is the Manifest, not whatever
-else the base happens to carry, such as a Python runtime, a shell or a package
-manager. Future releases may move to a smaller base. The recipe below only
-copies files into the image, so it keeps working when the base changes.
+else the base happens to carry, such as a shell or a package manager. Future
+releases may move to a different base. The recipe below only copies files into
+the image, so it keeps working when the base changes.
 :::
 
 ## How the image proves it: `argus doctor --binaries`
