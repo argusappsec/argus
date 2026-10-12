@@ -218,9 +218,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Debian slim (glibc), with no language runtime: no Manifest tool needs one.
 # opengrep's release binary is built for glibc (manylinux), and so is
 # zizmor's (glibc 2.34 or later, libm, libgcc_s); trixie ships glibc 2.41 and
-# libgcc_s. gitleaks, osv-scanner and argus are static. distroless/cc would
-# run them too, but it has no git, and git's HTTPS transport pulls in a long
-# chain of shared libraries best left to the package manager.
+# libgcc_s. gitleaks, osv-scanner, trivy and argus are static. distroless/cc
+# would run them too, but it has no git, and git's HTTPS transport pulls in a
+# long chain of shared libraries best left to the package manager.
 FROM ${RUNTIME_IMAGE}
 
 # git (a required dependency — cloning repositories) and the CA certificates
