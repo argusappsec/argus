@@ -18,6 +18,8 @@
 //     reads the marker), and return it as JSON to the agent.
 //
 // New security tools live in their own file inside this package (sast.go,
-// gitleaks.go, ...). The shared infrastructure (Runner, ExecRunner) is in
+// gitleaks.go, ...). A Tool embeds scanner (scan.go), whose scan is that
+// pattern end to end: the Tool supplies only how to run its binary and how to
+// parse its report. The shared infrastructure (Runner, ExecRunner) is in
 // exec.go.
 package security

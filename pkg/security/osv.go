@@ -19,12 +19,13 @@ import (
 // (supply-chain coverage), complementing the SAST Tool (static analysis) and
 // gitleaks (secrets).
 func NewOSVScanner(s *session.Session, r Runner) tool.Tool {
-	return &osvScanner{sess: s, runner: r}
+	return &osvScanner{scanner: scanner{name: osvTool, binary: "osv-scanner", sess: s, runner: r}}
 }
 
+const osvTool = "run_osv_scanner"
+
 type osvScanner struct {
-	sess   *session.Session
-	runner Runner
+	scanner
 
 	// noCallAnalysis is set on automatic reviews. With go on PATH, osv-scanner
 	// runs Go call analysis by default, which loads the reviewed packages
@@ -33,8 +34,6 @@ type osvScanner struct {
 	noCallAnalysis bool
 }
 
-func (o *osvScanner) Name() string { return "run_osv_scanner" }
-
 func (o *osvScanner) Description() string {
 	return "Run osv-scanner to detect known vulnerabilities (CVEs) in the dependencies declared under a " +
 		"directory on the machine Argus runs on. Returns one finding per vulnerability and package, which you " +
@@ -42,19 +41,10 @@ func (o *osvScanner) Description() string {
 		"still a finding, and the attempt to silence it is itself worth a look."
 }
 
-func (o *osvScanner) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "osv-scanner",
-		Tool:    "run_osv_scanner",
+		Tool:    osvTool,
 		Name:    "OSV-Scanner",
 		Purpose: "Finds dependencies with known vulnerabilities by reading lockfiles and manifests.",
 		Why: "Most exploitable flaws in an application live in its dependencies. OSV-Scanner reads " +
@@ -74,32 +64,28 @@ func init() {
 		// mode, Go call analysis (see Execute).
 		Trust: TrustSafe,
 		New: func(d Deps) tool.Tool {
-			return &osvScanner{sess: d.Session, runner: d.Commands, noCallAnalysis: d.Automatic}
+			o := NewOSVScanner(d.Session, d.Commands).(*osvScanner)
+			o.noCallAnalysis = d.Automatic
+			return o
 		},
 	})
 }
 
 func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(o.sess, args)
-	if err != nil {
-		return "", err
-	}
+	return o.scan(ctx, args, o.run, parseOSV)
+}
 
+func (o *osvScanner) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	// The JSON report goes to a file via --output rather than stdout:
 	// osv-scanner logs progress to stderr, which the Runner merges with
 	// stdout, so the combined stream is not reliably JSON (see runForReport).
-	sc, err := newScratch("osv-scanner")
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
-	reportPath := sc.file("report.json")
+	//
 	// An explicit --config, even an empty one, overrides every
 	// osv-scanner.toml next to a scanned lockfile: the repository's
 	// IgnoredVulns and PackageOverrides no longer apply.
 	config, err := sc.write("osv-scanner.toml", nil)
 	if err != nil {
-		return "", fmt.Errorf("osv-scanner: %w", err)
+		return nil, fmt.Errorf("osv-scanner: %w", err)
 	}
 
 	// osv-scanner keeps its vulnerability database cache under the user cache
@@ -108,7 +94,7 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 	env := sc.xdg()
 	argv := []string{"osv-scanner",
 		"--format", "json",
-		"--output", reportPath,
+		"--output", sc.file(reportFile),
 		"--config", config,
 		// A .gitignore the pull request committed must not hide a lockfile.
 		"--no-ignore",
@@ -122,11 +108,7 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 		env = append(env, sc.goEnv()...)
 	}
 	argv = append(argv, "--recursive", root)
-	body, err := runForReport(ctx, o.runner, "osv-scanner", sc.command(env, argv...), reportPath)
-	if err != nil {
-		return "", err
-	}
-	return parseOSV(body, openCheckout(o.sess, root))
+	return o.runForReport(ctx, sc, env, argv...)
 }
 
 // osvOutput is the part of osv-scanner's JSON report Argus reads.
@@ -183,11 +165,10 @@ func (v osvVuln) fixedIn(pkg string) []string {
 	return out
 }
 
-func parseOSV(body []byte, files *checkoutFiles) (string, error) {
-	defer files.close()
+func parseOSV(body []byte, _ string, files *checkoutFiles) (Report, error) {
 	var out osvOutput
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("osv-scanner: unreadable report: %w", err)
+		return Report{}, fmt.Errorf("osv-scanner: unreadable report: %w", err)
 	}
 	configs := map[string]osvRepoConfig{}
 	rep := Report{Scanner: "osv-scanner"}
@@ -256,7 +237,7 @@ func parseOSV(body []byte, files *checkoutFiles) (string, error) {
 			}
 		}
 	}
-	return rep.encode()
+	return rep, nil
 }
 
 // osvRepoConfig is the part of a repository's osv-scanner.toml that hides

@@ -19,15 +19,12 @@ import (
 // workflows (and Dependabot and pre-commit config) under the Session's current
 // target directory with zizmor.
 func NewZizmor(s *session.Session, r Runner) tool.Tool {
-	return &zizmor{sess: s, runner: r}
+	return &zizmor{scanner{name: zizmorTool, binary: "zizmor", sess: s, runner: r}}
 }
 
-type zizmor struct {
-	sess   *session.Session
-	runner Runner
-}
+const zizmorTool = "run_zizmor"
 
-func (z *zizmor) Name() string { return "run_zizmor" }
+type zizmor struct{ scanner }
 
 func (z *zizmor) Description() string {
 	return "Run zizmor, a static auditor for GitHub Actions, over the workflows, composite actions, Dependabot " +
@@ -40,19 +37,10 @@ func (z *zizmor) Description() string {
 		"to silence it is itself worth a look."
 }
 
-func (z *zizmor) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "zizmor",
-		Tool:    "run_zizmor",
+		Tool:    zizmorTool,
 		Name:    "zizmor",
 		Purpose: "Audits GitHub Actions workflows for template injection, dangerous triggers, over-broad permissions and unpinned actions.",
 		Why: "A workflow runs with the repository's secrets and a token that can write to it, and a pull " +
@@ -76,16 +64,10 @@ func init() {
 }
 
 func (z *zizmor) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(z.sess, args)
-	if err != nil {
-		return "", err
-	}
-	sc, err := newScratch("zizmor")
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
+	return z.scan(ctx, args, z.run, parseZizmor)
+}
 
+func (z *zizmor) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	// zizmor goes online, calling the GitHub API, when it finds GH_TOKEN,
 	// GITHUB_TOKEN or ZIZMOR_GITHUB_TOKEN. Its environment is the scratch
 	// allow-list, which carries none of them, and --offline is passed as well,
@@ -121,11 +103,11 @@ func (z *zizmor) Execute(ctx context.Context, args map[string]any) (string, erro
 		// config has nothing to audit, which is a clean answer.
 		if strings.Contains(out, "no inputs collected") {
 			_, logs, _ := splitZizmorOutput(out)
-			return Report{Scanner: "zizmor", Errors: logs}.encode()
+			return nil, nothingToScan{logs: logs}
 		}
-		return "", fmt.Errorf("zizmor failed: %w (output: %s)", runErr, strings.TrimSpace(out))
+		return nil, fmt.Errorf("zizmor failed: %w (output: %s)", runErr, strings.TrimSpace(out))
 	}
-	return parseZizmor(out, root, openCheckout(z.sess, root))
+	return []byte(out), nil
 }
 
 // zizmorFinding is the part of a zizmor json-v1 finding Argus reads.
@@ -211,11 +193,11 @@ func zizmorLog(line string) (string, bool) {
 	return "", false
 }
 
-func parseZizmor(out, target string, files *checkoutFiles) (string, error) {
-	defer files.close()
+func parseZizmor(body []byte, target string, files *checkoutFiles) (Report, error) {
+	out := string(body)
 	found, logs, ok := splitZizmorOutput(out)
 	if !ok {
-		return "", fmt.Errorf("zizmor: unreadable report: no findings list in %q", strings.TrimSpace(out))
+		return Report{}, fmt.Errorf("zizmor: unreadable report: no findings list in %q", strings.TrimSpace(out))
 	}
 	config := zizmorRepoConfig(files, target)
 	rep := Report{Scanner: "zizmor", Errors: logs}
@@ -251,7 +233,7 @@ func parseZizmor(out, target string, files *checkoutFiles) (string, error) {
 		}
 		rep.Findings = append(rep.Findings, f)
 	}
-	return rep.encode()
+	return rep, nil
 }
 
 // zizmorPrimary is the location a finding is about. Related and hidden

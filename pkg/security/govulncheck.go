@@ -23,15 +23,12 @@ const govulnDB = "https://vuln.go.dev"
 // NewGovulncheck returns a `run_govulncheck` tool that runs govulncheck in
 // source mode over the Go module the Session's current target belongs to.
 func NewGovulncheck(s *session.Session, r Runner) tool.Tool {
-	return &govulncheck{sess: s, runner: r}
+	return &govulncheck{scanner{name: govulncheckTool, binary: "govulncheck", sess: s, runner: r}}
 }
 
-type govulncheck struct {
-	sess   *session.Session
-	runner Runner
-}
+const govulncheckTool = "run_govulncheck"
 
-func (g *govulncheck) Name() string { return "run_govulncheck" }
+type govulncheck struct{ scanner }
 
 func (g *govulncheck) Description() string {
 	return "Run govulncheck, the Go team's vulnerability scanner, over the Go module a directory on the machine " +
@@ -44,19 +41,10 @@ func (g *govulncheck) Description() string {
 		"builds with. Overlaps with run_osv_scanner's Go results: govulncheck adds the call traces."
 }
 
-func (g *govulncheck) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "govulncheck",
-		Tool:    "run_govulncheck",
+		Tool:    govulncheckTool,
 		Name:    "govulncheck",
 		Purpose: "Known vulnerabilities in a Go module's dependencies, with the call path that reaches them.",
 		Why: "govulncheck checks a Go module against the Go vulnerability database and then follows " +
@@ -89,16 +77,10 @@ func init() {
 }
 
 func (g *govulncheck) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(g.sess, args)
-	if err != nil {
-		return "", err
-	}
-	sc, err := newScratch("govulncheck")
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
+	return g.scan(ctx, args, g.run, parseGovulncheck)
+}
 
+func (g *govulncheck) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	// The scratch allow-list plus the hardened Go profile, nothing inherited:
 	// govulncheck passes its own environment on to the go command it loads
 	// the packages through, so this is what the go command sees too.
@@ -115,16 +97,15 @@ func (g *govulncheck) Execute(ctx context.Context, args map[string]any) (string,
 		"-C", root,
 		"./...",
 	))
-	// govulncheck writes the stream to stdout and its errors to stderr, which
-	// the Runner merges: tell them apart.
-	msgs, text := splitGovulncheckStream(out)
 	if runErr != nil {
-		if text == "" {
-			return "", fmt.Errorf("govulncheck failed: %w", runErr)
+		// govulncheck writes the stream to stdout and its errors to stderr,
+		// which the Runner merges: tell them apart.
+		if _, text := splitGovulncheckStream(out); text != "" {
+			return nil, fmt.Errorf("govulncheck failed: %s", text)
 		}
-		return "", fmt.Errorf("govulncheck failed: %s", text)
+		return nil, fmt.Errorf("govulncheck failed: %w", runErr)
 	}
-	return parseGovulncheck(msgs, openCheckout(g.sess, root), root)
+	return []byte(out), nil
 }
 
 // govulnMessage is one message of govulncheck's JSON stream, of which Argus
@@ -200,8 +181,8 @@ const (
 // and any number of symbol-level findings for the same advisory as it goes.
 // govulncheck has no in-code or in-repository suppression, so nothing is ever
 // marked suppressed_in_repo.
-func parseGovulncheck(msgs []govulnMessage, files *checkoutFiles, target string) (string, error) {
-	defer files.close()
+func parseGovulncheck(body []byte, target string, files *checkoutFiles) (Report, error) {
+	msgs, _ := splitGovulncheckStream(string(body))
 	moduleDir := govulnModuleDir(files, target)
 	readable := false
 	type advisory struct {
@@ -245,7 +226,7 @@ func parseGovulncheck(msgs []govulnMessage, files *checkoutFiles, target string)
 		}
 	}
 	if !readable {
-		return "", errors.New("govulncheck: unreadable report: no config message")
+		return Report{}, errors.New("govulncheck: unreadable report: no config message")
 	}
 
 	// Called first, then imported, then required: the order a reviewer
@@ -290,7 +271,7 @@ func parseGovulncheck(msgs []govulnMessage, files *checkoutFiles, target string)
 		}
 		rep.Findings = append(rep.Findings, finding)
 	}
-	return rep.encode()
+	return rep, nil
 }
 
 func govulnDepth(level string) int {

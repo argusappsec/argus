@@ -19,15 +19,12 @@ import (
 // NewTrivy returns a `run_trivy` tool that runs trivy's misconfiguration
 // scanners over the Session's current target directory.
 func NewTrivy(s *session.Session, r Runner) tool.Tool {
-	return &trivy{sess: s, runner: r}
+	return &trivy{scanner{name: trivyTool, binary: "trivy", sess: s, runner: r}}
 }
 
-type trivy struct {
-	sess   *session.Session
-	runner Runner
-}
+const trivyTool = "run_trivy"
 
-func (t *trivy) Name() string { return "run_trivy" }
+type trivy struct{ scanner }
 
 func (t *trivy) Description() string {
 	return "Run trivy's misconfiguration checks over a directory on the machine Argus runs on: Terraform, " +
@@ -40,19 +37,10 @@ func (t *trivy) Description() string {
 		"with no severity, at the comment's line: read the code there."
 }
 
-func (t *trivy) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "trivy",
-		Tool:    "run_trivy",
+		Tool:    trivyTool,
 		Name:    "Trivy",
 		Purpose: "Finds insecure settings in Terraform, Kubernetes manifests, Helm charts and Dockerfiles.",
 		Why: "Infrastructure code decides who can reach a service and with which privileges: a " +
@@ -83,29 +71,23 @@ func init() {
 }
 
 func (t *trivy) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(t.sess, args)
-	if err != nil {
-		return "", err
-	}
-	sc, err := newScratch("trivy")
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
-	reportPath := sc.file("report.json")
+	return t.scan(ctx, args, t.run, parseTrivy)
+}
+
+func (t *trivy) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	// trivy reads trivy.yaml and .trivyignore from its working directory unless
 	// it is told which files to use. It is told: Argus's own, both empty.
 	config, err := sc.write("trivy.yaml", nil)
 	if err != nil {
-		return "", fmt.Errorf("trivy: %w", err)
+		return nil, fmt.Errorf("trivy: %w", err)
 	}
 	ignore, err := sc.write("trivyignore", nil)
 	if err != nil {
-		return "", fmt.Errorf("trivy: %w", err)
+		return nil, fmt.Errorf("trivy: %w", err)
 	}
 
 	env := append(sc.xdg(), trivyNetworkLockout()...)
-	body, err := runForReport(ctx, t.runner, "trivy", sc.command(env, "trivy", "fs",
+	return t.runForReport(ctx, sc, env, "trivy", "fs",
 		// Misconfiguration only, over the file kinds the Catalog promises.
 		"--scanners", "misconfig",
 		"--misconfig-scanners", trivyMisconfigScanners,
@@ -122,14 +104,10 @@ func (t *trivy) Execute(ctx context.Context, args map[string]any) (string, error
 		"--ignorefile", ignore,
 		"--cache-dir", sc.file("cache"),
 		"--format", "json",
-		"--output", reportPath,
+		"--output", sc.file(reportFile),
 		"--no-progress",
 		root,
-	), reportPath)
-	if err != nil {
-		return "", err
-	}
-	return parseTrivy(body, root, openCheckout(t.sess, root))
+	)
 }
 
 // trivyMisconfigScanners are trivy's misconfiguration scanners Argus runs:
@@ -194,12 +172,11 @@ type trivyMisconf struct {
 	} `json:"CauseMetadata"`
 }
 
-func parseTrivy(body []byte, target string, files *checkoutFiles) (string, error) {
-	defer files.close()
+func parseTrivy(body []byte, target string, files *checkoutFiles) (Report, error) {
 	var out trivyReport
 	// Every trivy JSON report carries its schema version, findings or not.
 	if err := json.Unmarshal(body, &out); err != nil || out.SchemaVersion == 0 {
-		return "", errors.New("trivy: unreadable report")
+		return Report{}, errors.New("trivy: unreadable report")
 	}
 	ignored := trivyIgnored(files, target)
 	comments := trivyComments{files: files, seen: map[string][]trivyComment{}}
@@ -251,7 +228,7 @@ func parseTrivy(body []byte, target string, files *checkoutFiles) (string, error
 		}
 	}
 	rep.Findings = append(rep.Findings, comments.unclaimed(honouring)...)
-	return rep.encode()
+	return rep, nil
 }
 
 // trivyHonoursInlineIgnores are the trivy file types whose scanners obey

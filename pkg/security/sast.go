@@ -39,16 +39,15 @@ const (
 // and MCP callers name the capability, never the binary; the report names the
 // engine.
 func NewSAST(s *session.Session, r Runner, engine Engine) tool.Tool {
-	return &sast{sess: s, runner: r, engine: engine}
+	return &sast{scanner: scanner{name: sastTool, binary: string(engine), sess: s, runner: r}, engine: engine}
 }
+
+const sastTool = "run_sast"
 
 type sast struct {
-	sess   *session.Session
-	runner Runner
+	scanner
 	engine Engine
 }
-
-func (s *sast) Name() string { return "run_sast" }
 
 func (s *sast) Description() string {
 	return "Run static analysis (SAST), with Argus's pinned security ruleset, over a directory on the " +
@@ -58,19 +57,10 @@ func (s *sast) Description() string {
 		"finding, and the attempt to silence it is itself worth a look."
 }
 
-func (s *sast) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "sast",
-		Tool:    "run_sast",
+		Tool:    sastTool,
 		Name:    "SAST (Opengrep or Semgrep)",
 		Purpose: "Pattern-based static analysis (SAST) for insecure code across many languages.",
 		Why: "Opengrep and Semgrep match rules against the syntax of the code rather than its text, so " +
@@ -111,26 +101,22 @@ func sastEngine(name string) Engine {
 }
 
 func (s *sast) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(s.sess, args)
-	if err != nil {
-		return "", err
-	}
+	return s.scan(ctx, args, s.run, func(body []byte, _ string, files *checkoutFiles) (Report, error) {
+		return parseSemgrep(string(s.engine), body, files)
+	})
+}
+
+func (s *sast) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	engine := string(s.engine)
-	sc, err := newScratch(engine)
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
 	rules, err := sc.write("rules.yaml", pinnedRules)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", engine, err)
+		return nil, fmt.Errorf("%s: %w", engine, err)
 	}
-	reportPath := sc.file("report.json")
 
 	argv := []string{engine,
 		"--config", rules,
 		"--json",
-		"--output", reportPath,
+		"--output", sc.file(reportFile),
 		"--quiet",
 	}
 	// semgrep sends usage metrics unless told not to. opengrep has no
@@ -158,11 +144,7 @@ func (s *sast) Execute(ctx context.Context, args map[string]any) (string, error)
 	// a compiled Python program too) on UTF-8 without inheriting the daemon's
 	// locale variables.
 	env := append(sc.xdg(), "PYTHONUTF8=1")
-	body, err := runForReport(ctx, s.runner, engine, sc.command(env, argv...), reportPath)
-	if err != nil {
-		return "", err
-	}
-	return parseSemgrep(engine, body, openCheckout(s.sess, root))
+	return s.runForReport(ctx, sc, env, argv...)
 }
 
 // semgrepOutput is the part of semgrep's JSON report Argus reads. opengrep
@@ -200,11 +182,10 @@ var (
 
 // parseSemgrep reads a semgrep-format report that engine wrote. The report
 // names engine as its scanner.
-func parseSemgrep(engine string, body []byte, files *checkoutFiles) (string, error) {
-	defer files.close()
+func parseSemgrep(engine string, body []byte, files *checkoutFiles) (Report, error) {
 	var out semgrepOutput
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("%s: unreadable report: %w", engine, err)
+		return Report{}, fmt.Errorf("%s: unreadable report: %w", engine, err)
 	}
 	rep := Report{Scanner: engine}
 	for _, r := range out.Results {
@@ -237,7 +218,7 @@ func parseSemgrep(engine string, body []byte, files *checkoutFiles) (string, err
 		}
 		rep.Errors = append(rep.Errors, msg)
 	}
-	return rep.encode()
+	return rep, nil
 }
 
 // firstMatch is the suppression keyword re finds on the first line that has
