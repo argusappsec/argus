@@ -325,6 +325,52 @@ func TestRun_ReportsAMissingCataloguedToolAsInfoWithItsCatalogLink(t *testing.T)
 	}
 }
 
+// A Tool the operator switched off (tools.disabled) gets a "disabled" row,
+// even though its binary is installed: it is not offered, and that is a choice,
+// so the row is information — never a failure, and never an install hint.
+func TestRun_ReportsADisabledCataloguedToolAsDisabled(t *testing.T) {
+	binDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
+	t.Setenv("PATH", binDir)
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	checks := doctor.Run(doctor.Options{
+		Home:          t.TempDir(),
+		Catalog:       []security.Entry{stubEntry("scanner", "scanner-bin"), stubEntry("other", "scanner-bin")},
+		DisabledTools: []string{"scanner"},
+	})
+
+	c := checkNamed(t, checks, "scanner")
+	if c.Status != doctor.Info || c.Severity != doctor.SeverityInfo {
+		t.Errorf("a disabled Tool should be Info, got status %v severity %v", c.Status, c.Severity)
+	}
+	if !strings.Contains(c.Message, "disabled") || !strings.Contains(c.Message, "tools.disabled") {
+		t.Errorf("message %q should say the Tool is disabled in tools.disabled", c.Message)
+	}
+	if strings.Contains(c.Message, "install") || c.Hint != "" {
+		t.Errorf("a disabled Tool needs no install hint, got message %q hint %q", c.Message, c.Hint)
+	}
+	if other := checkNamed(t, checks, "other"); other.Status != doctor.Pass {
+		t.Errorf("a Tool that is not disabled is unaffected, got %v", other.Status)
+	}
+}
+
+// The image contract is about what the image ships, not what argus.yaml
+// happens to use: disabling a Tool cannot hide its missing binary from it.
+func TestRun_BinariesOnly_DisabledToolStillOwesItsBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	checks := doctor.Run(doctor.Options{
+		Catalog:       []security.Entry{stubEntry("scanner", "scanner-bin")},
+		DisabledTools: []string{"scanner"},
+		BinariesOnly:  true,
+	})
+
+	if c := checkNamed(t, checks, "scanner"); c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
+		t.Errorf("a missing binary must block the image contract even when disabled, got %v/%v", c.Status, c.Severity)
+	}
+}
+
 // A Tool needing several binaries is one row, and it names the ones missing.
 func TestRun_NamesTheMissingBinariesOfAMultiBinaryTool(t *testing.T) {
 	binDir := t.TempDir()

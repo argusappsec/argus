@@ -190,6 +190,30 @@ func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
 	}
 }
 
+// `argus doctor` reads tools.disabled from argus.yaml, so the operator sees a
+// Tool they switched off as disabled rather than as installed or missing.
+func TestDoctorCmd_ShowsAToolDisabledInArgusYAMLAsDisabled(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	home := writeDoctorHome(t, "tools:\n  disabled:\n    - gitleaks\n")
+
+	c := doctorCmd()
+	var out strings.Builder
+	c.SetOut(&out)
+	c.SetErr(io.Discard)
+	c.SetArgs([]string{"--home", home})
+	_ = c.Execute() // the verdict depends on the host; the row does not
+
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "gitleaks") {
+			if !strings.Contains(line, "disabled") {
+				t.Errorf("the gitleaks row should say disabled: %q", line)
+			}
+			return
+		}
+	}
+	t.Errorf("no gitleaks row in:\n%s", out.String())
+}
+
 func checkNames(checks []doctor.Check) []string {
 	out := make([]string, 0, len(checks))
 	for _, c := range checks {

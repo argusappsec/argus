@@ -132,6 +132,15 @@ func toolsNotice(d security.Discovery) []string {
 		registered = strings.Join(ids, ", ")
 	}
 	lines := []string{"argusd: scanner tools registered: " + registered}
+	// Disabled is the operator's choice, not a gap: it gets its own line and
+	// no install link.
+	if len(d.Disabled) > 0 {
+		ids := make([]string, 0, len(d.Disabled))
+		for _, e := range d.Disabled {
+			ids = append(ids, e.ID)
+		}
+		lines = append(lines, "argusd: scanner tools disabled in argus.yaml (tools.disabled): "+strings.Join(ids, ", "))
+	}
 	if len(d.Missing) > 0 {
 		lines = append(lines, "argusd: catalogued but not installed (install, then restart):")
 		for _, e := range d.Missing {

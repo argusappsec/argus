@@ -63,6 +63,7 @@ func doctorCmd() *cobra.Command {
 			}
 			if !binariesOnly {
 				opts.Shape = deploymentShape(home)
+				opts.DisabledTools = disabledTools(home)
 				opts.GitHub, opts.GitHubMint = githubDoctorOptions(home)
 				opts.FrontDoorAddr, opts.FrontDoorProbe = frontDoorDoctorOptions(home)
 				opts.Provider, opts.ProviderModels, opts.ProviderToolCall = providerDoctorOptions(home)
@@ -170,6 +171,17 @@ func deploymentShape(home string) deployment.Shape {
 		e.ApplyToProcess()
 	}
 	return daemon.ShapeOf(cfg)
+}
+
+// disabledTools reads tools.disabled from argus.yaml, so doctor reports the
+// Tools the daemon would leave unregistered as disabled. A config that cannot
+// be read disables nothing here; the argus.yaml row carries the real problem.
+func disabledTools(home string) []string {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		return nil
+	}
+	return cfg.Tools.Disabled
 }
 
 // githubDoctorOptions loads the github codehost from argus.yaml and, when it is

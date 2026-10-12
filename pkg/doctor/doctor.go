@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/argusappsec/argus/pkg/config"
@@ -82,6 +83,12 @@ type Options struct {
 	// source of truth for scanner binaries. Nil skips the rows (tests).
 	Catalog []security.Entry
 
+	// DisabledTools are the Catalog IDs the operator switched off
+	// (tools.disabled in argus.yaml). Each gets a "disabled" row instead of an
+	// installed or not-installed one. It is ignored under BinariesOnly: the
+	// image contract is about what the image ships, not what argus.yaml uses.
+	DisabledTools []string
+
 	// ExtraBinaries are binary deps the caller knows about but aren't owned
 	// by any tool (e.g. git).
 	ExtraBinaries []ExtraBinary
@@ -143,7 +150,7 @@ type Options struct {
 // Run executes all checks and returns the results in display order.
 func Run(opts Options) []Check {
 	if opts.BinariesOnly {
-		checks := binaryChecks(opts.Catalog, opts.ExtraBinaries)
+		checks := binaryChecks(opts.Catalog, opts.ExtraBinaries, nil)
 		for i := range checks {
 			checks[i].Severity = SeverityRequired
 			// A Tool that is merely not installed is Info everywhere else; in
@@ -156,7 +163,7 @@ func Run(opts Options) []Check {
 	}
 
 	var out []Check
-	out = append(out, binaryChecks(opts.Catalog, opts.ExtraBinaries)...)
+	out = append(out, binaryChecks(opts.Catalog, opts.ExtraBinaries, opts.DisabledTools)...)
 	out = append(out, configChecks(opts.Home, opts.Shape)...)
 	// Straight after the configuration rows: those say what is configured, this
 	// one says whether it works.
@@ -255,7 +262,7 @@ func githubCheck(cfg config.CodeHostConfig, mint func(ctx context.Context) error
 // row per binary, and (b) the Catalog, one row per Tool. The Catalog is the
 // whole list of scanners Argus can drive, so every one of them is accounted
 // for whether or not this host has it.
-func binaryChecks(catalog []security.Entry, extras []ExtraBinary) []Check {
+func binaryChecks(catalog []security.Entry, extras []ExtraBinary, disabled []string) []Check {
 	seen := map[string]bool{}
 	out := make([]Check, 0, len(extras)+len(catalog))
 
@@ -269,6 +276,10 @@ func binaryChecks(catalog []security.Entry, extras []ExtraBinary) []Check {
 	}
 
 	for _, e := range catalog {
+		if slices.Contains(disabled, e.ID) {
+			out = append(out, disabledCheck(e))
+			continue
+		}
 		out = append(out, catalogCheck(e))
 	}
 	return out
@@ -298,6 +309,18 @@ func catalogCheck(e security.Entry) Check {
 	c.Hint = "install: " + strings.Join(hints, "; ")
 	c.Message = "not installed, so " + e.Tool + " is not offered — " + c.Hint + " — see " + e.URL()
 	return c
+}
+
+// disabledCheck reports a catalogued Tool the operator switched off. It is
+// never registered, installed or not, and that is a choice rather than a gap,
+// so the row is information and carries no install hint.
+func disabledCheck(e security.Entry) Check {
+	return Check{
+		Name:     e.ID,
+		Status:   Info,
+		Severity: SeverityInfo,
+		Message:  "disabled in argus.yaml (tools.disabled), so " + e.Tool + " is not offered",
+	}
 }
 
 func binaryCheck(name string, sev Severity, usedBy, hint string) Check {
@@ -342,7 +365,7 @@ func configChecks(home string, shape deployment.Shape) []Check {
 	case err != nil:
 		// LoadConfig treats a missing file as an empty config, so a non-nil
 		// error is a real problem: a legacy v2 key (whose message names the
-		// replacement) or a parse error. Surface it verbatim rather than a
+		// replacement), an unknown tools.disabled entry, or a parse error. Surface it verbatim rather than a
 		// generic "run init" — the config's own message is the actionable one.
 		yamlCheck.Status = Fail
 		yamlCheck.Hint = err.Error()

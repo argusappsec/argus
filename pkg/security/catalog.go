@@ -165,6 +165,36 @@ func Catalog() []Entry {
 type Discovery struct {
 	Installed []Entry // every required binary resolved: these get registered
 	Missing   []Entry // at least one binary did not resolve
+	Disabled  []Entry // switched off by the operator (tools.disabled), installed or not
+}
+
+// Disable moves the Tools whose IDs are listed out of Installed and Missing and
+// into Disabled: the operator's deny-list (tools.disabled in argus.yaml) wins
+// over what the host can run, so a disabled Tool is never registered, and it is
+// reported as disabled rather than as missing. Every half keeps the Catalog's
+// order. Unknown IDs are ignored here; config validation rejects them earlier.
+func (d Discovery) Disable(ids []string) Discovery {
+	if len(ids) == 0 {
+		return d
+	}
+	var out Discovery
+	for _, e := range d.Installed {
+		if slices.Contains(ids, e.ID) {
+			out.Disabled = append(out.Disabled, e)
+		} else {
+			out.Installed = append(out.Installed, e)
+		}
+	}
+	for _, e := range d.Missing {
+		if slices.Contains(ids, e.ID) {
+			out.Disabled = append(out.Disabled, e)
+		} else {
+			out.Missing = append(out.Missing, e)
+		}
+	}
+	out.Disabled = append(out.Disabled, d.Disabled...)
+	slices.SortFunc(out.Disabled, func(a, b Entry) int { return strings.Compare(a.ID, b.ID) })
+	return out
 }
 
 // Discover looks every catalogued Tool's binaries up with lookPath (exec.LookPath

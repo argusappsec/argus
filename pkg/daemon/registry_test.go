@@ -75,6 +75,27 @@ func TestRegistry_LeavesOutAScannerWhoseBinaryIsMissing(t *testing.T) {
 	}
 }
 
+// An operator can switch an installed scanner off in argus.yaml
+// (tools.disabled). A disabled Tool is neither registered nor exposed, even
+// though its binary is on PATH, and the others are unaffected.
+func TestRegistry_LeavesOutAnInstalledScannerThatIsDisabled(t *testing.T) {
+	dc := testContext(t, nil, 4)
+	dc.LookPath = installed("gitleaks", "semgrep")
+	dc.DisabledTools = []string{"gitleaks"}
+
+	reg := dc.NewToolRegistry()
+
+	if _, ok := reg.Get("run_gitleaks"); ok {
+		t.Error("run_gitleaks is disabled but registered")
+	}
+	if slices.Contains(exposedNames(reg), "run_gitleaks") {
+		t.Errorf("run_gitleaks is disabled but exposed; exposed = %v", exposedNames(reg))
+	}
+	if _, ok := reg.Get("run_semgrep"); !ok {
+		t.Error("run_semgrep is installed and not disabled, so it must be registered")
+	}
+}
+
 // recordingProvider ends every turn at once and keeps the first request it was
 // sent, which carries the seed prompt.
 type recordingProvider struct {
