@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  pull_request_target:
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: greet
+        run: echo "Hello ${{ github.event.pull_request.title }}"
+      - name: greet again
+        run: echo "${{ github.event.pull_request.body }}" # zizmor: ignore[template-injection]

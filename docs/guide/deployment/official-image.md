@@ -28,7 +28,7 @@ without anyone installing anything.
 | `opengrep` | Pattern-based static analysis across most languages. Argus drives it as its [SAST scanner](/guide/scanners/sast/). |
 | `gitleaks` | Finds committed secrets: keys, tokens, passwords. See [Gitleaks](/guide/scanners/gitleaks/). |
 | `osv-scanner` | Finds dependencies with known vulnerabilities, in any ecosystem. See [OSV-Scanner](/guide/scanners/osv-scanner/). |
-| `zizmor` | Audits GitHub Actions workflows for injection and privilege mistakes. |
+| `zizmor` | Audits GitHub Actions workflows for injection and privilege mistakes. See [zizmor](/guide/scanners/zizmor/). |
 | `trivy` | Finds misconfigurations in Terraform, Kubernetes manifests, Helm charts and Dockerfiles. Only its misconfiguration scanners are used. |
 
 Every binary is published for both `linux/amd64` and `linux/arm64`. The

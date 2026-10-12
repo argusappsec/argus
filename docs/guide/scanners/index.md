@@ -20,6 +20,7 @@ installed or not installed, and link a missing one to its page here.
 
 - **Every repository:** [Gitleaks](/guide/scanners/gitleaks/), [OSV-Scanner](/guide/scanners/osv-scanner/), [SAST (Opengrep or Semgrep)](/guide/scanners/sast/)
 - **You write Go:** [gosec](/guide/scanners/gosec/), [govulncheck](/guide/scanners/govulncheck/)
+- **You use GitHub Actions:** [zizmor](/guide/scanners/zizmor/)
 
 ## All scanners
 
@@ -30,6 +31,7 @@ installed or not installed, and link a missing one to its page here.
 | [govulncheck](/guide/scanners/govulncheck/) | Dependencies | Go | Drives a toolchain | Not included |
 | [OSV-Scanner](/guide/scanners/osv-scanner/) | Dependencies | Any language | Safe on untrusted input | Included |
 | [SAST (Opengrep or Semgrep)](/guide/scanners/sast/) | SAST | Any language | Safe on untrusted input | Included |
+| [zizmor](/guide/scanners/zizmor/) | CI/CD | GitHub Actions | Safe on untrusted input | Included |
 
 ## Trust levels
 

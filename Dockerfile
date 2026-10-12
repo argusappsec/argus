@@ -21,6 +21,14 @@ ARG OPENGREP_VERSION=v1.30.1
 ARG OPENGREP_SHA256_AMD64=d3195b9d8d5ae93179f6aa5f5daaba6a920a5a09d38c5d5ae5e60924050210c4
 ARG OPENGREP_SHA256_ARM64=a730f6fdce1e978ea29e610a2e0503bfe1ec31fce08979a9a84e3699f03e16ee
 
+# zizmor (GitHub Actions audits) is a release tarball per architecture, built
+# by zizmor's own release workflow for glibc Linux. Its sha256 per architecture
+# pins the exact bytes; a version bump must update both checksums or the build
+# fails. Its signed build provenance is checked as well (see the zizmor stage).
+ARG ZIZMOR_VERSION=v1.30.1
+ARG ZIZMOR_SHA256_AMD64=e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+ARG ZIZMOR_SHA256_ARM64=7ff1dce33bdd18fd2a4affe63bdd47efcccca97b2cec1c1863ec26e9e2647540
+
 # cosign verifies keyless (Sigstore) signatures on release binaries. It only
 # runs at build time and is not in the runtime image. Pinned by digest.
 ARG COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v2.6.5@sha256:ad281047f85c5e1fc6ffbc30c2b55be3b07b4032bef715a12122ce5829619aca
@@ -70,6 +78,78 @@ RUN cosign verify-blob \
         /opengrep/opengrep \
     && chmod 0755 /opengrep/opengrep
 
+# zizmor publishes no signature files next to its tarballs. Its release
+# workflow records a GitHub artifact attestation instead: SLSA build provenance
+# signed with Sigstore, which the GitHub API serves by the tarball's sha256.
+# The download is pinned by the checksum above, and the attestation is fetched
+# by the same checksum. One stage per architecture, as for opengrep.
+FROM scratch AS zizmor-download-amd64
+ARG ZIZMOR_VERSION
+ARG ZIZMOR_SHA256_AMD64
+ADD --checksum=sha256:${ZIZMOR_SHA256_AMD64} \
+    https://github.com/zizmorcore/zizmor/releases/download/${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz /zizmor.tar.gz
+ADD https://api.github.com/repos/zizmorcore/zizmor/attestations/sha256:${ZIZMOR_SHA256_AMD64} /attestations.json
+
+FROM scratch AS zizmor-download-arm64
+ARG ZIZMOR_VERSION
+ARG ZIZMOR_SHA256_ARM64
+ADD --checksum=sha256:${ZIZMOR_SHA256_ARM64} \
+    https://github.com/zizmorcore/zizmor/releases/download/${ZIZMOR_VERSION}/zizmor-aarch64-unknown-linux-gnu.tar.gz /zizmor.tar.gz
+ADD https://api.github.com/repos/zizmorcore/zizmor/attestations/sha256:${ZIZMOR_SHA256_ARM64} /attestations.json
+
+FROM zizmor-download-${TARGETARCH} AS zizmor-download
+
+# Verify the provenance: it must be signed for zizmor's own binary release
+# workflow at exactly this version's tag, and name this tarball as what it
+# built. The API returns every attestation for the digest; provenance.go picks
+# out the SLSA provenance bundle for cosign. Then unpack the binary.
+FROM golang:1.26 AS zizmor
+ARG ZIZMOR_VERSION
+COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
+COPY --from=zizmor-download / /zizmor/
+COPY <<'EOF' /zizmor/provenance.go
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"os"
+)
+
+// Reads the GitHub attestations API response on stdin and writes the SLSA
+// provenance bundle to stdout; exits 1 when there is none.
+func main() {
+	var res struct {
+		Attestations []struct{ Bundle json.RawMessage } `json:"attestations"`
+	}
+	if json.NewDecoder(os.Stdin).Decode(&res) != nil {
+		os.Exit(1)
+	}
+	for _, a := range res.Attestations {
+		var b struct{ DsseEnvelope struct{ Payload string } }
+		_ = json.Unmarshal(a.Bundle, &b)
+		payload, _ := base64.StdEncoding.DecodeString(b.DsseEnvelope.Payload)
+		var st struct{ PredicateType string }
+		if json.Unmarshal(payload, &st) == nil && st.PredicateType == "https://slsa.dev/provenance/v1" {
+			_, _ = os.Stdout.Write(a.Bundle)
+			return
+		}
+	}
+	os.Exit(1)
+}
+EOF
+WORKDIR /zizmor
+RUN go run provenance.go < attestations.json > provenance.sigstore.json \
+    && cosign verify-blob-attestation \
+        --bundle provenance.sigstore.json \
+        --new-bundle-format \
+        --type slsaprovenance1 \
+        --certificate-identity "https://github.com/zizmorcore/zizmor/.github/workflows/release-binaries.yml@refs/tags/${ZIZMOR_VERSION}" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        zizmor.tar.gz \
+    && tar -xzf zizmor.tar.gz zizmor \
+    && chmod 0755 zizmor
+
 # ---- build stage ----
 FROM golang:1.26 AS build
 WORKDIR /src
@@ -87,7 +167,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ---- runtime stage ----
 # Debian-based python:*-slim (glibc). opengrep's release binary is built for
-# glibc (manylinux). Python itself is no longer needed by any Manifest tool;
+# glibc (manylinux), and so is zizmor's (glibc 2.34 or later, libgcc_s).
+# Python itself is no longer needed by any Manifest tool;
 # dropping it for a smaller base is tracked separately.
 FROM python:${PYTHON_VERSION}-slim
 
@@ -99,6 +180,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=opengrep /opengrep/opengrep /usr/local/bin/opengrep
+COPY --from=zizmor /zizmor/zizmor /usr/local/bin/zizmor
 COPY --from=gitleaks /usr/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=osv-scanner /osv-scanner /usr/local/bin/osv-scanner
 COPY --from=build /out/argus /usr/local/bin/argus

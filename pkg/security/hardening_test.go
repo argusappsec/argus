@@ -25,6 +25,7 @@ var scanners = map[string]func(*session.Session, security.Runner) tool.Tool{
 	"osv-scanner": security.NewOSVScanner,
 	"gosec":       security.NewGosec,
 	"govulncheck": security.NewGovulncheck,
+	"zizmor":      security.NewZizmor,
 }
 
 // sastOver builds the SAST Tool over one engine, in the shape scanners holds.
@@ -41,6 +42,7 @@ var emptyReport = map[string]string{
 	"gosec":       `{"Golang errors":{},"Issues":[],"Stats":{"files":1,"lines":1,"nosec":0,"found":0}}`,
 	"govulncheck": `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0","db":"https://vuln.go.dev","go_version":"go1.26.0","scan_level":"symbol","scan_mode":"source"}}
 {"progress":{"message":"No vulnerabilities found."}}`,
+	"zizmor": `[]`,
 }
 
 // checkout is a real directory standing in for the tree under review. Scanners
