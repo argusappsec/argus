@@ -13,7 +13,7 @@ import (
 // Shared by every per-tool test file in this package.
 //
 // Tools that write their report to a file (gitleaks via --report-path,
-// osv-scanner via --output) get a faithful simulation: the fake writes the
+// osv-scanner via --output, gosec via -out=) get a faithful simulation: the fake writes the
 // canned `out` to that file, so the tool's own "read the report" path is
 // exercised end-to-end.
 type fakeRunner struct {
@@ -59,6 +59,9 @@ func (f *fakeRunner) Run(_ context.Context, cmd security.Command) (string, error
 		for i, a := range cmd.Args {
 			if (a == "--report-path" || a == "--output") && i+1 < len(cmd.Args) {
 				_ = os.WriteFile(cmd.Args[i+1], []byte(f.out), 0o600)
+			}
+			if path, ok := strings.CutPrefix(a, "-out="); ok { // gosec's spelling
+				_ = os.WriteFile(path, []byte(f.out), 0o600)
 			}
 		}
 	}

@@ -2,7 +2,7 @@
 title: OSV-Scanner
 description: Finds dependencies with known vulnerabilities by reading lockfiles and manifests.
 sidebar:
-  order: 57
+  order: 58
 ---
 
 <!-- Generated from the Tool Catalog. Do not edit by hand: run `make docs`. -->

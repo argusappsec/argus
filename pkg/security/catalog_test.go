@@ -23,7 +23,7 @@ func entryIDs(entries []security.Entry) []string {
 // installed, in a stable order.
 func TestCatalog_ListsEveryScannerInIDOrder(t *testing.T) {
 	got := entryIDs(security.Catalog())
-	want := []string{"gitleaks", "osv-scanner", "sast"}
+	want := []string{"gitleaks", "gosec", "osv-scanner", "sast"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Catalog IDs = %v, want %v", got, want)
 	}
@@ -80,8 +80,69 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 	if got := entryIDs(d.Installed); !slices.Equal(got, []string{"gitleaks"}) {
 		t.Errorf("Installed = %v, want [gitleaks]", got)
 	}
-	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"osv-scanner", "sast"}) {
-		t.Errorf("Missing = %v, want [osv-scanner sast]", got)
+	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"gosec", "osv-scanner", "sast"}) {
+		t.Errorf("Missing = %v, want [gosec osv-scanner sast]", got)
+	}
+}
+
+// gosec is Go SAST that loads the reviewed packages through the go command, so
+// it needs go as well as gosec, it is withheld from automatic reviews, and the
+// official image does not ship it: Go organizations are told to add both.
+func TestCatalog_GosecIsGoSASTThatDrivesTheToolchain(t *testing.T) {
+	i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == "gosec" })
+	if i < 0 {
+		t.Fatal("gosec is not catalogued")
+	}
+	e := security.Catalog()[i]
+	if e.Tool != "run_gosec" {
+		t.Errorf("Tool = %q, want run_gosec", e.Tool)
+	}
+	if !slices.Equal(e.Finds, []security.Find{security.FindSAST}) || !slices.Equal(e.Reads, []security.Read{security.ReadGo}) {
+		t.Errorf("gosec must be tagged sast and go; finds=%v reads=%v", e.Finds, e.Reads)
+	}
+	var bins []string
+	for _, b := range e.Binaries {
+		bins = append(bins, b.Name)
+	}
+	slices.Sort(bins)
+	if !slices.Equal(bins, []string{"go", "gosec"}) {
+		t.Errorf("Binaries = %v, want go and gosec", bins)
+	}
+	if e.Trust != security.TrustToolchain {
+		t.Errorf("Trust = %q, want %q", e.Trust, security.TrustToolchain)
+	}
+	if e.Manifest {
+		t.Error("gosec must not be in the Manifest: the official image ships no Go toolchain")
+	}
+	if e.License != "Apache-2.0" {
+		t.Errorf("License = %q, want Apache-2.0", e.License)
+	}
+}
+
+// gosec is registered only when both of its binaries resolve: gosec without go
+// cannot load a package, and go alone is not a scanner.
+func TestDiscover_GosecNeedsBothGoAndGosec(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bins []string
+		want bool
+	}{
+		{"neither", nil, false},
+		{"go only", []string{"go"}, false},
+		{"gosec only", []string{"gosec"}, false},
+		{"both", []string{"go", "gosec"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := security.Discover(func(name string) (string, error) {
+				if slices.Contains(tc.bins, name) {
+					return "/usr/local/bin/" + name, nil
+				}
+				return "", exec.ErrNotFound
+			})
+			if got := slices.Contains(entryIDs(d.Installed), "gosec"); got != tc.want {
+				t.Errorf("gosec installed = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
