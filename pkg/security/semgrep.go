@@ -52,6 +52,8 @@ func init() {
 		DocsURL:    "https://semgrep.dev/docs/",
 		InstallURL: "https://semgrep.dev/docs/getting-started/cli",
 		License:    "LGPL-2.1-only",
+		Trust:      TrustSafe,
+		Manifest:   true,
 		Binaries: []Binary{{
 			Name:        "semgrep",
 			InstallHint: "brew install semgrep  (or pip install semgrep)",

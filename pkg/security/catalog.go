@@ -49,6 +49,21 @@ const (
 	ReadMultiLanguage Read = "multi-language"
 )
 
+// Trust is how safe a Tool is to run over untrusted review content (ADR 0027,
+// ADR 0018): whether it only reads files, or drives a toolchain or package
+// manager over the code under review.
+type Trust string
+
+// The trust levels a catalogued Tool declares.
+const (
+	// TrustSafe Tools only read files, so they are safe on a hostile pull
+	// request.
+	TrustSafe Trust = "safe"
+	// TrustToolchain Tools drive a toolchain or package manager over the
+	// reviewed code, which then executes or loads code the review is about.
+	TrustToolchain Trust = "toolchain-driving"
+)
+
 // Binary is one executable a catalogued Tool requires on PATH.
 type Binary struct {
 	Name        string // command name as it appears on PATH (e.g. "gitleaks")
@@ -84,6 +99,13 @@ type Entry struct {
 	DocsURL    string // the tool's official documentation (absolute)
 	InstallURL string // the tool's official install guide (absolute)
 	License    string // SPDX identifier
+
+	// Trust is the Tool's trust level on untrusted input.
+	Trust Trust
+
+	// Manifest is whether the official image ships the Tool and guarantees
+	// its binaries (ADR 0027).
+	Manifest bool
 
 	// Binaries are every executable the Tool needs. All of them must resolve
 	// on PATH for the Tool to be registered. They are also doctor's single

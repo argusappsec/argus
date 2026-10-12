@@ -83,3 +83,18 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 		t.Errorf("Missing = %v, want [osv-scanner semgrep]", got)
 	}
 }
+
+// The catalog pages tell an operator whether a Tool is safe to point at an
+// untrusted pull request and whether the official image already ships it, so
+// every Entry declares both. The three scanners Argus has always wrapped only
+// read files, and the official image has always carried them.
+func TestCatalog_ExistingScannersAreSafeAndInTheManifest(t *testing.T) {
+	for _, e := range security.Catalog() {
+		if e.Trust != security.TrustSafe {
+			t.Errorf("%s: Trust = %q, want %q", e.ID, e.Trust, security.TrustSafe)
+		}
+		if !e.Manifest {
+			t.Errorf("%s: Manifest = false, want true: the official image ships it", e.ID)
+		}
+	}
+}

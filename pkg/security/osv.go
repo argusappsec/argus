@@ -52,6 +52,8 @@ func init() {
 		DocsURL:    "https://google.github.io/osv-scanner/",
 		InstallURL: "https://google.github.io/osv-scanner/installation/",
 		License:    "Apache-2.0",
+		Trust:      TrustSafe,
+		Manifest:   true,
 		Binaries: []Binary{{
 			Name:        "osv-scanner",
 			InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest)",
