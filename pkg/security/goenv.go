@@ -12,9 +12,10 @@ const (
 )
 
 // goEnv is the hardened Go profile every Tool that drives the go command over
-// the code under review (gosec, govulncheck) runs with, on top of the scratch
-// allow-list (ADR 0027). The go command's defaults are written for a developer
-// building their own code; over a stranger's checkout each of them is a door:
+// the code under review (gosec, govulncheck, osv-scanner's Go call analysis)
+// runs with, on top of the scratch allow-list (ADR 0027). The go command's
+// defaults are written for a developer building their own code; over a
+// stranger's checkout each of them is a door:
 //
 //   - GOTOOLCHAIN=local: a go.mod asking for a newer Go fails instead of
 //     downloading and running that toolchain.

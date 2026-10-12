@@ -2,6 +2,7 @@ package security_test
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -143,5 +144,49 @@ func TestOSVScanner_DisablesGoCallAnalysisOnAutomaticReviewsOnly(t *testing.T) {
 				t.Errorf("--no-call-analysis=go present = %v, want %v; args = %v", got, tc.want, fr.gotArgs)
 			}
 		})
+	}
+}
+
+// Go call analysis drives the go command over the reviewed packages, exactly
+// as gosec and govulncheck do, so where it runs (a review a Person asked for)
+// it runs in the same hardened Go profile: whatever the daemon's own Go
+// settings say, no toolchain download, no go.mod rewrite, no go.work, no cgo,
+// the proxy only, no gopackagesdriver, and caches in the scratch directory.
+func TestOSVScanner_RunsGoCallAnalysisInTheHardenedGoEnvironment(t *testing.T) {
+	for k, v := range map[string]string{
+		"GOTOOLCHAIN":      "auto",
+		"GOFLAGS":          "-mod=mod",
+		"GOWORK":           "/elsewhere/go.work",
+		"CGO_ENABLED":      "1",
+		"GOPROXY":          "https://proxy.golang.org,direct",
+		"GOPACKAGESDRIVER": "/usr/local/bin/driver",
+	} {
+		t.Setenv(k, v)
+	}
+	fr := &fakeRunner{out: `{"results":[]}`}
+	o := osvFromCatalog(t, security.Deps{Session: sessionAt(checkout(t)), Commands: fr})
+	if _, err := o.Execute(context.Background(), map[string]any{}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if slices.Contains(fr.gotArgs, "--no-call-analysis=go") {
+		t.Fatalf("a requested review keeps call analysis; args = %v", fr.gotArgs)
+	}
+	home := filepath.Join(fr.gotCmd.Dir, "home")
+	got := envMap(fr.gotCmd.Env)
+	for k, v := range map[string]string{
+		"GOTOOLCHAIN":      "local",
+		"GOFLAGS":          "-mod=readonly",
+		"GOWORK":           "off",
+		"CGO_ENABLED":      "0",
+		"GOPROXY":          "https://proxy.golang.org",
+		"GOSUMDB":          "sum.golang.org",
+		"GOENV":            "off",
+		"GOPACKAGESDRIVER": "off",
+		"GOPATH":           filepath.Join(home, "go"),
+		"GOCACHE":          filepath.Join(home, ".cache", "go-build"),
+	} {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
 	}
 }

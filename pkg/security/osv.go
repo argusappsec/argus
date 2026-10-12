@@ -105,6 +105,7 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 	// osv-scanner keeps its vulnerability database cache under the user cache
 	// directory, which Go resolves through XDG_CACHE_HOME or HOME; both point
 	// into the scratch directory.
+	env := sc.xdg()
 	argv := []string{"osv-scanner",
 		"--format", "json",
 		"--output", reportPath,
@@ -114,9 +115,14 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 	}
 	if o.noCallAnalysis {
 		argv = append(argv, "--no-call-analysis=go")
+	} else {
+		// Go call analysis loads the reviewed packages through the go
+		// command, so where it runs it gets the hardened Go profile, like
+		// every other Tool that drives the go command.
+		env = append(env, sc.goEnv()...)
 	}
 	argv = append(argv, "--recursive", root)
-	body, err := runForReport(ctx, o.runner, "osv-scanner", sc.command(sc.xdg(), argv...), reportPath)
+	body, err := runForReport(ctx, o.runner, "osv-scanner", sc.command(env, argv...), reportPath)
 	if err != nil {
 		return "", err
 	}

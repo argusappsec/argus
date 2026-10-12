@@ -99,8 +99,9 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 		"XDG_CACHE_HOME": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"PYTHONUTF8": true,
 		// The hardened Go profile of the Tools that drive the go command
-		// (gosec, govulncheck): each one closes a door the go command's defaults leave
-		// open, and none carries a credential.
+		// (gosec, govulncheck, osv-scanner's Go call analysis): each one
+		// closes a door the go command's defaults leave open, and none
+		// carries a credential.
 		"GOTOOLCHAIN": true, "GOFLAGS": true, "GOWORK": true, "CGO_ENABLED": true,
 		"GOPROXY": true, "GOSUMDB": true, "GOENV": true, "GOPACKAGESDRIVER": true,
 		"GOPATH": true, "GOCACHE": true,
