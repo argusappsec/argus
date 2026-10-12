@@ -87,6 +87,11 @@ type Context struct {
 	// projected from one — must reach the same executor, and because a test that
 	// drives the surface has to substitute it instead of running real binaries.
 	//
+	// Each scanner hands the Runner a full security.Command: a scratch working
+	// directory outside the checkout and an explicit environment allow-list.
+	// The real executor never adds the daemon's own environment to it, so the
+	// `.env` loaded into this process does not reach a scanner (ADR 0027).
+	//
 	// Nil means the real executor (security.ExecRunner): a Context assembled by
 	// hand runs actual scanners unless it deliberately says otherwise.
 	Commands security.Runner

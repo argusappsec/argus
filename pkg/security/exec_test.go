@@ -3,9 +3,11 @@ package security_test
 import (
 	"context"
 	"os"
+
+	"github.com/argusappsec/argus/pkg/security"
 )
 
-// fakeRunner records the args passed to Run and returns a canned response.
+// fakeRunner records the Command passed to Run and returns a canned response.
 // Shared by every per-tool test file in this package.
 //
 // Tools that write their report to a file (gitleaks via --report-path,
@@ -16,15 +18,17 @@ type fakeRunner struct {
 	out     string
 	err     error
 	noFile  bool // simulate a binary that errored before writing any report
+	gotCmd  security.Command
 	gotArgs []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, _ string, args ...string) (string, error) {
-	f.gotArgs = args
+func (f *fakeRunner) Run(_ context.Context, cmd security.Command) (string, error) {
+	f.gotCmd = cmd
+	f.gotArgs = cmd.Args
 	if !f.noFile {
-		for i, a := range args {
-			if (a == "--report-path" || a == "--output") && i+1 < len(args) {
-				_ = os.WriteFile(args[i+1], []byte(f.out), 0o600)
+		for i, a := range cmd.Args {
+			if (a == "--report-path" || a == "--output") && i+1 < len(cmd.Args) {
+				_ = os.WriteFile(cmd.Args[i+1], []byte(f.out), 0o600)
 			}
 		}
 	}

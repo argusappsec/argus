@@ -55,5 +55,14 @@ func (s *semgrep) Execute(ctx context.Context, args map[string]any) (string, err
 	if config == "" {
 		config = "auto"
 	}
-	return s.runner.Run(ctx, root, "semgrep", "--config", config, "--json", "--quiet", root)
+	sc, err := newScratch("semgrep")
+	if err != nil {
+		return "", err
+	}
+	defer sc.remove()
+	// semgrep keeps its settings and caches under XDG and HOME, both in the
+	// scratch directory. PYTHONUTF8 keeps its Python runtime on UTF-8 without
+	// inheriting the daemon's locale variables.
+	env := append(sc.xdg(), "PYTHONUTF8=1")
+	return s.runner.Run(ctx, sc.command(env, "semgrep", "--config", config, "--json", "--quiet", root))
 }

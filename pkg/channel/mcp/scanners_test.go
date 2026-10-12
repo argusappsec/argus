@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // The scanners are the capability nobody wires up on their own, and the reason
@@ -209,7 +210,8 @@ type fakeRunner struct {
 	lastArgs []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, _ string, args ...string) (string, error) {
+func (f *fakeRunner) Run(_ context.Context, cmd security.Command) (string, error) {
+	args := cmd.Args
 	f.mu.Lock()
 	f.nCalls++
 	f.lastArgs = args
