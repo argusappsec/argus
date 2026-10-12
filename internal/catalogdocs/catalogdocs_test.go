@@ -96,11 +96,30 @@ func TestRender_ToolPageWarnsAboutToolchainsAndToolsOutsideTheImage(t *testing.T
 		":::caution[Drives a toolchain]",
 		"| Trust level | Drives a toolchain |",
 		"| Official image | Not included |",
-		"The official Argus container image does not ship Gamma.",
+		"The official Argus container image does not ship Gamma:",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q:\n%s", want, page)
 		}
+	}
+}
+
+// The pages send an operator who runs the official image, and wants a Tool it
+// does not ship, to the guide on building an image on top of it.
+func TestRender_PagesLinkTheCustomImageRecipe(t *testing.T) {
+	const recipe = "(/guide/deployment/official-image/#build-your-own-image)"
+	gamma := entry("gamma")
+	gamma.Manifest = false
+	pages := render(t, entry("alpha"), gamma)
+
+	if !strings.Contains(pages["gamma.md"], recipe) {
+		t.Errorf("a Tool outside the image does not link the recipe:\n%s", pages["gamma.md"])
+	}
+	if !strings.Contains(pages["index.md"], recipe) {
+		t.Errorf("the index does not link the recipe:\n%s", pages["index.md"])
+	}
+	if strings.Contains(pages["alpha.md"], recipe) {
+		t.Errorf("a Tool the image ships links the recipe it does not need:\n%s", pages["alpha.md"])
 	}
 }
 
