@@ -34,6 +34,10 @@ jobs:
       - uses: jdx/mise-action@v2
       - name: go test -race
         run: make test
+      # The scanner catalog pages are generated from the Tool Catalog
+      # (ADR 0027). `make test` already fails on drift; this names the fix.
+      - name: Scanner catalog pages are up to date
+        run: make docs-check
 
   image-gate:
     name: image-gate

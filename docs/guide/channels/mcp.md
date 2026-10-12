@@ -80,7 +80,8 @@ The scanners are separate binaries — `semgrep`, `gitleaks`, `osv-scanner`. Arg
 looks for them once, when the daemon starts: the startup log lists the ones it
 found and the ones it did not, and `argus doctor` shows each as installed or not
 installed. A scanner installed later appears after a restart. The official
-container image ships all three.
+container image ships all three. The [scanner catalog](/guide/scanners/) says
+what each one finds and how to install it.
 :::
 
 ### Your organization's knowledge

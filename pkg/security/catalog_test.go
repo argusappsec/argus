@@ -84,6 +84,21 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 	}
 }
 
+// The catalog pages tell an operator whether the official image already ships
+// a Tool. The official image has always carried the three scanners Argus has
+// always wrapped.
+func TestCatalog_TheExistingScannersAreInTheManifest(t *testing.T) {
+	for _, id := range []string{"gitleaks", "osv-scanner", "semgrep"} {
+		i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == id })
+		if i < 0 {
+			t.Fatalf("%s is not catalogued", id)
+		}
+		if !security.Catalog()[i].Manifest {
+			t.Errorf("%s: Manifest = false, want true: the official image ships it", id)
+		}
+	}
+}
+
 // The three scanners Argus has always wrapped only read files: none drives a
 // toolchain or package manager over the code under review, so all of them stay
 // in an automatic review's registry (ADR 0018, ADR 0027).

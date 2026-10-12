@@ -50,6 +50,7 @@ func init() {
 		DocsURL:    "https://github.com/gitleaks/gitleaks#readme",
 		InstallURL: "https://github.com/gitleaks/gitleaks#installing",
 		License:    "MIT",
+		Manifest:   true,
 		Binaries: []Binary{{
 			Name:        "gitleaks",
 			InstallHint: "brew install gitleaks",

@@ -1,4 +1,4 @@
-.PHONY: build test lint tidy clean run-help image-gate
+.PHONY: build test lint tidy clean run-help image-gate docs docs-check
 
 BIN := argus
 IMAGE := argus:ci
@@ -20,6 +20,19 @@ clean:
 
 run-help: build
 	./$(BIN) --help
+
+# Regenerate the user guide's scanner catalog (docs/guide/scanners/) from the
+# Tool Catalog. Run it after changing or adding a catalog Entry and commit the
+# result: `make test` fails while the committed pages drift. See ADR 0027.
+docs:
+	go run ./internal/catalogdocs/gen
+
+# Fail if regenerating the scanner catalog changes anything in the tree — the
+# same drift check `make test` runs, as CI's explicit gate.
+docs-check: docs
+	@git diff --exit-code -- docs/guide/scanners
+	@test -z "$$(git status --porcelain -- docs/guide/scanners)" || \
+		{ echo "docs/guide/scanners has untracked or uncommitted pages; commit the output of make docs"; exit 1; }
 
 # Build the batteries-included image and run the image-contract gate against
 # it — the same check CI runs on every PR. Drop a scanner from the Dockerfile

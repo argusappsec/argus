@@ -108,6 +108,10 @@ type Entry struct {
 	InstallURL string // the tool's official install guide (absolute)
 	License    string // SPDX identifier
 
+	// Manifest is whether the official image ships the Tool and guarantees
+	// its binaries (ADR 0027).
+	Manifest bool
+
 	// Binaries are every executable the Tool needs. All of them must resolve
 	// on PATH for the Tool to be registered. They are also doctor's single
 	// source of truth for which scanner binaries to check.
