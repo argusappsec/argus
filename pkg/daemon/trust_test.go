@@ -265,3 +265,34 @@ func TestRegistry_GosecNeedsGoAndGosecAndIsWithheldFromAutomaticReviews(t *testi
 		})
 	}
 }
+
+// govulncheck drives the Go toolchain exactly as gosec does. With go and
+// govulncheck both on PATH, a review a Person asked for and the MCP surface
+// get run_govulncheck; an automatic review never does. With either binary
+// missing, nobody gets it.
+func TestRegistry_GovulncheckNeedsGoAndGovulncheckAndIsWithheldFromAutomaticReviews(t *testing.T) {
+	t.Run("both installed", func(t *testing.T) {
+		dc := testContext(t, nil, 4)
+		dc.LookPath = installed("go", "govulncheck")
+
+		if _, ok := newSession(t, dc, "github.com/o/r#1", principal()).registry.Get("run_govulncheck"); !ok {
+			t.Error("a Person-requested review is missing run_govulncheck")
+		}
+		if !slices.Contains(exposedNames(dc.NewToolRegistry()), "run_govulncheck") {
+			t.Error("the MCP registry is missing run_govulncheck")
+		}
+		if _, ok := newSession(t, dc, "github.com/o/r#2", service()).registry.Get("run_govulncheck"); ok {
+			t.Error("an automatic review was offered run_govulncheck, which drives the Go toolchain")
+		}
+	})
+	for _, bin := range []string{"go", "govulncheck"} {
+		t.Run("only "+bin, func(t *testing.T) {
+			dc := testContext(t, nil, 4)
+			dc.LookPath = installed(bin)
+
+			if _, ok := newSession(t, dc, "github.com/o/r#1", principal()).registry.Get("run_govulncheck"); ok {
+				t.Errorf("run_govulncheck is registered with only %s installed", bin)
+			}
+		})
+	}
+}

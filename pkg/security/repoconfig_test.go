@@ -49,6 +49,9 @@ var repoConfigFlags = map[string]struct {
 	"gosec": {
 		switches: []string{"-nosec=true"},
 	},
+	// govulncheck has no config file, ignore file or in-code suppression to
+	// switch off: it obeys nothing in the checkout.
+	"govulncheck": {},
 }
 
 // TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags: the checkout is the pull

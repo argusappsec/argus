@@ -23,7 +23,7 @@ func entryIDs(entries []security.Entry) []string {
 // installed, in a stable order.
 func TestCatalog_ListsEveryScannerInIDOrder(t *testing.T) {
 	got := entryIDs(security.Catalog())
-	want := []string{"gitleaks", "gosec", "osv-scanner", "sast"}
+	want := []string{"gitleaks", "gosec", "govulncheck", "osv-scanner", "sast"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Catalog IDs = %v, want %v", got, want)
 	}
@@ -80,8 +80,8 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 	if got := entryIDs(d.Installed); !slices.Equal(got, []string{"gitleaks"}) {
 		t.Errorf("Installed = %v, want [gitleaks]", got)
 	}
-	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"gosec", "osv-scanner", "sast"}) {
-		t.Errorf("Missing = %v, want [gosec osv-scanner sast]", got)
+	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"gosec", "govulncheck", "osv-scanner", "sast"}) {
+		t.Errorf("Missing = %v, want [gosec govulncheck osv-scanner sast]", got)
 	}
 }
 
