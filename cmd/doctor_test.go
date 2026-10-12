@@ -16,6 +16,7 @@ import (
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // writeDoctorHome writes an argus.yaml carrying yaml into a temp home and returns
@@ -178,9 +179,9 @@ func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
 	home := t.TempDir() // no argus.yaml: no Provider, so a Toolbox
 
 	checks := doctor.Run(doctor.Options{
-		Home:     home,
-		Shape:    deployment.Toolbox,
-		Registry: doctorRegistry(),
+		Home:    home,
+		Shape:   deployment.Toolbox,
+		Catalog: security.Catalog(),
 	})
 	for _, binary := range []string{"semgrep", "gitleaks", "osv-scanner"} {
 		if !slices.ContainsFunc(checks, func(c doctor.Check) bool { return c.Name == binary }) {

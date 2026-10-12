@@ -155,6 +155,7 @@ func shapedServer(t *testing.T, shape deployment.Shape, prov provider.Provider, 
 		LoadSoul:   func() (*soul.Soul, error) { return &soul.Soul{}, nil },
 		LoadMemory: func() (string, error) { return "", nil },
 	}
+	installEveryScanner(dc)
 	dc.Sessions = daemon.NewSessionManager(dc, 4)
 	return NewServer(dc), auditPath
 }

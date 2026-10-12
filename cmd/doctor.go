@@ -20,8 +20,6 @@ import (
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
 	"github.com/argusappsec/argus/pkg/security"
-	"github.com/argusappsec/argus/pkg/session"
-	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // doctorCmd performs a pre-flight check of the environment. Exits 0 when all
@@ -35,7 +33,9 @@ func doctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check that Argus's dependencies and configuration are ready.",
 		Long: "Run a pre-flight check on:\n" +
-			"  • CLI binaries Argus shells out to (git, semgrep, gitleaks, osv-scanner, …)\n" +
+			"  • CLI binaries Argus shells out to (git), and every catalogued scanner\n" +
+			"    (semgrep, gitleaks, osv-scanner, …) as installed or not installed — a\n" +
+			"    scanner that is not installed is information, not a failure\n" +
 			"  • argus.yaml (provider configured? default model set?)\n" +
 			"  • the API key each configured provider needs (in .env or shell)\n" +
 			"  • the LLM provider itself: for an openai-compatible endpoint, that it is\n" +
@@ -57,7 +57,7 @@ func doctorCmd() *cobra.Command {
 			}
 			opts := doctor.Options{
 				Home:          home,
-				Registry:      doctorRegistry(),
+				Catalog:       security.Catalog(),
 				ExtraBinaries: extraBinaries(),
 				BinariesOnly:  binariesOnly,
 			}
@@ -151,25 +151,6 @@ func renderSummary(w io.Writer, s doctor.Summary) {
 		fmt.Fprintln(w, "")
 		fmt.Fprintln(w, styleFailRq.Render("  ✗ environment is NOT ready. Fix the items marked above before running argus."))
 	}
-}
-
-// doctorRegistry builds a throwaway registry containing every tool that
-// might shell out to a binary. Tools that implement tool.Requirer expose
-// their binary deps to doctor; tools that don't are still registered but
-// invisible to the check (this is fine — they have no binary deps).
-//
-// Single source of truth: when a new security tool is added (e.g. trivy),
-// registering it here is enough — doctor picks it up automatically.
-func doctorRegistry() *tool.Registry {
-	sess := session.New()
-	runner := security.ExecRunner{}
-	reg := tool.NewRegistry()
-	reg.Register(security.NewSemgrep(sess, runner))
-	reg.Register(security.NewGitleaks(sess, runner))
-	reg.Register(security.NewOSVScanner(sess, runner))
-	// Future: trivy, trufflehog, govulncheck — adding them in
-	// pkg/security and registering them here is the only change needed.
-	return reg
 }
 
 // deploymentShape derives the Deployment shape doctor reports on, through the

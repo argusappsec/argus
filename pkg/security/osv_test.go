@@ -7,7 +7,6 @@ import (
 
 	"github.com/argusappsec/argus/pkg/security"
 	"github.com/argusappsec/argus/pkg/session"
-	"github.com/argusappsec/argus/pkg/tool"
 )
 
 func TestOSVScanner_ToolMetadata(t *testing.T) {
@@ -102,20 +101,5 @@ func TestOSVScanner_RealFailureSurfacesError(t *testing.T) {
 	o := security.NewOSVScanner(sessionAt("/repo"), fr)
 	if _, err := o.Execute(context.Background(), map[string]any{}); err == nil {
 		t.Error("expected error when no report was written and the run failed")
-	}
-}
-
-func TestOSVScanner_RequiresAdvertisesBinary(t *testing.T) {
-	o := security.NewOSVScanner(sessionAt("/repo"), &fakeRunner{})
-	req, ok := o.(tool.Requirer)
-	if !ok {
-		t.Fatal("osv-scanner tool must implement tool.Requirer")
-	}
-	reqs := req.Requires()
-	if len(reqs) != 1 || reqs[0].Binary != "osv-scanner" {
-		t.Errorf("Requires() = %+v, want one requirement for osv-scanner", reqs)
-	}
-	if reqs[0].InstallHint == "" {
-		t.Error("install hint should not be empty")
 	}
 }

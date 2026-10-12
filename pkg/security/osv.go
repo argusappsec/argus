@@ -38,12 +38,26 @@ func (o *osvScanner) Schema() map[string]any {
 	}
 }
 
-// Requires advertises this tool's binary dependency to argus doctor.
-func (o *osvScanner) Requires() []tool.Requirement {
-	return []tool.Requirement{{
-		Binary:      "osv-scanner",
-		InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/cmd/osv-scanner@latest)",
-	}}
+func init() {
+	catalogue(Entry{
+		ID:      "osv-scanner",
+		Tool:    "run_osv_scanner",
+		Name:    "OSV-Scanner",
+		Purpose: "Finds dependencies with known vulnerabilities by reading lockfiles and manifests.",
+		Why: "Most exploitable flaws in an application live in its dependencies. OSV-Scanner reads " +
+			"the lockfiles of every major ecosystem and matches them against the OSV database, so a " +
+			"review reports a vulnerable version the moment a change introduces it.",
+		Finds:      []Find{FindSCA},
+		Reads:      []Read{ReadMultiLanguage},
+		DocsURL:    "https://google.github.io/osv-scanner/",
+		InstallURL: "https://google.github.io/osv-scanner/installation/",
+		License:    "Apache-2.0",
+		Binaries: []Binary{{
+			Name:        "osv-scanner",
+			InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest)",
+		}},
+		New: func(d Deps) tool.Tool { return NewOSVScanner(d.Session, d.Commands) },
+	})
 }
 
 func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, error) {
