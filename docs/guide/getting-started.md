@@ -23,14 +23,15 @@ mise install     # optional: pins go + golangci-lint versions
 make build       # builds the ./argus binary
 ```
 
-Scanner binaries (`opengrep` or `semgrep`, `gitleaks`, `osv-scanner`, `zizmor`) are optional but
+Scanner binaries (`opengrep` or `semgrep`, `gitleaks`, `osv-scanner`, `zizmor`, `trivy`) are optional but
 recommended — install them on the daemon host and run `argus doctor` to check
 what's available.
 
 ### Container image
 
 The official image is **batteries-included**: Opengrep (SAST), Gitleaks,
-OSV-Scanner and zizmor ship inside, on both `linux/amd64` and `linux/arm64`.
+OSV-Scanner, zizmor and Trivy ship inside, on both `linux/amd64` and
+`linux/arm64`.
 
 ```sh
 docker run -it -v argus-data:/data -p 8080:8080 ghcr.io/argusappsec/argus

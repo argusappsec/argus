@@ -25,6 +25,7 @@ var scanners = map[string]func(*session.Session, security.Runner) tool.Tool{
 	"osv-scanner": security.NewOSVScanner,
 	"gosec":       security.NewGosec,
 	"govulncheck": security.NewGovulncheck,
+	"trivy":       security.NewTrivy,
 	"zizmor":      security.NewZizmor,
 }
 
@@ -42,6 +43,7 @@ var emptyReport = map[string]string{
 	"gosec":       `{"Golang errors":{},"Issues":[],"Stats":{"files":1,"lines":1,"nosec":0,"found":0}}`,
 	"govulncheck": `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0","db":"https://vuln.go.dev","go_version":"go1.26.0","scan_level":"symbol","scan_mode":"source"}}
 {"progress":{"message":"No vulnerabilities found."}}`,
+	"trivy":  `{"SchemaVersion":2,"Trivy":{"Version":"0.75.0"},"ArtifactName":"/checkout","ArtifactType":"filesystem"}`,
 	"zizmor": `[]`,
 }
 
@@ -102,6 +104,11 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 		"GOTOOLCHAIN": true, "GOFLAGS": true, "GOWORK": true, "CGO_ENABLED": true,
 		"GOPROXY": true, "GOSUMDB": true, "GOENV": true, "GOPACKAGESDRIVER": true,
 		"GOPATH": true, "GOCACHE": true,
+		// trivy's network lock-out: a proxy that does not exist, git with no
+		// transport, cloud metadata endpoints off. Each takes access away.
+		"HTTPS_PROXY": true, "HTTP_PROXY": true, "ALL_PROXY": true,
+		"https_proxy": true, "http_proxy": true, "all_proxy": true,
+		"GIT_ALLOW_PROTOCOL": true, "AWS_EC2_METADATA_DISABLED": true, "GCE_METADATA_HOST": true,
 	}
 	for name, build := range scanners {
 		t.Run(name, func(t *testing.T) {

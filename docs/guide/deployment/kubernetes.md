@@ -65,8 +65,8 @@ Argus splits its files by a single question — *is it mutated at runtime?*
   ```
 
   It is **batteries-included**: `argus` plus `git` (required, for cloning) and
-  the scanners it ships — `opengrep` (SAST), `gitleaks`, `osv-scanner` and
-  `zizmor` — so the GitHub pull-request review channel works out of the box
+  the scanners it ships — `opengrep` (SAST), `gitleaks`, `osv-scanner`,
+  `zizmor` and `trivy` — so the GitHub pull-request review channel works out of the box
   with no derived image or sidecar. The [scanner catalog](/guide/scanners/) marks which
   scanners the image includes; to add one it leaves out, build
   [your own image on top of it](/guide/deployment/official-image/#build-your-own-image)

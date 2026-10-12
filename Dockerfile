@@ -21,6 +21,16 @@ ARG OPENGREP_VERSION=v1.30.1
 ARG OPENGREP_SHA256_AMD64=d3195b9d8d5ae93179f6aa5f5daaba6a920a5a09d38c5d5ae5e60924050210c4
 ARG OPENGREP_SHA256_ARM64=a730f6fdce1e978ea29e610a2e0503bfe1ec31fce08979a9a84e3699f03e16ee
 
+# trivy (misconfiguration only) is a release archive. Its release pipeline was
+# compromised in March 2026 (GHSA-69fq-xp46-6x23: a malicious v0.69.4 and
+# rogue v0.69.5/v0.69.6 images), so the bytes are pinned by their sha256 digest
+# per architecture and the Sigstore signature is verified (see the trivy
+# stage). v0.75.0 is an immutable GitHub release published 2026-10-01, after
+# the incident, and carries the fixes for every advisory trivy has published
+# since (latest: GHSA-8rc5-4fr6-64pw, fixed in v0.72.0).
+ARG TRIVY_VERSION=0.75.0
+ARG TRIVY_SHA256_AMD64=c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+ARG TRIVY_SHA256_ARM64=a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3
 # zizmor (GitHub Actions audits) is a release tarball per architecture, built
 # by zizmor's own release workflow for glibc Linux. Its sha256 per architecture
 # pins the exact bytes; a version bump must update both checksums or the build
@@ -78,6 +88,41 @@ RUN cosign verify-blob \
         /opengrep/opengrep \
     && chmod 0755 /opengrep/opengrep
 
+# trivy publishes one archive per architecture, each with a Sigstore bundle
+# (signature, certificate and transparency-log entry in one file). The
+# archive is pinned by the digest above (ADD fails on a mismatch).
+FROM scratch AS trivy-download-amd64
+ARG TRIVY_VERSION
+ARG TRIVY_SHA256_AMD64
+ADD --checksum=sha256:${TRIVY_SHA256_AMD64} \
+    https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz /trivy.tar.gz
+ADD https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz.sigstore.json /trivy.tar.gz.sigstore.json
+
+FROM scratch AS trivy-download-arm64
+ARG TRIVY_VERSION
+ARG TRIVY_SHA256_ARM64
+ADD --checksum=sha256:${TRIVY_SHA256_ARM64} \
+    https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-ARM64.tar.gz /trivy.tar.gz
+ADD https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-ARM64.tar.gz.sigstore.json /trivy.tar.gz.sigstore.json
+
+FROM trivy-download-${TARGETARCH} AS trivy-download
+
+# Verify the signature before unpacking: the certificate must have been issued
+# to trivy's own release workflow, for exactly this version's tag. Then take
+# the one static binary out of the archive. Its misconfiguration checks are
+# embedded in it, so nothing else is needed offline.
+FROM golang:1.26 AS trivy
+ARG TRIVY_VERSION
+COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
+COPY --from=trivy-download / /trivy/
+RUN cosign verify-blob \
+        --bundle /trivy/trivy.tar.gz.sigstore.json \
+        --new-bundle-format \
+        --certificate-identity "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v${TRIVY_VERSION}" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        /trivy/trivy.tar.gz \
+    && tar -xzf /trivy/trivy.tar.gz -C /trivy trivy \
+    && chmod 0755 /trivy/trivy
 # zizmor publishes no signature files next to its tarballs. Its release
 # workflow records a GitHub artifact attestation instead: SLSA build provenance
 # signed with Sigstore, which the GitHub API serves by the tarball's sha256.
@@ -183,6 +228,7 @@ COPY --from=opengrep /opengrep/opengrep /usr/local/bin/opengrep
 COPY --from=zizmor /zizmor/zizmor /usr/local/bin/zizmor
 COPY --from=gitleaks /usr/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=osv-scanner /osv-scanner /usr/local/bin/osv-scanner
+COPY --from=trivy /trivy/trivy /usr/local/bin/trivy
 COPY --from=build /out/argus /usr/local/bin/argus
 
 # Recreate the distroless `nonroot` uid (65532) so the

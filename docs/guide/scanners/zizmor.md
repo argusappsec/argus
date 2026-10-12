@@ -2,7 +2,7 @@
 title: zizmor
 description: Audits GitHub Actions workflows for template injection, dangerous triggers, over-broad permissions and unpinned actions.
 sidebar:
-  order: 61
+  order: 62
 ---
 
 <!-- Generated from the Tool Catalog. Do not edit by hand: run `make docs`. -->
