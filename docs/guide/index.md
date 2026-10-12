@@ -31,4 +31,5 @@ and host it.
 - [MCP channel](/guide/channels/mcp/) — connect your own AI tools to Argus's scanners, knowledge and skills
 - [Skills](/guide/skills/) — using, writing, and overriding skills
 - [Scanners](/guide/scanners/) — every scanner Argus can drive, and which to install for your stack
+- [The official image](/guide/deployment/official-image/) — what the container image ships, and building your own on top of it
 - [Kubernetes deployment](/guide/deployment/kubernetes/) — hosting Argus on a cluster
