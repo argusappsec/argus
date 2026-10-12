@@ -27,7 +27,7 @@ import (
 // is stubbed, which is what moving it onto the Context was for.
 
 // scannerTools is the slice of the deterministic surface this file carries.
-var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_sast", "run_zizmor"}
+var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_sast", "run_trivy", "run_zizmor"}
 
 func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
@@ -86,6 +86,7 @@ var recordedReports = map[string]string{
 	"run_gosec":       `{"Golang errors":{},"Issues":[{"rule_id":"argus-fixture-rule","file":"/x/main.go","line":"1","severity":"HIGH"}]}`,
 	"run_zizmor":      `[{"ident":"argus-fixture-rule","desc":"d","determinations":{"severity":"High","confidence":"High"},"locations":[{"symbolic":{"key":{"Local":{"verbatim_path":"/x/.github/workflows/ci.yml"}},"kind":"Primary"},"concrete":{"location":{"start_point":{"row":0},"end_point":{"row":0}}}}]}]`,
 	"run_govulncheck": `{"config":{"scanner_name":"govulncheck"}}` + "\n" + `{"finding":{"osv":"argus-fixture-rule","trace":[{"module":"example.com/dep","version":"v1.0.0"}]}}`,
+	"run_trivy":       `{"SchemaVersion":2,"Results":[{"Target":"Dockerfile","Type":"dockerfile","Misconfigurations":[{"ID":"argus-fixture-rule","Severity":"HIGH","Status":"FAIL"}]}]}`,
 }
 
 func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {

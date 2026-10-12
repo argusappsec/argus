@@ -29,7 +29,7 @@ without anyone installing anything.
 | `gitleaks` | Finds committed secrets: keys, tokens, passwords. See [Gitleaks](/guide/scanners/gitleaks/). |
 | `osv-scanner` | Finds dependencies with known vulnerabilities, in any ecosystem. See [OSV-Scanner](/guide/scanners/osv-scanner/). |
 | `zizmor` | Audits GitHub Actions workflows for injection and privilege mistakes. See [zizmor](/guide/scanners/zizmor/). |
-| `trivy` | Finds misconfigurations in Terraform, Kubernetes manifests, Helm charts and Dockerfiles. Only its misconfiguration scanners are used. |
+| `trivy` | Finds misconfigurations in Terraform, Kubernetes manifests, Helm charts and Dockerfiles. Only its misconfiguration scanners are used. See [Trivy](/guide/scanners/trivy/). |
 
 Every binary is published for both `linux/amd64` and `linux/arm64`. The
 [scanner catalog](/guide/scanners/) marks each scanner as **Included** or **Not

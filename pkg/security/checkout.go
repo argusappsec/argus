@@ -82,6 +82,34 @@ func (c *checkoutFiles) read(rel string) ([]byte, bool) {
 	return body, true
 }
 
+// list returns the names of the regular files directly inside a checkout
+// directory, by checkout-relative path. A path that is not a directory lists
+// nothing.
+func (c *checkoutFiles) list(rel string) []string {
+	if c.root == nil {
+		return nil
+	}
+	if rel == "" {
+		rel = "."
+	}
+	f, err := c.root.Open(filepath.FromSlash(rel))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(-1)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Type().IsRegular() {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 // lines returns lines from..to (1-based, inclusive) of a checkout file, as
 // many as exist.
 func (c *checkoutFiles) lines(rel string, from, to int) []string {
