@@ -19,7 +19,7 @@ installed or not installed, and link a missing one to its page here.
 ## Recommendations
 
 - **Every repository:** [Gitleaks](/guide/scanners/gitleaks/), [OSV-Scanner](/guide/scanners/osv-scanner/), [Semgrep](/guide/scanners/semgrep/)
-- **You write Go:** [gosec](/guide/scanners/gosec/)
+- **You write Go:** [gosec](/guide/scanners/gosec/), [govulncheck](/guide/scanners/govulncheck/)
 
 ## All scanners
 
@@ -27,6 +27,7 @@ installed or not installed, and link a missing one to its page here.
 | --- | --- | --- | --- | --- |
 | [Gitleaks](/guide/scanners/gitleaks/) | Secrets | Any language | Safe on untrusted input | Included |
 | [gosec](/guide/scanners/gosec/) | SAST | Go | Drives a toolchain | Not included |
+| [govulncheck](/guide/scanners/govulncheck/) | Dependencies | Go | Drives a toolchain | Not included |
 | [OSV-Scanner](/guide/scanners/osv-scanner/) | Dependencies | Any language | Safe on untrusted input | Included |
 | [Semgrep](/guide/scanners/semgrep/) | SAST | Any language | Safe on untrusted input | Included |
 
