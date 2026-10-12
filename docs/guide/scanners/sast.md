@@ -2,7 +2,7 @@
 title: SAST (Opengrep or Semgrep)
 description: Pattern-based static analysis (SAST) for insecure code across many languages.
 sidebar:
-  order: 59
+  order: 60
 ---
 
 <!-- Generated from the Tool Catalog. Do not edit by hand: run `make docs`. -->

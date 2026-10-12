@@ -24,6 +24,7 @@ var scanners = map[string]func(*session.Session, security.Runner) tool.Tool{
 	"gitleaks":    security.NewGitleaks,
 	"osv-scanner": security.NewOSVScanner,
 	"gosec":       security.NewGosec,
+	"govulncheck": security.NewGovulncheck,
 }
 
 // sastOver builds the SAST Tool over one engine, in the shape scanners holds.
@@ -38,6 +39,8 @@ var emptyReport = map[string]string{
 	"gitleaks":    `[]`,
 	"osv-scanner": `{"results":[]}`,
 	"gosec":       `{"Golang errors":{},"Issues":[],"Stats":{"files":1,"lines":1,"nosec":0,"found":0}}`,
+	"govulncheck": `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0","db":"https://vuln.go.dev","go_version":"go1.26.0","scan_level":"symbol","scan_mode":"source"}}
+{"progress":{"message":"No vulnerabilities found."}}`,
 }
 
 // checkout is a real directory standing in for the tree under review. Scanners
@@ -92,7 +95,7 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 		"XDG_CACHE_HOME": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"PYTHONUTF8": true,
 		// The hardened Go profile of the Tools that drive the go command
-		// (gosec): each one closes a door the go command's defaults leave
+		// (gosec, govulncheck): each one closes a door the go command's defaults leave
 		// open, and none carries a credential.
 		"GOTOOLCHAIN": true, "GOFLAGS": true, "GOWORK": true, "CGO_ENABLED": true,
 		"GOPROXY": true, "GOSUMDB": true, "GOENV": true, "GOPACKAGESDRIVER": true,
