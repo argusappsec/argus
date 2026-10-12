@@ -248,7 +248,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: a github channel requires a github codehost under `codehosts:` (its clone/API credentials)")
 		}
 	}
-	return c.Tools.validate()
+	// tools.disabled is not checked here: LoadConfig already refused an
+	// unknown ID, for every reader of argus.yaml and not only the daemon.
+	return nil
 }
 
 // validate checks a single codehost's required fields for its type.

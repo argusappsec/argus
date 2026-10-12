@@ -15,8 +15,15 @@
 # rebuild cannot pick up a different base behind a moved tag.
 ARG RUNTIME_IMAGE=debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
-ARG GITLEAKS_VERSION=v8.30.1
-ARG OSV_SCANNER_VERSION=v2.6.0
+# gitleaks and osv-scanner are copied out of their official images, pinned by
+# digest (multi-arch indexes) as well as by version tag: a version bump must
+# update the digest, so a re-pushed tag cannot change what the image ships.
+ARG GITLEAKS_IMAGE=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+ARG OSV_SCANNER_IMAGE=ghcr.io/google/osv-scanner:v2.6.0@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa
+
+# The Go toolchain image every build-time stage runs in (the argus build and
+# the signature checks). Pinned by digest (a multi-arch index), like the base.
+ARG GO_IMAGE=golang:1.26.9@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac237146c95333504d7805d89
 
 # opengrep (the SAST engine) is a release binary. Its sha256 per architecture
 # pins the exact bytes; a version bump must update both checksums or the
@@ -49,9 +56,10 @@ ARG COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v2.6.5@sha256:ad281047f85c5e1fc6
 
 # ---- scanner binary sources ----
 # gitleaks and osv-scanner are static Go binaries; copy them straight from
-# their official images pinned by tag rather than fetching release archives.
-FROM ghcr.io/gitleaks/gitleaks:${GITLEAKS_VERSION} AS gitleaks
-FROM ghcr.io/google/osv-scanner:${OSV_SCANNER_VERSION} AS osv-scanner
+# their official images, pinned by digest above, rather than fetching release
+# archives.
+FROM ${GITLEAKS_IMAGE} AS gitleaks
+FROM ${OSV_SCANNER_IMAGE} AS osv-scanner
 FROM ${COSIGN_IMAGE} AS cosign
 
 # opengrep publishes one glibc (manylinux) binary per architecture, each with a
@@ -80,7 +88,7 @@ FROM opengrep-download-${TARGETARCH} AS opengrep-download
 # own release workflow, on the release branch of exactly this version.
 # Verification reaches Sigstore's public trust root and transparency log, so
 # it needs the network at build time, like the downloads themselves.
-FROM golang:1.26 AS opengrep
+FROM ${GO_IMAGE} AS opengrep
 ARG OPENGREP_VERSION
 COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
 COPY --from=opengrep-download / /opengrep/
@@ -115,7 +123,7 @@ FROM trivy-download-${TARGETARCH} AS trivy-download
 # to trivy's own release workflow, for exactly this version's tag. Then take
 # the one static binary out of the archive. Its misconfiguration checks are
 # embedded in it, so nothing else is needed offline.
-FROM golang:1.26 AS trivy
+FROM ${GO_IMAGE} AS trivy
 ARG TRIVY_VERSION
 COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
 COPY --from=trivy-download / /trivy/
@@ -152,7 +160,7 @@ FROM zizmor-download-${TARGETARCH} AS zizmor-download
 # workflow at exactly this version's tag, and name this tarball as what it
 # built. The API returns every attestation for the digest; provenance.go picks
 # out the SLSA provenance bundle for cosign. Then unpack the binary.
-FROM golang:1.26 AS zizmor
+FROM ${GO_IMAGE} AS zizmor
 ARG ZIZMOR_VERSION
 COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
 COPY --from=zizmor-download / /zizmor/
@@ -200,7 +208,7 @@ RUN go run provenance.go < attestations.json > provenance.sigstore.json \
     && chmod 0755 zizmor
 
 # ---- build stage ----
-FROM golang:1.26 AS build
+FROM ${GO_IMAGE} AS build
 WORKDIR /src
 
 # Download modules first so they cache independently of the source tree.

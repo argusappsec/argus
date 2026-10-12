@@ -9,11 +9,19 @@ import (
 	"github.com/argusappsec/argus/pkg/security"
 )
 
+func init() {
+	f := toolFixture{empty: `{"SchemaVersion":2,"Trivy":{"Version":"0.75.0"},"ArtifactName":"/checkout","ArtifactType":"filesystem"}`}
+	// trivy loads trivy.yaml and .trivyignore from its working directory
+	// unless told otherwise; both are named explicitly, as Argus's own files.
+	f.repoConfig.scratch = []string{"--config", "--ignorefile"}
+	fixture("trivy", f)
+}
+
 // runTrivy runs the trivy Tool over a fresh checkout with a fake runner that
 // writes trivy's "nothing found" report, and returns what it was asked to run.
 func runTrivy(t *testing.T) *fakeRunner {
 	t.Helper()
-	fr := &fakeRunner{out: emptyReport["trivy"]}
+	fr := &fakeRunner{out: emptyReport("trivy")}
 	if _, err := security.NewTrivy(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}

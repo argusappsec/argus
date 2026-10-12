@@ -13,6 +13,18 @@ import (
 	"github.com/argusappsec/argus/pkg/session"
 )
 
+func init() {
+	// nosem comments and .semgrepignore files are the pull request's; the
+	// ruleset is Argus's own. opengrep is a semgrep fork and takes the same
+	// switches (checked against the real opengrep 1.30.1).
+	for _, engine := range engines {
+		f := toolFixture{empty: `{"results":[],"errors":[]}`}
+		f.repoConfig.switches = []string{"--disable-nosem", "--x-ignore-semgrepignore-files"}
+		f.repoConfig.scratch = []string{"--config"}
+		fixture(string(engine), f)
+	}
+}
+
 func sessionAt(root string) *session.Session {
 	s := session.New()
 	s.SetRoot(root)

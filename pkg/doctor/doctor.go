@@ -5,7 +5,7 @@
 // protocol allows it to be asked — that the endpoint and model actually meet
 // what Argus needs of them.
 //
-// The checks are pure (only filesystem + os/exec.LookPath) so they are
+// The checks are pure (only filesystem + an injectable PATH lookup) so they are
 // cheap to run and easy to test without touching the network. Everything that
 // does touch the network — minting a GitHub token, the front-door health check,
 // the Provider capability probe — arrives as an injected function field on
@@ -93,6 +93,11 @@ type Options struct {
 	// by any tool (e.g. git).
 	ExtraBinaries []ExtraBinary
 
+	// LookPath resolves a binary on PATH, for every binary row and catalogued
+	// Tool. It is injected the way the daemon's is, so a test decides what is
+	// installed instead of the host. Nil means the real lookup (exec.LookPath).
+	LookPath func(name string) (string, error)
+
 	// GitHub, when non-nil, adds a check of the GitHub codehost (ADR 0015):
 	// that the App credentials are present and the private key can sign an
 	// App JWT.
@@ -150,8 +155,12 @@ type Options struct {
 
 // Run executes all checks and returns the results in display order.
 func Run(opts Options) []Check {
+	lookPath := opts.LookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	if opts.BinariesOnly {
-		checks := binaryChecks(manifest(opts.Catalog), opts.ExtraBinaries, nil)
+		checks := binaryChecks(lookPath, manifest(opts.Catalog), opts.ExtraBinaries, nil)
 		for i := range checks {
 			checks[i].Severity = SeverityRequired
 			// A Tool that is merely not installed is Info everywhere else; in
@@ -164,7 +173,7 @@ func Run(opts Options) []Check {
 	}
 
 	var out []Check
-	out = append(out, binaryChecks(opts.Catalog, opts.ExtraBinaries, opts.DisabledTools)...)
+	out = append(out, binaryChecks(lookPath, opts.Catalog, opts.ExtraBinaries, opts.DisabledTools)...)
 	out = append(out, configChecks(opts.Home, opts.Shape)...)
 	// Straight after the configuration rows: those say what is configured, this
 	// one says whether it works.
@@ -263,7 +272,7 @@ func githubCheck(cfg config.CodeHostConfig, mint func(ctx context.Context) error
 // row per binary, and (b) the Catalog, one row per Tool. The Catalog is the
 // whole list of scanners Argus can drive, so every one of them is accounted
 // for whether or not this host has it.
-func binaryChecks(catalog []security.Entry, extras []ExtraBinary, disabled []string) []Check {
+func binaryChecks(lookPath func(string) (string, error), catalog []security.Entry, extras []ExtraBinary, disabled []string) []Check {
 	seen := map[string]bool{}
 	out := make([]Check, 0, len(extras)+len(catalog))
 
@@ -273,7 +282,7 @@ func binaryChecks(catalog []security.Entry, extras []ExtraBinary, disabled []str
 			continue
 		}
 		seen[e.Name] = true
-		out = append(out, binaryCheck(e.Name, severityFromRequired(e.Required), e.UsedBy, e.InstallHint))
+		out = append(out, binaryCheck(lookPath, e.Name, severityFromRequired(e.Required), e.UsedBy, e.InstallHint))
 	}
 
 	for _, e := range catalog {
@@ -281,7 +290,7 @@ func binaryChecks(catalog []security.Entry, extras []ExtraBinary, disabled []str
 			out = append(out, disabledCheck(e))
 			continue
 		}
-		out = append(out, catalogCheck(e))
+		out = append(out, catalogCheck(lookPath, e))
 	}
 	return out
 }
@@ -307,15 +316,16 @@ func manifest(catalog []security.Entry) []security.Entry {
 //
 // A Tool over alternative engines (the SAST Tool's opengrep and semgrep) is
 // installed with any one of them, and its row names the engine it will run.
-func catalogCheck(e security.Entry) Check {
+func catalogCheck(lookPath func(string) (string, error), e security.Entry) Check {
 	c := Check{Name: e.ID}
-	found, ok := e.Resolve(exec.LookPath)
+	found, ok := e.Resolve(lookPath)
 	if ok {
+		e.Found = found
 		c.Status = Pass
 		c.Severity = SeverityOptional
 		c.Message = "installed — " + e.Tool + " tool"
-		if e.Alternatives {
-			c.Message += ", running " + found[0]
+		if engine := e.Engine(); engine != "" {
+			c.Message += ", running " + engine
 		}
 		return c
 	}
@@ -347,9 +357,9 @@ func disabledCheck(e security.Entry) Check {
 	}
 }
 
-func binaryCheck(name string, sev Severity, usedBy, hint string) Check {
+func binaryCheck(lookPath func(string) (string, error), name string, sev Severity, usedBy, hint string) Check {
 	c := Check{Name: name, Severity: sev}
-	if _, err := exec.LookPath(name); err == nil {
+	if _, err := lookPath(name); err == nil {
 		c.Status = Pass
 		c.Message = usedBy
 	} else {

@@ -88,7 +88,10 @@ docker run --rm ghcr.io/argusappsec/argus:latest doctor --binaries
   ✓  gitleaks      installed — run_gitleaks tool
   ✓  osv-scanner   installed — run_osv_scanner tool
   ✓  sast          installed — run_sast tool, running opengrep
-  …
+  ✓  trivy         installed — run_trivy tool
+  ✓  zizmor        installed — run_zizmor tool
+
+  summary: 6 ok
 ```
 
 Every image Argus builds runs this check, on each architecture, before it is

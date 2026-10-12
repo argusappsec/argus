@@ -22,15 +22,12 @@ const gitleaksConfig = "[extend]\nuseDefault = true\n"
 // NewGitleaks returns a `run_gitleaks` tool that scans the Session's current
 // target directory for committed secrets.
 func NewGitleaks(s *session.Session, r Runner) tool.Tool {
-	return &gitleaks{sess: s, runner: r}
+	return &gitleaks{scanner{name: gitleaksTool, binary: "gitleaks", sess: s, runner: r}}
 }
 
-type gitleaks struct {
-	sess   *session.Session
-	runner Runner
-}
+const gitleaksTool = "run_gitleaks"
 
-func (g *gitleaks) Name() string { return "run_gitleaks" }
+type gitleaks struct{ scanner }
 
 func (g *gitleaks) Description() string {
 	return "Run gitleaks to detect committed secrets in a directory on the machine Argus runs on. " +
@@ -39,19 +36,10 @@ func (g *gitleaks) Description() string {
 		"still a finding, and the attempt to silence it is itself worth a look."
 }
 
-func (g *gitleaks) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "gitleaks",
-		Tool:    "run_gitleaks",
+		Tool:    gitleaksTool,
 		Name:    "Gitleaks",
 		Purpose: "Detects secrets committed to a repository: API keys, tokens, passwords and private keys.",
 		Why: "A leaked credential is exploitable the moment it is pushed, whatever language the code is " +
@@ -67,31 +55,24 @@ func init() {
 			Name:        "gitleaks",
 			InstallHint: "brew install gitleaks",
 		}},
-		Trust: TrustSafe, // reads files and git history; runs nothing
+		Trust: TrustSafe, // a `dir` scan: reads the files under the target; runs nothing
 		New:   func(d Deps) tool.Tool { return NewGitleaks(d.Session, d.Commands) },
 	})
 }
 
 func (g *gitleaks) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(g.sess, args)
-	if err != nil {
-		return "", err
-	}
+	return g.scan(ctx, args, g.run, parseGitleaks)
+}
 
+func (g *gitleaks) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	// gitleaks insists on a file for --report-path. Passing "/dev/stdout"
 	// works on some setups but breaks under the bubbletea TUI (where stdout
 	// is bound to a pseudoterminal that gitleaks can't open for write).
 	// Use a file in the run's scratch directory and read it back — always
 	// works, OS-independent.
-	sc, err := newScratch("gitleaks")
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
-	reportPath := sc.file("report.json")
 	config, err := sc.write("gitleaks.toml", []byte(gitleaksConfig))
 	if err != nil {
-		return "", fmt.Errorf("gitleaks: %w", err)
+		return nil, fmt.Errorf("gitleaks: %w", err)
 	}
 
 	// The repository's say over the scan, and how each is switched off:
@@ -108,19 +89,15 @@ func (g *gitleaks) Execute(ctx context.Context, args map[string]any) (string, er
 	// `dir` scan. Entries are still read below and reported as suppression
 	// attempts.
 	// gitleaks needs nothing beyond the base allow-list.
-	body, err := runForReport(ctx, g.runner, "gitleaks", sc.command(nil, "gitleaks", "dir",
+	return g.runForReport(ctx, sc, nil, "gitleaks", "dir",
 		"--no-banner",
 		"--report-format", "json",
-		"--report-path", reportPath,
+		"--report-path", sc.file(reportFile),
 		"--config", config,
 		"--gitleaks-ignore-path", sc.dir,
 		"--ignore-gitleaks-allow",
 		root,
-	), reportPath)
-	if err != nil {
-		return "", err
-	}
-	return parseGitleaks(body, root, openCheckout(g.sess, root))
+	)
 }
 
 // gitleaksFinding is the part of a gitleaks JSON finding Argus reads. The
@@ -135,11 +112,10 @@ type gitleaksFinding struct {
 	Tags        []string `json:"Tags"`
 }
 
-func parseGitleaks(body []byte, target string, files *checkoutFiles) (string, error) {
-	defer files.close()
+func parseGitleaks(body []byte, target string, files *checkoutFiles) (Report, error) {
 	var out []gitleaksFinding
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("gitleaks: unreadable report: %w", err)
+		return Report{}, fmt.Errorf("gitleaks: unreadable report: %w", err)
 	}
 	ignored := gitleaksIgnored(files, target)
 	rep := Report{Scanner: "gitleaks"}
@@ -166,7 +142,7 @@ func parseGitleaks(body []byte, target string, files *checkoutFiles) (string, er
 		}
 		rep.Findings = append(rep.Findings, f)
 	}
-	return rep.encode()
+	return rep, nil
 }
 
 // gitleaksIgnore is the set of fingerprints a repository's .gitleaksignore

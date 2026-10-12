@@ -6,8 +6,8 @@ import (
 )
 
 // Report is what every scanner Tool hands the model: the binary's own report,
-// parsed into one finding shape so the model triages SAST, gitleaks and
-// osv-scanner the same way, and so Argus can say things about a finding that
+// parsed into one finding shape so the model triages every scanner's findings
+// the same way, and so Argus can say things about a finding that
 // the binary does not, such as that the code tried to suppress it.
 //
 // Field names follow the finding the model records with add_finding

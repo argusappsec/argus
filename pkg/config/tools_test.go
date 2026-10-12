@@ -50,13 +50,3 @@ func TestToolsConfig_UnknownDisabledIDFailsLoadingAndIsNamed(t *testing.T) {
 		t.Errorf("the error must name the unknown ID: %v", err)
 	}
 }
-
-// Validate is the daemon's startup gate, so a Config assembled in code gets
-// the same check as one loaded from a file.
-func TestValidate_RejectsAnUnknownDisabledTool(t *testing.T) {
-	cfg := Config{Tools: ToolsConfig{Disabled: []string{"nope"}}}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), `"nope"`) {
-		t.Errorf("Validate = %v, want an error naming \"nope\"", err)
-	}
-}

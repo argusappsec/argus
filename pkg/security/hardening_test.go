@@ -12,39 +12,79 @@ import (
 	"github.com/argusappsec/argus/pkg/tool"
 )
 
-// scanners is every scanner Tool this package wraps, built over a Session
-// pinned at root and a fake runner, so the hardening rules are asserted once
-// for all of them.
+// scanners is every scanner Tool the Catalog lists, built from its Entry over
+// a Session and a fake runner, so the hardening rules are asserted once for
+// all of them and a newly catalogued Tool is held to them without being added
+// here.
 //
-// The SAST Tool appears once per engine it can run: opengrep and semgrep are
-// different binaries and each is held to the same rules.
-var scanners = map[string]func(*session.Session, security.Runner) tool.Tool{
-	"opengrep":    sastOver(security.EngineOpengrep),
-	"semgrep":     sastOver(security.EngineSemgrep),
-	"gitleaks":    security.NewGitleaks,
-	"osv-scanner": security.NewOSVScanner,
-	"gosec":       security.NewGosec,
-	"govulncheck": security.NewGovulncheck,
-	"trivy":       security.NewTrivy,
-	"zizmor":      security.NewZizmor,
+// It is keyed by the binary the Tool runs: the Entry's ID, or, for a Tool over
+// Alternatives, each engine's name. The SAST Tool appears once per engine:
+// opengrep and semgrep are different binaries and each is held to the same
+// rules.
+var scanners = catalogScanners()
+
+func catalogScanners() map[string]func(*session.Session, security.Runner) tool.Tool {
+	out := map[string]func(*session.Session, security.Runner) tool.Tool{}
+	for _, e := range security.Catalog() {
+		build := func(engine string) func(*session.Session, security.Runner) tool.Tool {
+			return func(s *session.Session, r security.Runner) tool.Tool {
+				return e.New(security.Deps{Session: s, Commands: r, Engine: engine})
+			}
+		}
+		if !e.Alternatives {
+			out[e.ID] = build("")
+			continue
+		}
+		for _, b := range e.Binaries {
+			out[b.Name] = build(b.Name)
+		}
+	}
+	return out
 }
 
-// sastOver builds the SAST Tool over one engine, in the shape scanners holds.
-func sastOver(e security.Engine) func(*session.Session, security.Runner) tool.Tool {
-	return func(s *session.Session, r security.Runner) tool.Tool { return security.NewSAST(s, r, e) }
+// toolFixture is what the shared scanner tests need from one scanner. Each
+// Tool's test file declares its own, next to its tests, from an init function
+// (see fixture), so adding a Tool adds a fixture there and edits no shared
+// list.
+type toolFixture struct {
+	// empty is what the binary writes when it finds nothing.
+	empty string
+	// repoConfig is what makes the scanner obey only Argus's config:
+	// switches that must be present, and options whose value must be a file
+	// Argus wrote into the run's scratch directory rather than anything in
+	// the checkout.
+	repoConfig struct {
+		switches []string
+		scratch  []string
+	}
 }
 
-// emptyReport is what each binary writes when it finds nothing.
-var emptyReport = map[string]string{
-	"opengrep":    `{"results":[],"errors":[]}`,
-	"semgrep":     `{"results":[],"errors":[]}`,
-	"gitleaks":    `[]`,
-	"osv-scanner": `{"results":[]}`,
-	"gosec":       `{"Golang errors":{},"Issues":[],"Stats":{"files":1,"lines":1,"nosec":0,"found":0}}`,
-	"govulncheck": `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0","db":"https://vuln.go.dev","go_version":"go1.26.0","scan_level":"symbol","scan_mode":"source"}}
-{"progress":{"message":"No vulnerabilities found."}}`,
-	"trivy":  `{"SchemaVersion":2,"Trivy":{"Version":"0.75.0"},"ArtifactName":"/checkout","ArtifactType":"filesystem"}`,
-	"zizmor": `[]`,
+// fixtures holds every scanner's toolFixture, keyed as scanners is.
+var fixtures = map[string]toolFixture{}
+
+// fixture declares a scanner's toolFixture, from its test file's init.
+func fixture(name string, f toolFixture) { fixtures[name] = f }
+
+// emptyReport is what the named binary writes when it finds nothing.
+func emptyReport(name string) string { return fixtures[name].empty }
+
+// A newly catalogued Tool must not slip past the hardening tests: every
+// scanner the Catalog yields has a fixture, so it is run by every test above
+// and below with a report it can parse.
+func TestScanners_EveryCataloguedToolHasHardeningCoverage(t *testing.T) {
+	if len(scanners) == 0 {
+		t.Fatal("the Catalog yields no scanner")
+	}
+	for name := range scanners {
+		if fixtures[name].empty == "" {
+			t.Errorf("%s has no toolFixture: declare one with fixture() in its test file", name)
+		}
+	}
+	for name := range fixtures {
+		if scanners[name] == nil {
+			t.Errorf("fixture %q names no catalogued scanner", name)
+		}
+	}
 }
 
 // checkout is a real directory standing in for the tree under review. Scanners
@@ -67,7 +107,7 @@ func TestScanners_RunOutsideTheCheckout(t *testing.T) {
 	for name, build := range scanners {
 		t.Run(name, func(t *testing.T) {
 			root := checkout(t)
-			fr := &fakeRunner{out: emptyReport[name]}
+			fr := &fakeRunner{out: emptyReport(name)}
 			if _, err := build(sessionAt(root), fr).Execute(context.Background(), map[string]any{}); err != nil {
 				t.Fatalf("execute: %v", err)
 			}
@@ -99,8 +139,9 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 		"XDG_CACHE_HOME": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"PYTHONUTF8": true,
 		// The hardened Go profile of the Tools that drive the go command
-		// (gosec, govulncheck): each one closes a door the go command's defaults leave
-		// open, and none carries a credential.
+		// (gosec, govulncheck, osv-scanner's Go call analysis): each one
+		// closes a door the go command's defaults leave open, and none
+		// carries a credential.
 		"GOTOOLCHAIN": true, "GOFLAGS": true, "GOWORK": true, "CGO_ENABLED": true,
 		"GOPROXY": true, "GOSUMDB": true, "GOENV": true, "GOPACKAGESDRIVER": true,
 		"GOPATH": true, "GOCACHE": true,
@@ -113,7 +154,7 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 	for name, build := range scanners {
 		t.Run(name, func(t *testing.T) {
 			root := checkout(t)
-			fr := &fakeRunner{out: emptyReport[name]}
+			fr := &fakeRunner{out: emptyReport(name)}
 			if _, err := build(sessionAt(root), fr).Execute(context.Background(), map[string]any{}); err != nil {
 				t.Fatalf("execute: %v", err)
 			}
@@ -144,7 +185,7 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 func TestScanners_FindEveryDirectoryTheirEnvironmentNames(t *testing.T) {
 	for name, build := range scanners {
 		t.Run(name, func(t *testing.T) {
-			fr := &fakeRunner{out: emptyReport[name]}
+			fr := &fakeRunner{out: emptyReport(name)}
 			if _, err := build(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 				t.Fatalf("execute: %v", err)
 			}
@@ -161,7 +202,7 @@ func TestScanners_FindEveryDirectoryTheirEnvironmentNames(t *testing.T) {
 func TestScanners_CleanUpTheirScratchDirectory(t *testing.T) {
 	for name, build := range scanners {
 		t.Run(name, func(t *testing.T) {
-			fr := &fakeRunner{out: emptyReport[name]}
+			fr := &fakeRunner{out: emptyReport(name)}
 			if _, err := build(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 				t.Fatalf("execute: %v", err)
 			}

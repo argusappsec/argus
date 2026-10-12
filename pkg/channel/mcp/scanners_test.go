@@ -18,16 +18,23 @@ import (
 
 // The scanners are the capability nobody wires up on their own, and the reason
 // a developer installs Argus rather than reaching for the binaries. These tests
-// drive the real protocol and assert on what the calling AI receives: that the
-// three are on a Provider-less daemon's surface, that a target on the daemon
+// drive the real protocol and assert on what the calling AI receives: that every
+// installed scanner is on a Provider-less daemon's surface, that a target on the daemon
 // host is what they run against, that a target Argus cannot scan is refused by
 // naming the problem, and that the scanner's own report comes back.
 //
 // No test here shells out to a real binary: the daemon Context's command Runner
 // is stubbed, which is what moving it onto the Context was for.
 
-// scannerTools is the slice of the deterministic surface this file carries.
-var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_sast", "run_trivy", "run_zizmor"}
+// scannerTools is the slice of the deterministic surface this file carries:
+// the Tool of every catalogued scanner.
+var scannerTools = func() []string {
+	var names []string
+	for _, e := range security.Catalog() {
+		names = append(names, e.Tool)
+	}
+	return names
+}()
 
 func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
@@ -78,7 +85,8 @@ func TestToolCall_ScannerRunsAgainstAnAbsolutePathOnTheHost(t *testing.T) {
 }
 
 // recordedReports is a one-finding report in each scanner's own format, so a
-// test can see the finding come back through the Tool's parsing.
+// test can see the finding come back through the Tool's parsing. A newly
+// catalogued scanner without one fails TestToolCall_EveryScannerScansTheCallersTarget.
 var recordedReports = map[string]string{
 	"run_sast":        `{"results":[{"check_id":"argus-fixture-rule","path":"/x/main.go","start":{"line":1},"end":{"line":1},"extra":{"message":"m","severity":"ERROR"}}],"errors":[]}`,
 	"run_gitleaks":    `[{"RuleID":"argus-fixture-rule","File":"/x/main.go","StartLine":1,"EndLine":1}]`,
@@ -90,12 +98,16 @@ var recordedReports = map[string]string{
 }
 
 func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {
-	// One target argument, the same on all three: the calling AI learns the
+	// One target argument, the same on every scanner: the calling AI learns the
 	// convention once and uses whichever scanner the question needs.
 	for _, name := range scannerTools {
 		t.Run(name, func(t *testing.T) {
+			report, ok := recordedReports[name]
+			if !ok {
+				t.Fatalf("no recorded report for %s: add one to recordedReports", name)
+			}
 			s, _ := toolboxServer(t, auth.RoleAnalyst)
-			runner := stubScanners(t, s, recordedReports[name])
+			runner := stubScanners(t, s, report)
 			target := t.TempDir()
 
 			res := callToolWith(t, s, name, `{"path":`+quote(target)+`}`)

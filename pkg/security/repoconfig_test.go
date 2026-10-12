@@ -14,59 +14,6 @@ import (
 	"github.com/argusappsec/argus/pkg/session"
 )
 
-// repoConfigFlags is, per scanner, what makes it obey only Argus's config:
-// switches that must be present, and options whose value must be a file Argus
-// wrote into the run's scratch directory rather than anything in the checkout.
-var repoConfigFlags = map[string]struct {
-	switches []string
-	scratch  []string
-}{
-	// nosem comments and .semgrepignore files are the pull request's; the
-	// ruleset is Argus's own. opengrep is a semgrep fork and takes the same
-	// switches (checked against the real opengrep 1.30.1).
-	"opengrep": {
-		switches: []string{"--disable-nosem", "--x-ignore-semgrepignore-files"},
-		scratch:  []string{"--config"},
-	},
-	"semgrep": {
-		switches: []string{"--disable-nosem", "--x-ignore-semgrepignore-files"},
-		scratch:  []string{"--config"},
-	},
-	// gitleaks:allow comments are ignored; the config and the ignore-file
-	// location are Argus's, so (target)/.gitleaks.toml is never read.
-	"gitleaks": {
-		switches: []string{"--ignore-gitleaks-allow"},
-		scratch:  []string{"--config", "--gitleaks-ignore-path"},
-	},
-	// An explicit --config overrides every osv-scanner.toml next to a
-	// lockfile, and --no-ignore stops a committed .gitignore from hiding one.
-	"osv-scanner": {
-		switches: []string{"--no-ignore"},
-		scratch:  []string{"--config"},
-	},
-	// #nosec and //gosec:disable annotations are ignored. gosec loads no
-	// config file unless told to, and is never told to.
-	"gosec": {
-		switches: []string{"-nosec=true"},
-	},
-	// govulncheck has no config file, ignore file or in-code suppression to
-	// switch off: it obeys nothing in the checkout.
-	"govulncheck": {},
-	// trivy loads trivy.yaml and .trivyignore from its working directory
-	// unless told otherwise; both are named explicitly, as Argus's own files.
-	"trivy": {
-		scratch: []string{"--config", "--ignorefile"},
-	},
-	// zizmor.yml (wherever zizmor would discover it) is not loaded, and
-	// `# zizmor: ignore[...]` comments and config ignores are not honoured.
-	// --collect=all also audits workflows a committed .gitignore lists: by
-	// default zizmor skips them, which is a way to hide one (checked against
-	// the real zizmor 1.30.1).
-	"zizmor": {
-		switches: []string{"--no-config", "--no-ignores", "--collect=all"},
-	},
-}
-
 // TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags: the checkout is the pull
 // request's, and so is every config or ignore file in it. Each scanner is told
 // explicitly to use Argus's settings, on every run, whoever asked for the scan:
@@ -75,7 +22,7 @@ var repoConfigFlags = map[string]struct {
 // requested run the scanner identically.
 func TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags(t *testing.T) {
 	for name, build := range scanners {
-		want := repoConfigFlags[name]
+		want := fixtures[name].repoConfig
 		runs := map[string]func(root string) (*session.Session, map[string]any){
 			"review": func(root string) (*session.Session, map[string]any) { return sessionAt(root), map[string]any{} },
 			"caller-named target": func(root string) (*session.Session, map[string]any) {
@@ -85,7 +32,7 @@ func TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags(t *testing.T) {
 		for how, setup := range runs {
 			t.Run(name+"/"+how, func(t *testing.T) {
 				root := checkout(t)
-				fr := &fakeRunner{out: emptyReport[name]}
+				fr := &fakeRunner{out: emptyReport(name)}
 				sess, args := setup(root)
 				if _, err := build(sess, fr).Execute(context.Background(), args); err != nil {
 					t.Fatalf("execute: %v", err)

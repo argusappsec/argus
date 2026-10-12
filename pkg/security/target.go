@@ -82,7 +82,7 @@ func within(root, path string) bool {
 }
 
 // targetSchemaProperty is the `path` argument every scanner takes, described
-// once so the three read identically to the AI that calls them.
+// once so every scanner reads identically to the AI that calls them.
 func targetSchemaProperty() map[string]any {
 	return map[string]any{
 		"type": "string",

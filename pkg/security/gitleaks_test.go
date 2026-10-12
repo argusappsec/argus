@@ -9,6 +9,15 @@ import (
 	"github.com/argusappsec/argus/pkg/session"
 )
 
+func init() {
+	f := toolFixture{empty: `[]`}
+	// gitleaks:allow comments are ignored; the config and the ignore-file
+	// location are Argus's, so (target)/.gitleaks.toml is never read.
+	f.repoConfig.switches = []string{"--ignore-gitleaks-allow"}
+	f.repoConfig.scratch = []string{"--config", "--gitleaks-ignore-path"}
+	fixture("gitleaks", f)
+}
+
 func TestGitleaks_ToolMetadata(t *testing.T) {
 	g := security.NewGitleaks(sessionAt("/tmp"), &fakeRunner{})
 	if g.Name() != "run_gitleaks" {

@@ -1,6 +1,6 @@
 # ADR 0027 — A Tool Catalog: Argus offers what the host can run; the image ships a manifest
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Builds on:** [ADR 0006](0006-no-generic-shell-tool.md),
 [ADR 0015](0015-integrations-declared-in-configuration.md),

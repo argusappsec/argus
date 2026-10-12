@@ -69,8 +69,11 @@ const (
 
 // Binary is one executable a catalogued Tool requires on PATH.
 type Binary struct {
-	Name        string // command name as it appears on PATH (e.g. "gitleaks")
-	InstallHint string // a terminal one-liner (e.g. "brew install gitleaks")
+	Name string // command name as it appears on PATH (e.g. "gitleaks")
+	// InstallHint is how to install the binary from a terminal: one command,
+	// optionally followed by alternatives in parentheses (e.g. "brew install
+	// osv-scanner  (or go install …)"). doctor prints it as written.
+	InstallHint string
 }
 
 // Deps is what a catalogued Tool is built from. It is a struct rather than a
@@ -86,10 +89,10 @@ type Deps struct {
 	// switches that mode off.
 	Automatic bool
 
-	// Found is the Entry's binaries that resolved on PATH at discovery, in the
-	// Entry's order. A Tool whose binaries are Alternatives (the SAST engines)
-	// is built over the first one found.
-	Found []string
+	// Engine is the binary a Tool over Alternatives runs (the SAST Tool's
+	// opengrep or semgrep): the installed Entry's Engine. Empty for every
+	// other Tool.
+	Engine string
 }
 
 // Entry is one catalogued Tool.
@@ -147,6 +150,17 @@ type Entry struct {
 // guide's links are site-absolute, so this is too.
 const CatalogPath = "/guide/scanners/"
 
+// Engine is the binary an installed Entry over Alternatives runs: the first
+// of Found, which is in order of preference. It is "" for an Entry whose
+// binaries are not alternatives, or that discovery found nothing for. The
+// registry builds the Tool over it, and doctor and the startup log name it.
+func (e Entry) Engine() string {
+	if !e.Alternatives || len(e.Found) == 0 {
+		return ""
+	}
+	return e.Found[0]
+}
+
 // URL is the Tool's catalog page, which doctor and the startup log point an
 // operator at to install a missing Tool.
 func (e Entry) URL() string { return CatalogPath + e.ID + "/" }
@@ -199,20 +213,20 @@ func (d Discovery) Disable(ids []string) Discovery {
 		return d
 	}
 	var out Discovery
-	for _, e := range d.Installed {
-		if slices.Contains(ids, e.ID) {
-			out.Disabled = append(out.Disabled, e)
-		} else {
-			out.Installed = append(out.Installed, e)
+	// keep returns the entries not disabled, moving the rest to out.Disabled.
+	keep := func(entries []Entry) []Entry {
+		var kept []Entry
+		for _, e := range entries {
+			if slices.Contains(ids, e.ID) {
+				out.Disabled = append(out.Disabled, e)
+			} else {
+				kept = append(kept, e)
+			}
 		}
+		return kept
 	}
-	for _, e := range d.Missing {
-		if slices.Contains(ids, e.ID) {
-			out.Disabled = append(out.Disabled, e)
-		} else {
-			out.Missing = append(out.Missing, e)
-		}
-	}
+	out.Installed = keep(d.Installed)
+	out.Missing = keep(d.Missing)
 	out.Disabled = append(out.Disabled, d.Disabled...)
 	slices.SortFunc(out.Disabled, func(a, b Entry) int { return strings.Compare(a.ID, b.ID) })
 	return out

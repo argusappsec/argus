@@ -12,6 +12,14 @@ import (
 	"github.com/argusappsec/argus/pkg/security"
 )
 
+func init() {
+	f := toolFixture{empty: `{"Golang errors":{},"Issues":[],"Stats":{"files":1,"lines":1,"nosec":0,"found":0}}`}
+	// #nosec and //gosec:disable annotations are ignored. gosec loads no
+	// config file unless told to, and is never told to.
+	f.repoConfig.switches = []string{"-nosec=true"}
+	fixture("gosec", f)
+}
+
 // TestGosec_RunsInTheHardenedGoEnvironment: gosec loads the reviewed packages
 // through the go command, which on its defaults downloads a newer toolchain
 // when go.mod asks for one, rewrites go.mod, honours a go.work found above the
@@ -38,7 +46,7 @@ func TestGosec_RunsInTheHardenedGoEnvironment(t *testing.T) {
 		t.Setenv(k, v)
 	}
 
-	fr := &fakeRunner{out: emptyReport["gosec"]}
+	fr := &fakeRunner{out: emptyReport("gosec")}
 	if _, err := security.NewGosec(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -88,7 +96,7 @@ func TestGosec_RunsInTheHardenedGoEnvironment(t *testing.T) {
 // neither by flag nor by environment.
 func TestGosec_NeverTurnsOnItsAIFeatures(t *testing.T) {
 	t.Setenv("GOSEC_AI_PROVIDER", "claude")
-	fr := &fakeRunner{out: emptyReport["gosec"]}
+	fr := &fakeRunner{out: emptyReport("gosec")}
 	if _, err := security.NewGosec(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -108,7 +116,7 @@ func TestGosec_NeverTurnsOnItsAIFeatures(t *testing.T) {
 // and gosec only descends into it when told with the /... pattern.
 func TestGosec_ScansEveryPackageUnderTheTarget(t *testing.T) {
 	root := checkout(t)
-	fr := &fakeRunner{out: emptyReport["gosec"]}
+	fr := &fakeRunner{out: emptyReport("gosec")}
 	if _, err := security.NewGosec(sessionAt(root), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -160,7 +168,7 @@ func TestGosec_ReportsNosecFindingsAsSuppressedInRepo(t *testing.T) {
 // pull request's, so gosec never honours them, and nothing that would hide
 // generated files (which a pull request can claim to be) is ever switched on.
 func TestGosec_PassesItsIgnoreNosecSwitchOnEveryRun(t *testing.T) {
-	fr := &fakeRunner{out: emptyReport["gosec"]}
+	fr := &fakeRunner{out: emptyReport("gosec")}
 	if _, err := security.NewGosec(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -237,7 +245,7 @@ func (m *moduleCacheRunner) Run(_ context.Context, cmd security.Command) (string
 		}
 	}
 	out, _ := optionValue(cmd.Args, "-out")
-	return "", os.WriteFile(out, []byte(emptyReport["gosec"]), 0o600)
+	return "", os.WriteFile(out, []byte(emptyReport("gosec")), 0o600)
 }
 
 // atRule finds the one finding for rule on line of main.go.

@@ -18,15 +18,12 @@ import (
 // NewGosec returns a `run_gosec` tool that runs gosec, type-aware Go static
 // analysis, over the Session's current target directory.
 func NewGosec(s *session.Session, r Runner) tool.Tool {
-	return &gosec{sess: s, runner: r}
+	return &gosec{scanner{name: gosecTool, binary: "gosec", sess: s, runner: r}}
 }
 
-type gosec struct {
-	sess   *session.Session
-	runner Runner
-}
+const gosecTool = "run_gosec"
 
-func (g *gosec) Name() string { return "run_gosec" }
+type gosec struct{ scanner }
 
 func (g *gosec) Description() string {
 	return "Run gosec, Go-specific static analysis with type information and taint tracking, over the Go " +
@@ -37,19 +34,10 @@ func (g *gosec) Description() string {
 		"still a finding, and the attempt to silence it is itself worth a look."
 }
 
-func (g *gosec) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
-		},
-	}
-}
-
 func init() {
 	catalogue(Entry{
 		ID:      "gosec",
-		Tool:    "run_gosec",
+		Tool:    gosecTool,
 		Name:    "gosec",
 		Purpose: "Go security analysis with type information and taint tracking.",
 		Why: "gosec understands Go's types, so it follows untrusted input into SQL queries, shell " +
@@ -65,7 +53,7 @@ func init() {
 		// without one; the catalog recommends both to Go organizations.
 		Manifest: false,
 		Binaries: []Binary{
-			{Name: "go", InstallHint: "brew install go  (or see https://go.dev/doc/install)"},
+			goBinary,
 			{Name: "gosec", InstallHint: "go install github.com/securego/gosec/v2/cmd/gosec@latest  (or brew install gosec)"},
 		},
 		// gosec loads the reviewed packages through the go command, which
@@ -77,25 +65,18 @@ func init() {
 }
 
 func (g *gosec) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(g.sess, args)
-	if err != nil {
-		return "", err
-	}
-	sc, err := newScratch("gosec")
-	if err != nil {
-		return "", err
-	}
-	defer sc.remove()
-	reportPath := sc.file("report.json")
+	return g.scan(ctx, args, g.run, parseGosec)
+}
 
+func (g *gosec) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
 	// gosec's AI fix suggestions send the findings, code included, to an LLM.
 	// They switch on only with a provider (a flag or GOSEC_AI_*), and gosec is
 	// given neither: its environment is the scratch allow-list plus the
 	// hardened Go profile, nothing inherited.
 	env := append(sc.xdg(), sc.goEnv()...)
-	body, err := runForReport(ctx, g.runner, "gosec", sc.command(env, "gosec",
+	return g.runForReport(ctx, sc, env, "gosec",
 		"-fmt=json",
-		"-out="+reportPath,
+		"-out="+sc.file(reportFile),
 		// #nosec and //gosec:disable annotations are the pull request's say
 		// over the scan, so they are switched off; the hits they would have
 		// hidden come back and are marked suppressed_in_repo below. gosec
@@ -105,11 +86,7 @@ func (g *gosec) Execute(ctx context.Context, args map[string]any) (string, error
 		// Not -quiet: with it gosec writes no report at all when it finds
 		// nothing, which would read as a failed run.
 		filepath.Join(root, "..."),
-	), reportPath)
-	if err != nil {
-		return "", err
-	}
-	return parseGosec(body, openCheckout(g.sess, root))
+	)
 }
 
 // gosecOutput is the part of gosec's JSON report Argus reads.
@@ -139,14 +116,13 @@ var (
 	gosecRuleID    = regexp.MustCompile(`\bG\d{3}\b`)
 )
 
-func parseGosec(body []byte, files *checkoutFiles) (string, error) {
-	defer files.close()
+func parseGosec(body []byte, _ string, files *checkoutFiles) (Report, error) {
 	var out gosecOutput
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("gosec: unreadable report: %w", err)
+		return Report{}, fmt.Errorf("gosec: unreadable report: %w", err)
 	}
 	if out.Issues == nil {
-		return "", errors.New("gosec: unreadable report: no Issues list")
+		return Report{}, errors.New("gosec: unreadable report: no Issues list")
 	}
 	rep := Report{Scanner: "gosec"}
 	for _, is := range out.Issues {
@@ -174,17 +150,12 @@ func parseGosec(body []byte, files *checkoutFiles) (string, error) {
 		rep.Findings = append(rep.Findings, f)
 	}
 	for path, errs := range out.Errors {
-		p, _ := files.rel(path)
 		for _, e := range errs {
-			msg := p + ": " + strings.TrimSpace(e.Error)
-			if e.Line > 0 {
-				msg = p + ":" + strconv.Itoa(e.Line) + ": " + strings.TrimSpace(e.Error)
-			}
-			rep.Errors = append(rep.Errors, msg)
+			rep.Errors = append(rep.Errors, files.located(path, e.Line, e.Error))
 		}
 	}
 	slices.Sort(rep.Errors) // the report's errors are a map: give them a stable order
-	return rep.encode()
+	return rep, nil
 }
 
 // gosecLines reads gosec's line field, "12" or "12-14".
@@ -209,13 +180,14 @@ func gosecLines(s string) (start, end int) {
 // gosec, but is not looked for here: such a finding is still reported, just
 // without the marker.
 func gosecSuppression(files *checkoutFiles, file string, start, end int, rule string) string {
+	above, own := files.findingLines(file, start, end)
 	var candidates []string
-	for _, l := range files.lines(file, start-1, start-1) {
+	for _, l := range above {
 		if t := strings.TrimSpace(l); strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") {
 			candidates = append(candidates, l)
 		}
 	}
-	candidates = append(candidates, files.lines(file, start, max(end, start))...)
+	candidates = append(candidates, own...)
 	for _, l := range candidates {
 		m := gosecDirective.FindStringSubmatch(l)
 		if m == nil {
