@@ -45,7 +45,7 @@ make build
 ```
 
 Prefer containers? The batteries-included image ships with `opengrep`,
-`gitleaks`, `osv-scanner` and `zizmor` preinstalled:
+`gitleaks`, `osv-scanner`, `zizmor` and `trivy` preinstalled:
 
 ```sh
 docker run -it -v argus-data:/data -p 8080:8080 ghcr.io/argusappsec/argus

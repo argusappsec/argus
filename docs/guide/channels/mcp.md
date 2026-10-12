@@ -106,11 +106,11 @@ scan:
 
 :::note[Install the scanners on the daemon host]
 The scanners are separate binaries — `opengrep` or `semgrep`, `gitleaks`,
-`osv-scanner`, `zizmor`. Argus
+`osv-scanner`, `zizmor`, `trivy`. Argus
 looks for them once, when the daemon starts: the startup log lists the ones it
 found and the ones it did not, and `argus doctor` shows each as installed or not
 installed. A scanner installed later appears after a restart. The official
-container image ships a SAST engine, Gitleaks, OSV-Scanner and zizmor. The [scanner catalog](/guide/scanners/) says
+container image ships a SAST engine, Gitleaks, OSV-Scanner, zizmor and Trivy. The [scanner catalog](/guide/scanners/) says
 what each one finds and how to install it.
 :::
 
