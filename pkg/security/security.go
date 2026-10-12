@@ -6,6 +6,8 @@
 //     the current review, and accept a caller-supplied `path` for a scan that
 //     belongs to no review (see target.go),
 //   - take an injectable Runner so unit tests can stub out the external binary,
+//   - run the binary from a per-run scratch directory, never the checkout,
+//     with an explicit environment allow-list (scratch.go),
 //   - shell out to the binary with structured JSON output,
 //   - return the raw JSON string to the agent (the LLM is the consumer).
 //
