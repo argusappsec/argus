@@ -626,6 +626,45 @@ should move to digest pins with signature verification in CI.
 - **Links.** Docs: [docs.zizmor.sh](https://docs.zizmor.sh/). Install:
   [installation](https://docs.zizmor.sh/installation/).
 - **Tags.** `ci-cd`, `github-actions`. **Judgement: add first among non-Go tools.**
+- **Update (#108, 2026-10-12): the image ships the release binary, not a `cargo` build.**
+  - **What the binaries are.** "Best-effort" describes support, not provenance. The
+    `zizmor-{x86_64,aarch64}-unknown-linux-gnu.tar.gz` assets are built by zizmor's own
+    `release-binaries.yml` (`cargo build --release` on `ubuntu-22.04` and `ubuntu-22.04-arm`)
+    from the release tag. Each tarball holds one file, `zizmor`, which needs no Python. It is
+    dynamically linked against glibc (`libc.so.6`, `libm.so.6`, `libgcc_s.so.1`; highest symbol
+    version `GLIBC_2.34`), so it does not run on musl (Alpine fails with "not found").
+  - **Integrity.** Releases publish no checksum or `.sig` files. The workflow records a GitHub
+    artifact attestation instead: SLSA provenance v1, signed through public-good Sigstore by
+    `https://github.com/zizmorcore/zizmor/.github/workflows/release-binaries.yml@refs/tags/v1.30.1`
+    (issuer `https://token.actions.githubusercontent.com`). One attestation names every tarball.
+    The GitHub API serves it, without a token, at
+    `api.github.com/repos/zizmorcore/zizmor/attestations/sha256:<digest>`, next to a second
+    release attestation that is not used here. The Dockerfile pins each architecture's sha256
+    (`ADD --checksum`). It fetches the attestation by that digest, picks out the SLSA bundle, and
+    runs `cosign verify-blob-attestation --new-bundle-format --type slsaprovenance1` against the
+    exact identity. Checked failures: a wrong checksum (digest mismatch), a wrong tag in the
+    identity, and a tarball the provenance does not name.
+  - **Why not `cargo`.** A build stage would compile zizmor and its whole dependency tree for
+    each architecture, and `linux/amd64` builds under emulation on Apple silicon. It would also trust crates.io and its
+    lockfile rather than zizmor's signed release, and yield the same glibc binary.
+  - **Verified.** v1.30.1 in the image (`python:3.13-slim`, glibc 2.36) on `linux/arm64`
+    (native) and `linux/amd64` (emulated). `doctor --binaries` passed. `run_zizmor`, through
+    the real runner inside the image, returned the recorded fixture's report exactly: 6
+    findings, 2 marked `suppressed_in_repo`, and 1 parse error.
+  - **For a musl base (#110).** No musl tarball is published. PyPI has
+    `zizmor-1.30.1-py3-none-musllinux_1_2_{x86_64,aarch64}.whl` (and `manylinux_2_28_x86_64`,
+    `manylinux_2_24_aarch64`). These are maturin "bin" wheels: a zip whose native executable
+    can be unpacked without Python. Their integrity story was not checked. The alternative is
+    `cargo build --target *-unknown-linux-musl`. The official Docker image is no help: it
+    `uv tool install`s the PyPI build on Wolfi, which is glibc.
+- **Behaviour notes (#108).**
+  - `--collect` defaults to honouring `.gitignore`. A committed `.gitignore` that lists
+    `.github/` makes zizmor audit nothing. Argus passes `--collect=all`.
+  - With `--no-ignores`, a finding covered by a `# zizmor: ignore[...]` comment is still
+    emitted, with `"ignored": true`.
+  - Positions are 0-based rows and columns.
+  - A tree with nothing to audit exits 3 with "no inputs collected". A workflow that fails to
+    parse is only a `WARN` on stderr, and the warning does not name the file.
 
 ### 5.2 actionlint
 
