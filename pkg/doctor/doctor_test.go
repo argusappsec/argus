@@ -11,7 +11,7 @@ import (
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/deployment"
 	"github.com/argusappsec/argus/pkg/doctor"
-	"github.com/argusappsec/argus/pkg/tool"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // makeStubBinary creates an executable file at <dir>/<name>. It returns a
@@ -258,72 +258,137 @@ func TestRun_DetectsSoulPresence(t *testing.T) {
 	t.Error("no SOUL.md check produced")
 }
 
-// stubRequirer is a Tool that declares a fake binary dep. Used to verify
-// that doctor discovers binary requirements via the Requirer interface
-// instead of a hardcoded list.
-type stubRequirer struct{ binary, hint string }
-
-func (s stubRequirer) Name() string             { return "stub_tool" }
-func (s stubRequirer) Description() string      { return "stub" }
-func (s stubRequirer) Schema() map[string]any   { return map[string]any{"type": "object"} }
-func (s stubRequirer) Execute(_ context.Context, _ map[string]any) (string, error) {
-	return "", nil
-}
-func (s stubRequirer) Requires() []tool.Requirement {
-	return []tool.Requirement{{Binary: s.binary, InstallHint: s.hint}}
+// stubEntry is a catalogued Tool requiring the given binaries. doctor reads the
+// Catalog's metadata only, so the Entry needs no constructor.
+func stubEntry(id string, binaries ...string) security.Entry {
+	e := security.Entry{ID: id, Tool: "run_" + id}
+	for _, b := range binaries {
+		e.Binaries = append(e.Binaries, security.Binary{Name: b, InstallHint: "brew install " + b})
+	}
+	return e
 }
 
-func TestRun_DiscoversBinaryDepsFromRegisteredTools(t *testing.T) {
-	binDir := t.TempDir()
-	homeDir := t.TempDir()
-	t.Setenv("PATH", binDir)
-	t.Setenv("GEMINI_API_KEY", "stub")
-
-	reg := tool.NewRegistry()
-	reg.Register(stubRequirer{binary: "definitely-not-installed-xyz", hint: "brew install xyz"})
-
-	checks := doctor.Run(doctor.Options{Home: homeDir, Registry: reg})
-
+func checkNamed(t *testing.T, checks []doctor.Check, name string) doctor.Check {
+	t.Helper()
 	for _, c := range checks {
-		if c.Name == "definitely-not-installed-xyz" {
-			if c.Status != doctor.Fail {
-				t.Errorf("tool-declared binary should be checked and Fail when missing, got %v", c.Status)
-			}
-			if !strings.Contains(c.Hint, "brew install xyz") {
-				t.Errorf("hint should come from the tool's Requires(), got %q", c.Hint)
-			}
-			return
+		if c.Name == name {
+			return c
 		}
 	}
-	t.Error("doctor did not discover binary dep from registered tool")
+	t.Fatalf("no %q row in %+v", name, checks)
+	return doctor.Check{}
 }
 
-func TestRun_DedupesBinariesAcrossSources(t *testing.T) {
+// Every catalogued Tool gets a row. An installed one passes and says which Tool
+// it is.
+func TestRun_ReportsAnInstalledCataloguedTool(t *testing.T) {
 	binDir := t.TempDir()
-	homeDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
 	t.Setenv("PATH", binDir)
 	t.Setenv("GEMINI_API_KEY", "stub")
-
-	// Both ExtraBinaries AND a registered tool declare "shared-bin".
-	reg := tool.NewRegistry()
-	reg.Register(stubRequirer{binary: "shared-bin", hint: "brew install shared-bin"})
 
 	checks := doctor.Run(doctor.Options{
-		Home: homeDir,
-		ExtraBinaries: []doctor.ExtraBinary{
-			{Name: "shared-bin", Required: true, UsedBy: "extras source", InstallHint: "extras hint"},
-		},
-		Registry: reg,
+		Home:    t.TempDir(),
+		Catalog: []security.Entry{stubEntry("scanner", "scanner-bin")},
 	})
 
-	count := 0
-	for _, c := range checks {
-		if c.Name == "shared-bin" {
-			count++
+	c := checkNamed(t, checks, "scanner")
+	if c.Status != doctor.Pass {
+		t.Errorf("an installed Tool should Pass, got %v (%s)", c.Status, c.Hint)
+	}
+	if !strings.Contains(c.Message, "run_scanner") {
+		t.Errorf("message should name the Tool, got %q", c.Message)
+	}
+}
+
+// A catalogued Tool that is not installed is information, not a failure: a
+// minimal install is healthy. The row says how to install it and links the
+// catalog page that explains why one would.
+func TestRun_ReportsAMissingCataloguedToolAsInfoWithItsCatalogLink(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	entry := stubEntry("scanner", "scanner-bin")
+	checks := doctor.Run(doctor.Options{Home: t.TempDir(), Catalog: []security.Entry{entry}})
+
+	c := checkNamed(t, checks, "scanner")
+	if c.Status != doctor.Info || c.Severity != doctor.SeverityInfo {
+		t.Errorf("a missing Tool should be Info, got status %v severity %v", c.Status, c.Severity)
+	}
+	for _, want := range []string{"not installed", "brew install scanner-bin", entry.URL()} {
+		if !strings.Contains(c.Message, want) {
+			t.Errorf("message %q should mention %q", c.Message, want)
 		}
 	}
-	if count != 1 {
-		t.Errorf("shared-bin reported %d times, want 1 (extras should win)", count)
+	if s := doctor.Summarize([]doctor.Check{c}); s.HasBlockingFailure() || s.OptionalMissing != 0 {
+		t.Errorf("a missing Tool must neither fail the run nor count as missing: %+v", s)
+	}
+}
+
+// A Tool the operator switched off (tools.disabled) gets a "disabled" row,
+// even though its binary is installed: it is not offered, and that is a choice,
+// so the row is information — never a failure, and never an install hint.
+func TestRun_ReportsADisabledCataloguedToolAsDisabled(t *testing.T) {
+	binDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
+	t.Setenv("PATH", binDir)
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	checks := doctor.Run(doctor.Options{
+		Home:          t.TempDir(),
+		Catalog:       []security.Entry{stubEntry("scanner", "scanner-bin"), stubEntry("other", "scanner-bin")},
+		DisabledTools: []string{"scanner"},
+	})
+
+	c := checkNamed(t, checks, "scanner")
+	if c.Status != doctor.Info || c.Severity != doctor.SeverityInfo {
+		t.Errorf("a disabled Tool should be Info, got status %v severity %v", c.Status, c.Severity)
+	}
+	if !strings.Contains(c.Message, "disabled") || !strings.Contains(c.Message, "tools.disabled") {
+		t.Errorf("message %q should say the Tool is disabled in tools.disabled", c.Message)
+	}
+	if strings.Contains(c.Message, "install") || c.Hint != "" {
+		t.Errorf("a disabled Tool needs no install hint, got message %q hint %q", c.Message, c.Hint)
+	}
+	if other := checkNamed(t, checks, "other"); other.Status != doctor.Pass {
+		t.Errorf("a Tool that is not disabled is unaffected, got %v", other.Status)
+	}
+}
+
+// The image contract is about what the image ships, not what argus.yaml
+// happens to use: disabling a Tool cannot hide its missing binary from it.
+func TestRun_BinariesOnly_DisabledToolStillOwesItsBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	checks := doctor.Run(doctor.Options{
+		Catalog:       []security.Entry{stubEntry("scanner", "scanner-bin")},
+		DisabledTools: []string{"scanner"},
+		BinariesOnly:  true,
+	})
+
+	if c := checkNamed(t, checks, "scanner"); c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
+		t.Errorf("a missing binary must block the image contract even when disabled, got %v/%v", c.Status, c.Severity)
+	}
+}
+
+// A Tool needing several binaries is one row, and it names the ones missing.
+func TestRun_NamesTheMissingBinariesOfAMultiBinaryTool(t *testing.T) {
+	binDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
+	t.Setenv("PATH", binDir)
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	checks := doctor.Run(doctor.Options{
+		Home:    t.TempDir(),
+		Catalog: []security.Entry{stubEntry("scanner", "scanner-bin", "toolchain")},
+	})
+
+	c := checkNamed(t, checks, "scanner")
+	if c.Status != doctor.Info {
+		t.Errorf("a Tool missing one of its binaries is not installed, got %v", c.Status)
+	}
+	if !strings.Contains(c.Message, "brew install toolchain") || strings.Contains(c.Message, "brew install scanner-bin") {
+		t.Errorf("message should give the install hint of the missing binary only, got %q", c.Message)
 	}
 }
 
@@ -336,12 +401,9 @@ func TestRun_BinariesOnly_AllPresentSucceeds(t *testing.T) {
 	// No API key / config on purpose: they must not affect the outcome.
 	t.Setenv("GEMINI_API_KEY", "")
 
-	reg := tool.NewRegistry()
-	reg.Register(stubRequirer{binary: "scanner-bin", hint: "brew install scanner-bin"})
-
 	checks := doctor.Run(doctor.Options{
 		Home:         homeDir,
-		Registry:     reg,
+		Catalog:      []security.Entry{stubEntry("scanner", "scanner-bin")},
 		BinariesOnly: true,
 		ExtraBinaries: []doctor.ExtraBinary{
 			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
@@ -366,12 +428,9 @@ func TestRun_BinariesOnly_MissingToolBinaryBlocks(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	t.Setenv("GEMINI_API_KEY", "stub")
 
-	reg := tool.NewRegistry()
-	reg.Register(stubRequirer{binary: "scanner-bin", hint: "brew install scanner-bin"})
-
 	checks := doctor.Run(doctor.Options{
 		Home:         homeDir,
-		Registry:     reg,
+		Catalog:      []security.Entry{stubEntry("scanner", "scanner-bin")},
 		BinariesOnly: true,
 		ExtraBinaries: []doctor.ExtraBinary{
 			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
@@ -391,12 +450,9 @@ func TestRun_BinariesOnly_MissingExtraBinaryBlocks(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	t.Setenv("GEMINI_API_KEY", "stub")
 
-	reg := tool.NewRegistry()
-	reg.Register(stubRequirer{binary: "scanner-bin", hint: "brew install scanner-bin"})
-
 	checks := doctor.Run(doctor.Options{
 		Home:         homeDir,
-		Registry:     reg,
+		Catalog:      []security.Entry{stubEntry("scanner", "scanner-bin")},
 		BinariesOnly: true,
 		ExtraBinaries: []doctor.ExtraBinary{
 			// Declared as NOT required — binaries-only mode must still block.

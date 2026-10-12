@@ -15,6 +15,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -96,6 +97,20 @@ type Context struct {
 	// hand runs actual scanners unless it deliberately says otherwise.
 	Commands security.Runner
 
+	// LookPath resolves a binary on PATH. Registration asks it whether each
+	// catalogued Tool's binaries are installed (ADR 0027), so it is injected
+	// the same way Commands is: a test decides what is "installed" instead of
+	// inheriting whatever the host happens to carry.
+	//
+	// Nil means the real lookup (exec.LookPath).
+	LookPath func(name string) (string, error)
+
+	// DisabledTools are the Catalog IDs the operator switched off
+	// (tools.disabled in argus.yaml). A disabled Tool is never registered, even
+	// when its binaries are installed (ADR 0027). Config validation has already
+	// rejected unknown IDs. Nil disables nothing.
+	DisabledTools []string
+
 	// NewProvider builds a provider for modelID, validating it against the
 	// configured providers. Called once per Session (cheap), so a --model
 	// override is a per-Session concern, never a daemon restart — and not
@@ -114,6 +129,10 @@ type Context struct {
 	LoadMemory func() (string, error)
 
 	Sessions *SessionManager
+
+	// toolsOnce / tools back Tools below.
+	toolsOnce sync.Once
+	tools     security.Discovery
 
 	// memoryOnce / memoryStore back MemoryStore below.
 	memoryOnce  sync.Once
@@ -216,8 +235,31 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		dc.CodeHost = ch
 	}
 
+	// Discovery runs here, once, so the registry every Session and every MCP
+	// request builds is fixed for the life of the process and the startup log
+	// reports the same answer (ADR 0027). The operator's tools.disabled is
+	// applied to it, so a disabled Tool is never registered.
+	dc.DisabledTools = cfg.Tools.Disabled
+	dc.Tools()
+
 	dc.Sessions = NewSessionManager(dc, cfg.Daemon.SessionCap())
 	return dc, nil
+}
+
+// Tools is the daemon's discovery of the Catalog: which catalogued Tools the
+// host can run and which it is missing. It is computed once — at Build, or on
+// first use for a Context assembled by hand — and never again, so a Tool
+// installed while the daemon runs appears after a restart, predictably, rather
+// than halfway through a review (ADR 0027).
+func (dc *Context) Tools() security.Discovery {
+	dc.toolsOnce.Do(func() {
+		lookPath := dc.LookPath
+		if lookPath == nil {
+			lookPath = exec.LookPath
+		}
+		dc.tools = security.Discover(lookPath).Disable(dc.DisabledTools)
+	})
+	return dc.tools
 }
 
 // commands is the Runner the scanner Tools shell out through: the one injected

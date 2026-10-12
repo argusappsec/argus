@@ -25,6 +25,12 @@ func NewOSVScanner(s *session.Session, r Runner) tool.Tool {
 type osvScanner struct {
 	sess   *session.Session
 	runner Runner
+
+	// noCallAnalysis is set on automatic reviews. With go on PATH, osv-scanner
+	// runs Go call analysis by default, which loads the reviewed packages
+	// through the Go toolchain: not something to do with a stranger's code
+	// (ADR 0027). Reviews a Person asked for keep the reachability filtering.
+	noCallAnalysis bool
 }
 
 func (o *osvScanner) Name() string { return "run_osv_scanner" }
@@ -45,12 +51,32 @@ func (o *osvScanner) Schema() map[string]any {
 	}
 }
 
-// Requires advertises this tool's binary dependency to argus doctor.
-func (o *osvScanner) Requires() []tool.Requirement {
-	return []tool.Requirement{{
-		Binary:      "osv-scanner",
-		InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/cmd/osv-scanner@latest)",
-	}}
+func init() {
+	catalogue(Entry{
+		ID:      "osv-scanner",
+		Tool:    "run_osv_scanner",
+		Name:    "OSV-Scanner",
+		Purpose: "Finds dependencies with known vulnerabilities by reading lockfiles and manifests.",
+		Why: "Most exploitable flaws in an application live in its dependencies. OSV-Scanner reads " +
+			"the lockfiles of every major ecosystem and matches them against the OSV database, so a " +
+			"review reports a vulnerable version the moment a change introduces it.",
+		Finds:      []Find{FindSCA},
+		Reads:      []Read{ReadMultiLanguage},
+		DocsURL:    "https://google.github.io/osv-scanner/",
+		InstallURL: "https://google.github.io/osv-scanner/installation/",
+		License:    "Apache-2.0",
+		Manifest:   true,
+		Binaries: []Binary{{
+			Name:        "osv-scanner",
+			InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest)",
+		}},
+		// Safe because an automatic review switches off its one toolchain-driving
+		// mode, Go call analysis (see Execute).
+		Trust: TrustSafe,
+		New: func(d Deps) tool.Tool {
+			return &osvScanner{sess: d.Session, runner: d.Commands, noCallAnalysis: d.Automatic}
+		},
+	})
 }
 
 func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, error) {
@@ -79,14 +105,18 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 	// osv-scanner keeps its vulnerability database cache under the user cache
 	// directory, which Go resolves through XDG_CACHE_HOME or HOME; both point
 	// into the scratch directory.
-	body, err := runForReport(ctx, o.runner, "osv-scanner", sc.command(sc.xdg(), "osv-scanner",
+	argv := []string{"osv-scanner",
 		"--format", "json",
 		"--output", reportPath,
 		"--config", config,
 		// A .gitignore the pull request committed must not hide a lockfile.
 		"--no-ignore",
-		"--recursive", root,
-	), reportPath)
+	}
+	if o.noCallAnalysis {
+		argv = append(argv, "--no-call-analysis=go")
+	}
+	argv = append(argv, "--recursive", root)
+	body, err := runForReport(ctx, o.runner, "osv-scanner", sc.command(sc.xdg(), argv...), reportPath)
 	if err != nil {
 		return "", err
 	}

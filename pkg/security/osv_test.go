@@ -2,6 +2,7 @@ package security_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -105,17 +106,42 @@ func TestOSVScanner_RealFailureSurfacesError(t *testing.T) {
 	}
 }
 
-func TestOSVScanner_RequiresAdvertisesBinary(t *testing.T) {
-	o := security.NewOSVScanner(sessionAt("/repo"), &fakeRunner{})
-	req, ok := o.(tool.Requirer)
-	if !ok {
-		t.Fatal("osv-scanner tool must implement tool.Requirer")
+// osvFromCatalog builds run_osv_scanner the way the daemon does: from its
+// Catalog entry, over the given dependencies.
+func osvFromCatalog(t *testing.T, d security.Deps) tool.Tool {
+	t.Helper()
+	for _, e := range security.Catalog() {
+		if e.ID == "osv-scanner" {
+			return e.New(d)
+		}
 	}
-	reqs := req.Requires()
-	if len(reqs) != 1 || reqs[0].Binary != "osv-scanner" {
-		t.Errorf("Requires() = %+v, want one requirement for osv-scanner", reqs)
-	}
-	if reqs[0].InstallHint == "" {
-		t.Error("install hint should not be empty")
+	t.Fatal("osv-scanner is not catalogued")
+	return nil
+}
+
+// With go on PATH, osv-scanner's Go call analysis loads the reviewed packages
+// through the Go toolchain. On an automatic review the code is a stranger's, so
+// call analysis is switched off; a review a Person asked for keeps it, because
+// its reachability filtering is worth having when the code is trusted.
+func TestOSVScanner_DisablesGoCallAnalysisOnAutomaticReviewsOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		automatic bool
+		want      bool
+	}{
+		{"automatic review", true, true},
+		{"requested review", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &fakeRunner{out: `{"results":[]}`}
+			o := osvFromCatalog(t, security.Deps{Session: sessionAt("/repo"), Commands: fr, Automatic: tc.automatic})
+			if _, err := o.Execute(context.Background(), map[string]any{}); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			got := slices.Contains(fr.gotArgs, "--no-call-analysis=go")
+			if got != tc.want {
+				t.Errorf("--no-call-analysis=go present = %v, want %v; args = %v", got, tc.want, fr.gotArgs)
+			}
+		})
 	}
 }

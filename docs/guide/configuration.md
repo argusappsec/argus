@@ -33,6 +33,12 @@ providers:
 persona:
   name: Argus
 
+# Scanners Argus would otherwise offer because they are installed, switched
+# off by name. Omit the key to keep every installed scanner on.
+tools:
+  disabled:
+    - gitleaks
+
 daemon:
   socket: ~/.argus/argusd.sock     # Unix socket for the local TUI
   http_addr: :8080                 # single HTTP front door (webhooks + MCP)
@@ -237,6 +243,7 @@ aggregate.
 | `providers.<name>.url` | Base URL; empty means the provider's default endpoint; ignored on a `gemini` entry |
 | `providers.<name>.max_output_tokens` | Client-side cap on response length; omitted sends no ceiling; a non-zero value is an error on a `gemini` entry |
 | `persona.name` | The instance's name; used as the vocative on GitHub threads |
+| `tools.disabled` | Scanners to switch off, by name (`semgrep`, `gitleaks`, `osv-scanner`, …); an unknown name is an error |
 | `daemon.socket` | Unix socket path for the local TUI |
 | `daemon.http_addr` | Bind address of the single HTTP front door |
 | `daemon.max_concurrent_sessions` | Cap on concurrently running sessions |
@@ -255,6 +262,31 @@ spend:** Argus reports token counts and enforces no cap, no ceiling, and nothing
 anywhere that will refuse a call. The allow-list is the control. The default is
 moving to opt-in.
 :::
+
+## Turning scanners off
+
+Argus offers every scanner whose binary it finds on `PATH` when the daemon
+starts. To stop offering one that is installed — say it only produces noise
+for your organization — list its name under `tools.disabled`:
+
+```yaml
+tools:
+  disabled:
+    - osv-scanner
+```
+
+A disabled scanner is never offered, to Argus's own reviews or over MCP, even
+though its binary is installed. The startup log and `argus doctor` show it as
+disabled, not as missing. The list is a deny-list: a scanner added to a later
+release, or installed later, is on unless you list it. Restart the daemon for
+a change to take effect.
+
+The names are the ones `argus doctor` prints, one row per scanner. To decide
+which scanners to keep, see [Scanners](/guide/scanners/) for what each one
+finds. A name
+Argus does not know is a configuration error that stops the daemon from
+starting and names the offending entry, so a typo cannot silently leave a
+scanner on.
 
 ## Legacy keys fail loudly
 

@@ -16,6 +16,7 @@ import (
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // writeDoctorHome writes an argus.yaml carrying yaml into a temp home and returns
@@ -178,15 +179,39 @@ func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
 	home := t.TempDir() // no argus.yaml: no Provider, so a Toolbox
 
 	checks := doctor.Run(doctor.Options{
-		Home:     home,
-		Shape:    deployment.Toolbox,
-		Registry: doctorRegistry(),
+		Home:    home,
+		Shape:   deployment.Toolbox,
+		Catalog: security.Catalog(),
 	})
 	for _, binary := range []string{"semgrep", "gitleaks", "osv-scanner"} {
 		if !slices.ContainsFunc(checks, func(c doctor.Check) bool { return c.Name == binary }) {
 			t.Errorf("a Toolbox's doctor run has no %q row: %v", binary, checkNames(checks))
 		}
 	}
+}
+
+// `argus doctor` reads tools.disabled from argus.yaml, so the operator sees a
+// Tool they switched off as disabled rather than as installed or missing.
+func TestDoctorCmd_ShowsAToolDisabledInArgusYAMLAsDisabled(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	home := writeDoctorHome(t, "tools:\n  disabled:\n    - gitleaks\n")
+
+	c := doctorCmd()
+	var out strings.Builder
+	c.SetOut(&out)
+	c.SetErr(io.Discard)
+	c.SetArgs([]string{"--home", home})
+	_ = c.Execute() // the verdict depends on the host; the row does not
+
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "gitleaks") {
+			if !strings.Contains(line, "disabled") {
+				t.Errorf("the gitleaks row should say disabled: %q", line)
+			}
+			return
+		}
+	}
+	t.Errorf("no gitleaks row in:\n%s", out.String())
 }
 
 func checkNames(checks []doctor.Check) []string {

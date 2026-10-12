@@ -56,8 +56,9 @@ trail. Revoke anytime with `argus user mcp-token revoke`.
 
 ### Scanners
 
-Three tools run the real scanners on the Argus host and hand your agent their
-findings to reason over:
+These tools run the real scanners on the Argus host and hand your agent their
+findings to reason over. Each is listed only when its scanner is installed on
+that host:
 
 | Tool | Looks for |
 | --- | --- |
@@ -90,9 +91,12 @@ scan:
   false positives belong in its `known-fps` knowledge instead.
 
 :::note[Install the scanners on the daemon host]
-The scanners are separate binaries — `semgrep`, `gitleaks`, `osv-scanner`. Run
-`argus doctor` to see which are present. The official container image ships all
-three.
+The scanners are separate binaries — `semgrep`, `gitleaks`, `osv-scanner`. Argus
+looks for them once, when the daemon starts: the startup log lists the ones it
+found and the ones it did not, and `argus doctor` shows each as installed or not
+installed. A scanner installed later appears after a restart. The official
+container image ships all three. The [scanner catalog](/guide/scanners/) says
+what each one finds and how to install it.
 :::
 
 ### Your organization's knowledge

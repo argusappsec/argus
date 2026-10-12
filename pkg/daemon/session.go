@@ -53,6 +53,7 @@ type Session struct {
 	principal auth.Principal
 	maxTurns  int
 	ephemeral bool // one-shot Session: skip end-of-session memory curation
+	automatic bool // a Service-triggered review: registry restricted to safe Tools
 
 	dc          *Context
 	toolState   *session.Session
@@ -149,6 +150,21 @@ type PRReviewTarget struct {
 	Diff    codehost.PRDiff // changed files + hunks, pre-fetched by the channel
 }
 
+// reviewTools is the list of Tools a review's seed prompt tells the agent to
+// reach for: the file tools, then every catalogued scanner registered in this
+// Session's registry, by name. It is built from the registry rather than
+// written out, so the agent is never pointed at a scanner the host does not
+// have (ADR 0027).
+func reviewTools(reg *tool.Registry) string {
+	names := []string{"list_files", "read_file", "grep"}
+	for _, e := range security.Catalog() {
+		if _, ok := reg.Get(e.Tool); ok {
+			names = append(names, e.Tool)
+		}
+	}
+	return strings.Join(names, " / ")
+}
+
 // HandlePRReview runs one automatic PR review against an already-cloned head
 // checkout: pin the Session root, seed the PR-review prompt, run. Returns the
 // report and the path of the report file when one was written.
@@ -165,15 +181,14 @@ func (s *Session) HandlePRReview(ctx context.Context, target PRReviewTarget, cb 
 	seedPrompt := fmt.Sprintf(
 		"You are running an automated security review of pull request #%d of %s. "+
 			"The repository is already checked out locally at the PR head commit %s — use "+
-			"list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner freely "+
-			"over the WHOLE tree for accuracy. Then call pr_diff to see which files and lines this "+
+			"%s freely over the WHOLE tree for accuracy. Then call pr_diff to see which files and lines this "+
 			"pull request changed, and report a finding ONLY when it is on a changed line OR is "+
 			"causally tied to the change (the diff calls an insecure function defined elsewhere, "+
 			"bumps a dependency to a vulnerable version, etc.). Do NOT report the repository's "+
 			"pre-existing issues unrelated to this change. Record each relevant issue via add_finding "+
 			"(set file and line so it can be placed inline), then call finalize_report with a concise "+
 			"summary suitable for posting on the pull request. Proceed autonomously.",
-		target.Number, target.Repo, target.SHA,
+		target.Number, target.Repo, target.SHA, reviewTools(s.registry),
 	)
 	return s.runReviewTarget(ctx, agent.Target{
 		Repo:     target.Repo,
@@ -211,13 +226,12 @@ func (s *Session) HandleRepoReview(ctx context.Context, target RepoReviewTarget,
 
 	seedPrompt := fmt.Sprintf(
 		"You are running an organization-aware security review of the repository %s, checked out "+
-			"locally at commit %s. Use list_files / read_file / grep / run_semgrep / run_gitleaks / "+
-			"run_osv_scanner freely over the WHOLE tree for accuracy — the full repository is present, so "+
+			"locally at commit %s. Use %s freely over the WHOLE tree for accuracy — the full repository is present, so "+
 			"follow the call chain wherever it leads. Judge the code through THIS organization's lens (its "+
 			"stack, conventions, risk tolerance, and the false positives already accepted in SOUL/MEMORY), "+
 			"not a generic checklist. Record each issue you confirm via add_finding (set file and line), then "+
 			"call finalize_report with a concise summary. Proceed autonomously.",
-		target.Repo, target.SHA,
+		target.Repo, target.SHA, reviewTools(s.registry),
 	)
 	return s.runReviewTarget(ctx, agent.Target{
 		Repo: target.Repo,
@@ -250,8 +264,7 @@ func (s *Session) HandleSnapshotReview(ctx context.Context, snapshotPath string,
 
 	seedPrompt := "You are running an organization-aware security review of a code Snapshot a " +
 		"developer handed you through their AI assistant. The changed files are already " +
-		"materialized locally — use list_files / read_file / grep / run_semgrep / run_gitleaks / " +
-		"run_osv_scanner freely over the workspace. Judge the code through THIS organization's lens " +
+		"materialized locally — use " + reviewTools(s.registry) + " freely over the workspace. Judge the code through THIS organization's lens " +
 		"(its stack, conventions, risk tolerance, and the false positives already accepted in SOUL/MEMORY), " +
 		"not a generic checklist. " +
 		"IMPORTANT — reach for the call chain: when deciding whether a handler is safe depends on code you " +
@@ -453,13 +466,19 @@ func (s *Session) Usage() (tokensIn, tokensOut int) {
 // what the MCP channel projects its deterministic surface from (ADR 0023) —
 // there is one place that knows which Tools exist, so a Tool added for the agent
 // loop and a Tool offered over MCP can never drift apart.
+//
+// A call over MCP is never an automatic review (ADR 0027): the caller asked for
+// it, so this is the full registry.
 func (dc *Context) NewToolRegistry() *tool.Registry {
-	return buildRegistry(session.New(), dc)
+	reg, _ := buildRegistry(session.New(), dc, false)
+	return reg
 }
 
 // buildRegistry assembles the per-Session tool registry around its tool
 // state. Mirrors what the single-process CLI used to register; new tools are
-// added here once and every channel sees them.
+// added here once and every channel sees them. Scanners are the exception: they
+// are added to the Catalog (pkg/security), and this loop picks up every
+// installed one.
 //
 // Register or Expose is the admission decision (ADR 0023): a registered Tool is
 // Argus's own agent loop's alone, an exposed one is also offered to whoever
@@ -467,7 +486,12 @@ func (dc *Context) NewToolRegistry() *tool.Registry {
 // caller does not already have" — which is why the file tools below are
 // registered, and the scanners, the organization's knowledge and its skills
 // are exposed.
-func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
+//
+// automatic marks the registry of an automatic, Service-triggered review, which
+// runs over a stranger's code and so gets only the scanners safe on untrusted
+// input (ADR 0018, ADR 0027). The IDs of the installed scanners it withheld for
+// that reason are returned, for the audit log.
+func buildRegistry(toolState *session.Session, dc *Context, automatic bool) (*tool.Registry, []string) {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewListFiles(toolState))
 	reg.Register(tool.NewReadFile(toolState))
@@ -480,13 +504,25 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	reg.Register(tool.NewStartReviewLocal(toolState))
 	reg.Register(tool.NewStartReviewGitHub(toolState, dc.CodeHost))
 	reg.Register(tool.NewPRDiff(toolState))
-	reg.Expose(security.NewSemgrep(toolState, dc.commands()))
-	reg.Expose(security.NewGitleaks(toolState, dc.commands()))
-	reg.Expose(security.NewOSVScanner(toolState, dc.commands()))
+	// The scanners come from the Catalog, filtered to what the host can run
+	// (ADR 0027): a catalogued Tool whose binaries did not resolve at startup
+	// is never offered. Every scanner is exposed — a caller over MCP does not
+	// already have it. An automatic review also leaves out every scanner that
+	// drives a toolchain over the code, and builds the rest in their automatic
+	// mode.
+	deps := security.Deps{Session: toolState, Commands: dc.commands(), Automatic: automatic}
+	var withheld []string
+	for _, e := range dc.Tools().Installed {
+		if automatic && e.Trust != security.TrustSafe {
+			withheld = append(withheld, e.ID)
+			continue
+		}
+		reg.Expose(e.New(deps))
+	}
 	reg.Expose(tool.NewListSkills(dc.Skills))
 	reg.Expose(tool.NewReadSkill(dc.Skills))
 	reg.Expose(tool.NewReadSkillFile(dc.Skills))
-	return reg
+	return reg, withheld
 }
 
 func contextDir(dc *Context) string {

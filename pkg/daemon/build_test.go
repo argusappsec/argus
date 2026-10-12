@@ -316,3 +316,26 @@ func TestBuild_ToolboxRefusesASlackChannel(t *testing.T) {
 		t.Errorf("error %q is no longer the config gate's: give slack its case in channelNeedsReasoning", err)
 	}
 }
+
+// tools.disabled reaches discovery: a Tool the operator switched off is
+// reported as disabled — whatever this host's PATH carries — and never as
+// installed or missing.
+func TestBuild_DisabledToolsAreDiscoveredAsDisabled(t *testing.T) {
+	noFallbackKey(t)
+
+	dc, err := Build(t.TempDir(), &config.Config{Tools: config.ToolsConfig{Disabled: []string{"gitleaks"}}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer dc.Close()
+
+	d := dc.Tools()
+	if len(d.Disabled) != 1 || d.Disabled[0].ID != "gitleaks" {
+		t.Errorf("disabled = %v, want exactly gitleaks", d.Disabled)
+	}
+	for _, e := range append(d.Installed, d.Missing...) {
+		if e.ID == "gitleaks" {
+			t.Errorf("gitleaks is disabled but also discovered as installed or missing")
+		}
+	}
+}

@@ -94,6 +94,17 @@ func (m *SessionManager) GetOrCreate(ctx context.Context, channel, conversationK
 	m.mu.Lock()
 	if s, ok := m.active[id]; ok {
 		m.mu.Unlock()
+		// A Session's registry is fixed when it is built. An automatic review
+		// must not re-attach to a live Session a Person opened on the same
+		// conversation (a PR comment turn), or it would run over untrusted code
+		// with that Session's full registry. It is refused as busy, like any
+		// review that lands while another run holds the Session. The reverse —
+		// a Person's turn on the automatic review's Session — is allowed: the
+		// restricted registry can only take capabilities away (ADR 0027).
+		// A nil s is a Session still being built; its kind is not known yet.
+		if s != nil && isAutomatic(principal) && !s.automatic {
+			return nil, false, ErrRunInProgress
+		}
 		return s, true, nil
 	}
 	if len(m.active) >= m.cap {
@@ -158,6 +169,8 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 	}
 
 	toolState := session.New()
+	automatic := isAutomatic(principal)
+	registry, withheld := buildRegistry(toolState, dc, automatic)
 
 	s := &Session{
 		id:          id,
@@ -170,7 +183,8 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 		convo:       convo,
 		convoPath:   convoPath,
 		provider:    prov,
-		registry:    buildRegistry(toolState, dc),
+		automatic:   automatic,
+		registry:    registry,
 		soul:        soulSnap,
 		memory:      memSnap,
 		personaName: dc.PersonaName,
@@ -186,7 +200,23 @@ func (m *SessionManager) build(ctx context.Context, id, channel string, principa
 		"identity": principal.Identity,
 		"implicit": principal.Implicit,
 	}))
+	// Record what the automatic review was denied, so an auditor can tell what
+	// it could have run on this host and did not get to.
+	if len(withheld) > 0 {
+		_ = s.audit.Log(auditEvent("tools_withheld", map[string]any{
+			"tools":  withheld,
+			"reason": "not safe on untrusted input; automatic review",
+		}))
+	}
 	return s, nil
+}
+
+// isAutomatic reports whether a Session for principal is an automatic review:
+// one a Service triggered, with no Person asking for it (ADR 0018). Today that
+// is the GitHub App's PR review; any later Service-triggered review is held to
+// the same rule without having to opt in.
+func isAutomatic(principal auth.Principal) bool {
+	return principal.Kind == auth.KindService
 }
 
 // Release tears a Session down: it leaves the active set immediately, its

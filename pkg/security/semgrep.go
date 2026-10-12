@@ -49,12 +49,28 @@ func (s *semgrep) Schema() map[string]any {
 	}
 }
 
-// Requires advertises this tool's binary dependency to argus doctor.
-func (s *semgrep) Requires() []tool.Requirement {
-	return []tool.Requirement{{
-		Binary:      "semgrep",
-		InstallHint: "brew install semgrep  (or pip install semgrep)",
-	}}
+func init() {
+	catalogue(Entry{
+		ID:      "semgrep",
+		Tool:    "run_semgrep",
+		Name:    "Semgrep",
+		Purpose: "Pattern-based static analysis for insecure code across many languages.",
+		Why: "Semgrep matches rules against the syntax of the code rather than its text, so it finds " +
+			"injection, unsafe deserialization, weak cryptography and similar flaws in most mainstream " +
+			"languages without building the project. It is the baseline SAST pass of a review.",
+		Finds:      []Find{FindSAST},
+		Reads:      []Read{ReadMultiLanguage},
+		DocsURL:    "https://semgrep.dev/docs/",
+		InstallURL: "https://semgrep.dev/docs/getting-started/cli",
+		License:    "LGPL-2.1-only",
+		Manifest:   true,
+		Binaries: []Binary{{
+			Name:        "semgrep",
+			InstallHint: "brew install semgrep  (or pip install semgrep)",
+		}},
+		Trust: TrustSafe, // pattern-matches source files; never builds them
+		New:   func(d Deps) tool.Tool { return NewSemgrep(d.Session, d.Commands) },
+	})
 }
 
 func (s *semgrep) Execute(ctx context.Context, args map[string]any) (string, error) {

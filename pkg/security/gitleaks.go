@@ -48,12 +48,28 @@ func (g *gitleaks) Schema() map[string]any {
 	}
 }
 
-// Requires advertises this tool's binary dependency to argus doctor.
-func (g *gitleaks) Requires() []tool.Requirement {
-	return []tool.Requirement{{
-		Binary:      "gitleaks",
-		InstallHint: "brew install gitleaks",
-	}}
+func init() {
+	catalogue(Entry{
+		ID:      "gitleaks",
+		Tool:    "run_gitleaks",
+		Name:    "Gitleaks",
+		Purpose: "Detects secrets committed to a repository: API keys, tokens, passwords and private keys.",
+		Why: "A leaked credential is exploitable the moment it is pushed, whatever language the code is " +
+			"in. Gitleaks recognises hundreds of credential formats and high-entropy strings, so a " +
+			"review catches the secret before it reaches a public branch.",
+		Finds:      []Find{FindSecrets},
+		Reads:      []Read{ReadMultiLanguage},
+		DocsURL:    "https://github.com/gitleaks/gitleaks#readme",
+		InstallURL: "https://github.com/gitleaks/gitleaks#installing",
+		License:    "MIT",
+		Manifest:   true,
+		Binaries: []Binary{{
+			Name:        "gitleaks",
+			InstallHint: "brew install gitleaks",
+		}},
+		Trust: TrustSafe, // reads files and git history; runs nothing
+		New:   func(d Deps) tool.Tool { return NewGitleaks(d.Session, d.Commands) },
+	})
 }
 
 func (g *gitleaks) Execute(ctx context.Context, args map[string]any) (string, error) {

@@ -176,9 +176,10 @@ and humans learn things.
 A Go-implemented function the LLM can call. Has a Name, Description (which
 the LLM reads to decide when to call it), Schema (JSON Schema of args), and
 Execute (the actual implementation). Lives in `pkg/tool/` or domain
-packages (`pkg/security/`). When a Tool shells out to a binary it
-additionally implements `tool.Requirer` so `argus doctor` can verify the
-binary is installed.
+packages (`pkg/security/`). When a Tool shells out to a binary it is a
+**Catalog** entry, which declares the binaries it requires: the daemon
+registers it only when they are installed, and `argus doctor` reports it from
+the same declaration.
 
 **No generic shell escape.** A Tool always has a fixed surface — explicit
 args, explicit semantics, written in Go and reviewed in code. We do NOT
