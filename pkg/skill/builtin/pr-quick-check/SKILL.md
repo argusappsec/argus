@@ -19,7 +19,7 @@ skim for the usual footguns, report what matters.
    orienting, not auditing every line.
 
 2. **Run the static scanners.**
-   - `run_semgrep` for code-level vulnerability patterns (injection, unsafe
+   - `run_sast` (SAST) for code-level vulnerability patterns (injection, unsafe
      deserialization, weak crypto, path traversal, …).
    - `run_gitleaks` for committed secrets — API keys, tokens, private keys.
 

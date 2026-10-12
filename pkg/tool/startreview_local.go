@@ -13,7 +13,7 @@ import (
 // NewStartReviewLocal returns a `start_review_local` tool that the LLM calls
 // when the user asks to review code already present on disk. It validates the
 // path, sets the Session's root, and reports back. File-scoped tools (list_files,
-// read_file, grep, run_semgrep, ...) read from session.Root() and will see the
+// read_file, grep, run_sast, ...) read from session.Root() and will see the
 // new target on their next invocation.
 //
 // This tool does NOT clone anything: that's start_review_github's job.
@@ -29,7 +29,7 @@ func (t *startReviewLocal) Description() string {
 	return "Start a security review on a local directory already present on disk. " +
 		"Use when the user provides a filesystem path (e.g. '/Users/.../my-project'). " +
 		"For GitHub URLs use start_review_github instead. " +
-		"After this tool succeeds, the file-scoped tools (list_files, read_file, grep, run_semgrep, run_gitleaks, run_osv_scanner) " +
+		"After this tool succeeds, the file-scoped tools (list_files, read_file, grep, and whichever scanners this session has) " +
 		"will operate on the given path."
 }
 
@@ -65,5 +65,5 @@ func (t *startReviewLocal) Execute(_ context.Context, args map[string]any) (stri
 	}
 
 	t.sess.SetRoot(abs)
-	return fmt.Sprintf("Local review target set to %s. Proceed with list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner.", abs), nil
+	return fmt.Sprintf("Local review target set to %s. Proceed with list_files / read_file / grep and the scanners among your tools.", abs), nil
 }

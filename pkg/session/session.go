@@ -1,7 +1,7 @@
 // Package session holds the mutable state shared across an agent run.
 //
 // A Session is what makes the file-scoped tools (list_files, read_file, grep,
-// run_semgrep, ...) "session-aware": their target directory is not cemented at
+// run_sast, ...) "session-aware": their target directory is not cemented at
 // construction time, it is read from the Session at each Execute. When a
 // start_review_* tool calls SetRoot mid-conversation, every subsequent tool
 // invocation immediately sees the new target.

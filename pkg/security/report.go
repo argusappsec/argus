@@ -6,7 +6,7 @@ import (
 )
 
 // Report is what every scanner Tool hands the model: the binary's own report,
-// parsed into one finding shape so the model triages semgrep, gitleaks and
+// parsed into one finding shape so the model triages SAST, gitleaks and
 // osv-scanner the same way, and so Argus can say things about a finding that
 // the binary does not, such as that the code tried to suppress it.
 //
@@ -25,7 +25,7 @@ type Report struct {
 
 // Finding is one scanner hit.
 type Finding struct {
-	// RuleID is the scanner's rule or advisory id: a semgrep check id, a
+	// RuleID is the scanner's rule or advisory id: a SAST (opengrep or semgrep) check id, a
 	// gitleaks rule, an OSV vulnerability id.
 	RuleID string `json:"rule_id"`
 	// Severity is as the scanner reports it; scanners do not share a scale.
@@ -38,7 +38,7 @@ type Finding struct {
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 	// SuppressedInRepo is set when the code under review marks this finding
-	// as suppressed: an inline comment (`nosemgrep`, `gitleaks:allow`,
+	// as suppressed: an inline comment (`nosemgrep`, `noopengrep`, `gitleaks:allow`,
 	// `#nosec`) or an entry in an ignore or config file the repository
 	// carries. Argus never honours those (ADR 0027): the scanner ran with them
 	// switched off, and the attempt is reported here as a signal, because a

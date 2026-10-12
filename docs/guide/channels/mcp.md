@@ -62,7 +62,7 @@ that host:
 
 | Tool | Looks for |
 | --- | --- |
-| `run_semgrep` | Code-level vulnerability patterns |
+| `run_sast` | Code-level vulnerability patterns (SAST), with Opengrep or Semgrep |
 | `run_gitleaks` | Secrets committed to the tree |
 | `run_osv_scanner` | Known vulnerabilities in dependencies |
 
@@ -80,22 +80,25 @@ file relative to the scanned tree, a line where there is one, and a
 description. The scanners obey only Argus's configuration, never the code they
 scan:
 
-- `run_semgrep` runs a security ruleset built into Argus. It never fetches
-  rules from the Semgrep registry and sends no metrics.
+- `run_sast` runs a security ruleset built into Argus, with Opengrep when it
+  is installed and Semgrep otherwise; the report's `scanner` field names the
+  one that ran. It never fetches rules from a registry and sends no metrics.
 - Config and ignore files in the scanned tree (`.semgrepignore`,
   `.gitleaks.toml`, `.gitleaksignore`, `osv-scanner.toml`) have no effect, and
-  neither do inline comments such as `nosemgrep` or `gitleaks:allow`.
+  neither do inline comments such as `nosemgrep`, `noopengrep` or
+  `gitleaks:allow`.
 - A finding the code tried to silence is still returned, with
   `suppressed_in_repo: true` and a `suppression` saying how. Treat it as a
   finding, and the attempt to hide it as a signal. Your organization's genuine
   false positives belong in its `known-fps` knowledge instead.
 
 :::note[Install the scanners on the daemon host]
-The scanners are separate binaries — `semgrep`, `gitleaks`, `osv-scanner`. Argus
+The scanners are separate binaries — `opengrep` or `semgrep`, `gitleaks`,
+`osv-scanner`. Argus
 looks for them once, when the daemon starts: the startup log lists the ones it
 found and the ones it did not, and `argus doctor` shows each as installed or not
 installed. A scanner installed later appears after a restart. The official
-container image ships all three. The [scanner catalog](/guide/scanners/) says
+container image ships a SAST engine, Gitleaks and OSV-Scanner. The [scanner catalog](/guide/scanners/) says
 what each one finds and how to install it.
 :::
 

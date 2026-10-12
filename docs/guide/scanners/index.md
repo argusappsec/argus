@@ -18,7 +18,7 @@ installed or not installed, and link a missing one to its page here.
 
 ## Recommendations
 
-- **Every repository:** [Gitleaks](/guide/scanners/gitleaks/), [OSV-Scanner](/guide/scanners/osv-scanner/), [Semgrep](/guide/scanners/semgrep/)
+- **Every repository:** [Gitleaks](/guide/scanners/gitleaks/), [OSV-Scanner](/guide/scanners/osv-scanner/), [SAST (Opengrep or Semgrep)](/guide/scanners/sast/)
 
 ## All scanners
 
@@ -26,7 +26,7 @@ installed or not installed, and link a missing one to its page here.
 | --- | --- | --- | --- | --- |
 | [Gitleaks](/guide/scanners/gitleaks/) | Secrets | Any language | Safe on untrusted input | Included |
 | [OSV-Scanner](/guide/scanners/osv-scanner/) | Dependencies | Any language | Safe on untrusted input | Included |
-| [Semgrep](/guide/scanners/semgrep/) | SAST | Any language | Safe on untrusted input | Included |
+| [SAST (Opengrep or Semgrep)](/guide/scanners/sast/) | SAST | Any language | Safe on untrusted input | Included |
 
 ## Trust levels
 

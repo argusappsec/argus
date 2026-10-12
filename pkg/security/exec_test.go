@@ -27,12 +27,26 @@ type fakeRunner struct {
 	// scratch directory is gone by the time Execute returns, and the configs a
 	// Tool hands its binary live there.
 	gotFiles map[string]string
+	// absentDirs lists every directory variable in the environment (HOME,
+	// TMPDIR, XDG_*) whose directory did not exist while the run was in
+	// flight. Some binaries refuse to start without them.
+	absentDirs []string
 }
 
 func (f *fakeRunner) Run(_ context.Context, cmd security.Command) (string, error) {
 	f.gotCmd = cmd
 	f.gotArgs = cmd.Args
 	f.gotFiles = map[string]string{}
+	f.absentDirs = nil
+	for _, kv := range cmd.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		if k != "HOME" && k != "TMPDIR" && !strings.HasPrefix(k, "XDG_") {
+			continue
+		}
+		if info, err := os.Stat(v); err != nil || !info.IsDir() {
+			f.absentDirs = append(f.absentDirs, kv)
+		}
+	}
 	for _, a := range cmd.Args {
 		if cmd.Dir == "" || !strings.HasPrefix(a, cmd.Dir+string(filepath.Separator)) {
 			continue

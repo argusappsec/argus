@@ -1,6 +1,7 @@
 package security_test
 
 import (
+	"context"
 	"os/exec"
 	"slices"
 	"strings"
@@ -22,7 +23,7 @@ func entryIDs(entries []security.Entry) []string {
 // installed, in a stable order.
 func TestCatalog_ListsEveryScannerInIDOrder(t *testing.T) {
 	got := entryIDs(security.Catalog())
-	want := []string{"gitleaks", "osv-scanner", "semgrep"}
+	want := []string{"gitleaks", "osv-scanner", "sast"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Catalog IDs = %v, want %v", got, want)
 	}
@@ -79,8 +80,8 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 	if got := entryIDs(d.Installed); !slices.Equal(got, []string{"gitleaks"}) {
 		t.Errorf("Installed = %v, want [gitleaks]", got)
 	}
-	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"osv-scanner", "semgrep"}) {
-		t.Errorf("Missing = %v, want [osv-scanner semgrep]", got)
+	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"osv-scanner", "sast"}) {
+		t.Errorf("Missing = %v, want [osv-scanner sast]", got)
 	}
 }
 
@@ -88,7 +89,7 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 // a Tool. The official image has always carried the three scanners Argus has
 // always wrapped.
 func TestCatalog_TheExistingScannersAreInTheManifest(t *testing.T) {
-	for _, id := range []string{"gitleaks", "osv-scanner", "semgrep"} {
+	for _, id := range []string{"gitleaks", "osv-scanner", "sast"} {
 		i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == id })
 		if i < 0 {
 			t.Fatalf("%s is not catalogued", id)
@@ -103,7 +104,7 @@ func TestCatalog_TheExistingScannersAreInTheManifest(t *testing.T) {
 // toolchain or package manager over the code under review, so all of them stay
 // in an automatic review's registry (ADR 0018, ADR 0027).
 func TestCatalog_TheExistingScannersAreSafeOnUntrustedInput(t *testing.T) {
-	for _, id := range []string{"gitleaks", "osv-scanner", "semgrep"} {
+	for _, id := range []string{"gitleaks", "osv-scanner", "sast"} {
 		i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == id })
 		if i < 0 {
 			t.Fatalf("%s is not catalogued", id)
@@ -111,5 +112,114 @@ func TestCatalog_TheExistingScannersAreSafeOnUntrustedInput(t *testing.T) {
 		if got := security.Catalog()[i].Trust; got != security.TrustSafe {
 			t.Errorf("%s trust = %q, want %q", id, got, security.TrustSafe)
 		}
+	}
+}
+
+// sastEntry is the one SAST Entry in the Catalog.
+func sastEntry(t *testing.T) security.Entry {
+	t.Helper()
+	for _, e := range security.Catalog() {
+		if e.ID == "sast" {
+			return e
+		}
+	}
+	t.Fatal("sast is not catalogued")
+	return security.Entry{}
+}
+
+// One SAST Entry lists both engines, opengrep first: it is the preferred one
+// (ADR 0027). Either is enough to run the Tool.
+func TestCatalog_OneSASTEntryListsBothEnginesOpengrepFirst(t *testing.T) {
+	e := sastEntry(t)
+	if e.Tool != "run_sast" {
+		t.Errorf("Tool = %q, want run_sast", e.Tool)
+	}
+	var names []string
+	for _, b := range e.Binaries {
+		names = append(names, b.Name)
+	}
+	if !slices.Equal(names, []string{"opengrep", "semgrep"}) {
+		t.Errorf("Binaries = %v, want [opengrep semgrep]", names)
+	}
+	if !e.Alternatives {
+		t.Error("the engines are alternatives: either one must be enough")
+	}
+}
+
+// Discovery installs the SAST Entry when either engine resolves, and records
+// which did, in the Entry's order of preference, so the Tool is built over the
+// preferred one.
+func TestDiscover_InstallsTheSASTEntryWhenEitherEngineResolves(t *testing.T) {
+	cases := []struct {
+		name      string
+		onPath    []string
+		installed bool
+		found     []string
+	}{
+		{"opengrep only", []string{"opengrep"}, true, []string{"opengrep"}},
+		{"semgrep only", []string{"semgrep"}, true, []string{"semgrep"}},
+		{"both", []string{"semgrep", "opengrep"}, true, []string{"opengrep", "semgrep"}},
+		{"neither", nil, false, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := security.Discover(onPath(c.onPath...))
+			i := slices.IndexFunc(d.Installed, func(e security.Entry) bool { return e.ID == "sast" })
+			if (i >= 0) != c.installed {
+				t.Fatalf("sast installed = %v, want %v (installed: %v)", i >= 0, c.installed, entryIDs(d.Installed))
+			}
+			if i >= 0 && !slices.Equal(d.Installed[i].Found, c.found) {
+				t.Errorf("Found = %v, want %v", d.Installed[i].Found, c.found)
+			}
+		})
+	}
+}
+
+// The SAST Tool is built over the first engine discovery found: opengrep when
+// it is there, semgrep otherwise.
+func TestCatalog_TheSASTEntryBuildsOverThePreferredEngineFound(t *testing.T) {
+	e := sastEntry(t)
+	for _, c := range []struct {
+		found []string
+		want  string
+	}{
+		{[]string{"opengrep", "semgrep"}, "opengrep"},
+		{[]string{"opengrep"}, "opengrep"},
+		{[]string{"semgrep"}, "semgrep"},
+	} {
+		fr := &fakeRunner{out: `{"results":[],"errors":[]}`}
+		built := e.New(security.Deps{Session: sessionAt(checkout(t)), Commands: fr, Found: c.found})
+		if _, err := built.Execute(context.Background(), map[string]any{}); err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if len(fr.gotArgs) == 0 || fr.gotArgs[0] != c.want {
+			t.Errorf("found %v: ran %v, want %s", c.found, fr.gotArgs, c.want)
+		}
+	}
+}
+
+// An Entry whose binaries are not alternatives still needs every one of them.
+func TestEntry_ResolveNeedsEveryBinaryUnlessTheyAreAlternatives(t *testing.T) {
+	both := []security.Binary{{Name: "go"}, {Name: "gosec"}}
+	required := security.Entry{Binaries: both}
+	if found, ok := required.Resolve(onPath("gosec")); ok {
+		t.Errorf("installed with only gosec on PATH (found %v); go is required too", found)
+	}
+	if found, ok := required.Resolve(onPath("go", "gosec")); !ok || !slices.Equal(found, []string{"go", "gosec"}) {
+		t.Errorf("Resolve = %v, %v; want [go gosec], true", found, ok)
+	}
+	alternatives := security.Entry{Binaries: both, Alternatives: true}
+	if found, ok := alternatives.Resolve(onPath("gosec")); !ok || !slices.Equal(found, []string{"gosec"}) {
+		t.Errorf("Resolve = %v, %v; want [gosec], true", found, ok)
+	}
+}
+
+// onPath is a binary lookup that finds exactly the named binaries.
+func onPath(names ...string) func(string) (string, error) {
+	return func(name string) (string, error) {
+		if slices.Contains(names, name) {
+			return "/bin/" + name, nil
+		}
+		return "", exec.ErrNotFound
 	}
 }

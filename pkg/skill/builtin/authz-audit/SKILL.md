@@ -1,6 +1,6 @@
 ---
 name: authz-audit
-description: White-box detection of broken authorization (BOLA/IDOR, BFLA, access-control logic flaws) in an API or web codebase. Use when asked to audit authorization, hunt IDOR/BOLA, check object-level or function-level access control, or verify that handlers scope data access to the current principal/tenant. Reconstructs the app's ownership model first, then finds access paths that skip the per-object/per-role check their peers enforce. Static, read-only; delegates injection/secrets/path-traversal to run_semgrep/run_gitleaks.
+description: White-box detection of broken authorization (BOLA/IDOR, BFLA, access-control logic flaws) in an API or web codebase. Use when asked to audit authorization, hunt IDOR/BOLA, check object-level or function-level access control, or verify that handlers scope data access to the current principal/tenant. Reconstructs the app's ownership model first, then finds access paths that skip the per-object/per-role check their peers enforce. Static, read-only; delegates injection/secrets/path-traversal to the SAST and secrets scanners (run_sast/run_gitleaks).
 tags: [authorization, bola, idor, bfla, access-control, white-box, owasp-api1, owasp-api5]
 ---
 
@@ -18,7 +18,7 @@ end-to-end before you judge a handler.** Follow the passes in order. Do not skip
 PASS 0. Do not skip the verification gate.
 
 You work **only** with the tools you already have: `read_file`, `grep`,
-`list_files`, `list_context`, `read_context`, and optionally `run_semgrep`
+`list_files`, `list_context`, `read_context`, and optionally `run_sast` (SAST)
 output as a hybrid input. There is no shell. You emit findings with
 `add_finding` (one call per confirmed issue) and end with `finalize_report`.
 
@@ -53,9 +53,9 @@ output as a hybrid input. There is no shell. You emit findings with
 **Out of scope — delegate, do not rediscover:**
 
 - Injection (SQLi / command / SSTI), path traversal, hardcoded secrets, most
-  misconfiguration. These are deterministic and belong to `run_semgrep` /
+  misconfiguration. These are deterministic and belong to `run_sast` (SAST) /
   `run_gitleaks`. If you see an f-string SQL query while tracing a sink, that is
-  **not your finding** — note "out of scope, run_semgrep" and move on. Staying
+  **not your finding** — note "out of scope, run_sast" and move on. Staying
   in lane is what keeps your precision and token cost down.
 
 **Low-precision classes — emit as `info` hypotheses only:**
@@ -337,4 +337,4 @@ oracle for maintainers**, not analysis input.
 A maintainer validates by running the passes on VAmPI and confirming: both BOLA
 endpoints found (recall), both secure branches left unflagged (precision), the
 register self-grant emitted as `info`
-(`authz/bopla-mass-assignment-adjacent`), and the SQLi left to `run_semgrep`.
+(`authz/bopla-mass-assignment-adjacent`), and the SQLi left to `run_sast`.

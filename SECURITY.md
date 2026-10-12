@@ -88,7 +88,7 @@ These are real concerns but not security reports. Please open a normal
 - **Model behaviour that stays inside the boundary.** Hallucinations,
   refusals, or a prompt injection that only makes Argus write something silly
   in a review it was already entitled to write.
-- **Vulnerabilities in the scanners themselves** (`semgrep`, `gitleaks`,
+- **Vulnerabilities in the scanners themselves** (`opengrep`, `semgrep`, `gitleaks`,
   `osv-scanner`) or in Go dependencies: report those upstream. Do tell us if
   Argus pins a version with a known, exploitable CVE.
 - **Anything requiring an existing Admin principal or host-level access.**

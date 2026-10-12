@@ -1,4 +1,4 @@
-// Package security wraps external static-analysis binaries (semgrep, gitleaks,
+// Package security wraps external static-analysis binaries (opengrep or semgrep, gitleaks,
 // and future tools) as agent Tools.
 //
 // Each tool follows the same pattern:
@@ -17,7 +17,7 @@
 //     code under review tries to suppress as suppressed_in_repo (checkout.go
 //     reads the marker), and return it as JSON to the agent.
 //
-// New security tools live in their own file inside this package (semgrep.go,
+// New security tools live in their own file inside this package (sast.go,
 // gitleaks.go, ...). The shared infrastructure (Runner, ExecRunner) is in
 // exec.go.
 package security

@@ -173,7 +173,7 @@ func TestProviderDoctorOptions_NoTargetWhenTheModelResolvesToNoProvider(t *testi
 // TestRun_ToolboxStillChecksTheScannerBinaries: a Toolbox is precisely the
 // shape that depends on them — the scanners are most of what it serves — so
 // doctor must go on verifying every one, and say so per binary rather than
-// leaving an operator to discover a missing semgrep through a failed scan.
+// leaving an operator to discover a missing SAST engine through a failed scan.
 func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	home := t.TempDir() // no argus.yaml: no Provider, so a Toolbox
@@ -183,7 +183,7 @@ func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
 		Shape:   deployment.Toolbox,
 		Catalog: security.Catalog(),
 	})
-	for _, binary := range []string{"semgrep", "gitleaks", "osv-scanner"} {
+	for _, binary := range []string{"sast", "gitleaks", "osv-scanner"} {
 		if !slices.ContainsFunc(checks, func(c doctor.Check) bool { return c.Name == binary }) {
 			t.Errorf("a Toolbox's doctor run has no %q row: %v", binary, checkNames(checks))
 		}

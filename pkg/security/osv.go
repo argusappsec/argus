@@ -16,7 +16,7 @@ import (
 
 // NewOSVScanner returns a `run_osv_scanner` tool that scans the Session's
 // current target directory for known vulnerabilities in its dependencies
-// (supply-chain coverage), complementing semgrep (static analysis) and
+// (supply-chain coverage), complementing the SAST Tool (static analysis) and
 // gitleaks (secrets).
 func NewOSVScanner(s *session.Session, r Runner) tool.Tool {
 	return &osvScanner{sess: s, runner: r}

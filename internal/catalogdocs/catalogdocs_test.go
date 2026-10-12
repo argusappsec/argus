@@ -104,6 +104,32 @@ func TestRender_ToolPageWarnsAboutToolchainsAndToolsOutsideTheImage(t *testing.T
 	}
 }
 
+// A Tool over alternative engines asks for one of them, not all, and says the
+// first one listed is preferred.
+func TestRender_ToolPageOverAlternativeEnginesAsksForOneOfThem(t *testing.T) {
+	sast := entry("sast")
+	sast.Binaries = []security.Binary{
+		{Name: "opengrep", InstallHint: "install opengrep"},
+		{Name: "semgrep", InstallHint: "install semgrep"},
+	}
+	sast.Alternatives = true
+	page := render(t, sast)["sast.md"]
+
+	for _, want := range []string{
+		"install one of these binaries on the daemon host",
+		"Argus runs the first one listed that it finds",
+		"- `opengrep`: `install opengrep`",
+		"- `semgrep`: `install semgrep`",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "every one of these binaries") {
+		t.Errorf("the engines are alternatives; the page must not ask for every one:\n%s", page)
+	}
+}
+
 // The index tabulates every Tool's tags, trust level and Manifest membership,
 // and recommends Tools by the stack an operator recognises, leaving out
 // stacks nothing in the Catalog reads.
