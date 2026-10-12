@@ -39,6 +39,11 @@ var repoConfigFlags = map[string]struct {
 		switches: []string{"--no-ignore"},
 		scratch:  []string{"--config"},
 	},
+	// #nosec and //gosec:disable annotations are ignored. gosec loads no
+	// config file unless told to, and is never told to.
+	"gosec": {
+		switches: []string{"-nosec=true"},
+	},
 }
 
 // TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags: the checkout is the pull

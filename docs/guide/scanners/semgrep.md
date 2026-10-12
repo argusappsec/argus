@@ -2,7 +2,7 @@
 title: Semgrep
 description: Pattern-based static analysis for insecure code across many languages.
 sidebar:
-  order: 58
+  order: 59
 ---
 
 <!-- Generated from the Tool Catalog. Do not edit by hand: run `make docs`. -->

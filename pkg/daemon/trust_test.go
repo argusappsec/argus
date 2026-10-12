@@ -235,3 +235,33 @@ func TestRegistry_AutomaticReviewLeavesOutADisabledScanner(t *testing.T) {
 		t.Error("an automatic review lost run_semgrep, which is installed and not disabled")
 	}
 }
+
+// gosec is the first real toolchain-driving Tool. With go and gosec both on
+// PATH, a review a Person asked for and the MCP surface get run_gosec; an
+// automatic review never does. With either binary missing, nobody gets it.
+func TestRegistry_GosecNeedsGoAndGosecAndIsWithheldFromAutomaticReviews(t *testing.T) {
+	t.Run("both installed", func(t *testing.T) {
+		dc := testContext(t, nil, 4)
+		dc.LookPath = installed("go", "gosec")
+
+		if _, ok := newSession(t, dc, "github.com/o/r#1", principal()).registry.Get("run_gosec"); !ok {
+			t.Error("a Person-requested review is missing run_gosec")
+		}
+		if !slices.Contains(exposedNames(dc.NewToolRegistry()), "run_gosec") {
+			t.Error("the MCP registry is missing run_gosec")
+		}
+		if _, ok := newSession(t, dc, "github.com/o/r#2", service()).registry.Get("run_gosec"); ok {
+			t.Error("an automatic review was offered run_gosec, which drives the Go toolchain")
+		}
+	})
+	for _, bin := range []string{"go", "gosec"} {
+		t.Run("only "+bin, func(t *testing.T) {
+			dc := testContext(t, nil, 4)
+			dc.LookPath = installed(bin)
+
+			if _, ok := newSession(t, dc, "github.com/o/r#1", principal()).registry.Get("run_gosec"); ok {
+				t.Errorf("run_gosec is registered with only %s installed", bin)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -100,4 +101,19 @@ func runForReport(ctx context.Context, r Runner, tool string, cmd Command, repor
 }
 
 // remove deletes the scratch directory and everything the run left in it.
-func (s *scratch) remove() { _ = os.RemoveAll(s.dir) }
+//
+// The go command writes its module cache read-only, and a directory without
+// write permission cannot be emptied, so when a plain removal fails every
+// directory in the tree is made writable and the removal is tried again.
+func (s *scratch) remove() {
+	if os.RemoveAll(s.dir) == nil {
+		return
+	}
+	_ = filepath.WalkDir(s.dir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	_ = os.RemoveAll(s.dir)
+}

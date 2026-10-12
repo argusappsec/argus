@@ -27,7 +27,7 @@ import (
 // is stubbed, which is what moving it onto the Context was for.
 
 // scannerTools is the slice of the deterministic surface this file carries.
-var scannerTools = []string{"run_gitleaks", "run_osv_scanner", "run_semgrep"}
+var scannerTools = []string{"run_gitleaks", "run_gosec", "run_osv_scanner", "run_semgrep"}
 
 func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
@@ -83,6 +83,7 @@ var recordedReports = map[string]string{
 	"run_semgrep":     `{"results":[{"check_id":"argus-fixture-rule","path":"/x/main.go","start":{"line":1},"end":{"line":1},"extra":{"message":"m","severity":"ERROR"}}],"errors":[]}`,
 	"run_gitleaks":    `[{"RuleID":"argus-fixture-rule","File":"/x/main.go","StartLine":1,"EndLine":1}]`,
 	"run_osv_scanner": `{"results":[{"source":{"path":"/x/go.mod"},"packages":[{"package":{"name":"lodash"},"vulnerabilities":[{"id":"argus-fixture-rule"}]}]}]}`,
+	"run_gosec":       `{"Golang errors":{},"Issues":[{"rule_id":"argus-fixture-rule","file":"/x/main.go","line":"1","severity":"HIGH"}]}`,
 }
 
 func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {
@@ -101,7 +102,8 @@ func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {
 			if !strings.Contains(toolText(res), "argus-fixture-rule") {
 				t.Errorf("%s returned %q, want the scanner's own report", name, toolText(res))
 			}
-			if got := runner.args(); !slices.Contains(got, target) {
+			// gosec takes the tree as a package pattern, <target>/...
+			if got := runner.args(); !slices.ContainsFunc(got, func(a string) bool { return a == target || a == target+"/..." }) {
 				t.Errorf("%s was run as %v, want the caller's target %q among its arguments", name, got, target)
 			}
 		})
@@ -248,6 +250,9 @@ func (f *fakeRunner) Run(_ context.Context, cmd security.Command) (string, error
 	for i, a := range args {
 		if (a == "--report-path" || a == "--output") && i+1 < len(args) {
 			_ = os.WriteFile(args[i+1], []byte(f.out), 0o600)
+		}
+		if path, ok := strings.CutPrefix(a, "-out="); ok { // gosec's spelling
+			_ = os.WriteFile(path, []byte(f.out), 0o600)
 		}
 	}
 	return f.out, nil
