@@ -1,0 +1,218 @@
+# Argus's pinned SAST ruleset (ADR 0019 Phase 1, ADR 0027).
+#
+# This file is embedded in the argus binary and is the only ruleset the SAST
+# Tool ever runs. It is never fetched from a registry and never read from the
+# repository under review, so a pull request cannot change which rules run and
+# no scan sends metrics anywhere.
+#
+# The rules are deliberately few and high-signal: each one names a sink that is
+# dangerous with attacker-influenced input. The agent triages every hit, so a
+# rule here should point at code worth reading, not at style.
+#
+# Adding a rule: give it a stable `argus.<language>.<name>` id (rule ids reach
+# reports and known-fps), a CWE in metadata, and keep it free of `include` or
+# remote references.
+rules:
+  # --- Python ---------------------------------------------------------------
+  - id: argus.python.subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A subprocess runs through a shell. If any part of the command comes from
+      input, this is command injection; pass an argument list without shell=True.
+    metadata: {cwe: "CWE-78: OS Command Injection", category: security}
+    pattern-either:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+      - pattern: os.system($CMD)
+      - pattern: os.popen($CMD, ...)
+  - id: argus.python.eval-exec
+    languages: [python]
+    severity: ERROR
+    message: >-
+      eval/exec runs a non-literal string as code. With input in it, this is
+      code injection.
+    metadata: {cwe: "CWE-95: Eval Injection", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: exec($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: exec("...", ...)
+  - id: argus.python.unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Deserializing with pickle/marshal/shelve or yaml.load without a safe loader
+      can execute code from the payload.
+    metadata: {cwe: "CWE-502: Deserialization of Untrusted Data", category: security}
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: cPickle.loads(...)
+      - pattern: marshal.loads(...)
+      - pattern: shelve.open(...)
+      - patterns:
+          - pattern: yaml.load(...)
+          - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader, ...)
+  - id: argus.python.sql-string-building
+    languages: [python]
+    severity: WARNING
+    message: >-
+      A SQL statement is built with string formatting and executed. Use
+      parameterized queries.
+    metadata: {cwe: "CWE-89: SQL Injection", category: security}
+    pattern-either:
+      - pattern: $CUR.execute("..." % $X, ...)
+      - pattern: $CUR.execute("...".format(...), ...)
+      - pattern: $CUR.execute(f"...", ...)
+      - pattern: $CUR.execute("..." + $X, ...)
+  - id: argus.python.tls-verification-disabled
+    languages: [python]
+    severity: WARNING
+    message: TLS certificate verification is disabled for this request.
+    metadata: {cwe: "CWE-295: Improper Certificate Validation", category: security}
+    pattern: requests.$METHOD(..., verify=False, ...)
+
+  # --- Go -------------------------------------------------------------------
+  - id: argus.go.shell-command
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A command runs through a shell with a non-literal script. If any part of
+      it comes from input, this is command injection.
+    metadata: {cwe: "CWE-78: OS Command Injection", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD, ...)
+          - pattern: exec.Command("bash", "-c", $CMD, ...)
+          - pattern: exec.CommandContext($CTX, "sh", "-c", $CMD, ...)
+          - pattern: exec.CommandContext($CTX, "bash", "-c", $CMD, ...)
+      - pattern-not: exec.Command("...", "-c", "...", ...)
+      - pattern-not: exec.CommandContext($CTX, "...", "-c", "...", ...)
+  - id: argus.go.sql-string-building
+    languages: [go]
+    severity: WARNING
+    message: >-
+      A SQL statement is built with fmt.Sprintf or concatenation and executed.
+      Use placeholders.
+    metadata: {cwe: "CWE-89: SQL Injection", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: $DB.$METHOD(fmt.Sprintf($Q, ...), ...)
+          - pattern: $DB.$METHOD($CTX, fmt.Sprintf($Q, ...), ...)
+          - pattern: $DB.$METHOD("..." + $X, ...)
+          - pattern: $DB.$METHOD($CTX, "..." + $X, ...)
+      # Only the database/sql verbs, so fmt.Sprintf into a logger is not a hit.
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|Prepare|PrepareContext)$
+  - id: argus.go.tls-verification-disabled
+    languages: [go]
+    severity: WARNING
+    message: TLS certificate verification is disabled (InsecureSkipVerify).
+    metadata: {cwe: "CWE-295: Improper Certificate Validation", category: security}
+    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+
+  # --- JavaScript / TypeScript ---------------------------------------------
+  - id: argus.js.eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: eval or new Function runs a non-literal string as code.
+    metadata: {cwe: "CWE-95: Eval Injection", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function(...)
+      - pattern-not: eval("...")
+  - id: argus.js.child-process-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      child_process exec runs its command through a shell. With input in a
+      non-literal command, this is command injection; use execFile/spawn with
+      an argument list.
+    metadata: {cwe: "CWE-78: OS Command Injection", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: require('child_process').$EXEC($CMD, ...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $CP = require('child_process')
+                      ...
+                  - pattern-inside: |
+                      import * as $CP from 'child_process'
+                      ...
+                  - pattern-inside: |
+                      import $CP from 'child_process'
+                      ...
+              - pattern: $CP.$EXEC($CMD, ...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import { ..., $EXEC, ... } from 'child_process'
+                      ...
+                  - pattern-inside: |
+                      const { ..., $EXEC, ... } = require('child_process')
+                      ...
+              - pattern: $EXEC($CMD, ...)
+      - metavariable-regex:
+          metavariable: $EXEC
+          regex: ^(exec|execSync)$
+      - pattern-not: $F("...", ...)
+      - pattern-not: $O.$F("...", ...)
+  - id: argus.js.inner-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      A non-literal value is written as HTML. If it carries input, this is
+      cross-site scripting.
+    metadata: {cwe: "CWE-79: Cross-site Scripting", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $X
+          - pattern: $EL.outerHTML = $X
+          - pattern: document.write($X)
+      - pattern-not: $EL.innerHTML = "..."
+      - pattern-not: $EL.outerHTML = "..."
+      - pattern-not: document.write("...")
+  - id: argus.js.tls-verification-disabled
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: TLS certificate verification is disabled (rejectUnauthorized false).
+    metadata: {cwe: "CWE-295: Improper Certificate Validation", category: security}
+    pattern: "{..., rejectUnauthorized: false, ...}"
+
+  # --- Java -----------------------------------------------------------------
+  - id: argus.java.runtime-exec
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Runtime.exec runs a non-literal command. With input in it, this is
+      command injection.
+    metadata: {cwe: "CWE-78: OS Command Injection", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: Runtime.getRuntime().exec($CMD, ...)
+          - pattern: (Runtime $R).exec($CMD, ...)
+      - pattern-not: Runtime.getRuntime().exec("...", ...)
+      - pattern-not: (Runtime $R).exec("...", ...)
+  - id: argus.java.sql-string-building
+    languages: [java]
+    severity: WARNING
+    message: >-
+      A SQL statement is built by concatenation and executed. Use a
+      PreparedStatement with parameters.
+    metadata: {cwe: "CWE-89: SQL Injection", category: security}
+    pattern-either:
+      - pattern: (java.sql.Statement $S).$METHOD("..." + $X, ...)
+      - pattern: (java.sql.Connection $C).prepareStatement("..." + $X, ...)
+  - id: argus.java.unsafe-deserialization
+    languages: [java]
+    severity: WARNING
+    message: >-
+      ObjectInputStream.readObject deserializes arbitrary classes; on untrusted
+      data this can execute code.
+    metadata: {cwe: "CWE-502: Deserialization of Untrusted Data", category: security}
+    pattern: (java.io.ObjectInputStream $O).readObject()

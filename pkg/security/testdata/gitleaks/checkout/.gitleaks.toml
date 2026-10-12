@@ -1,0 +1,3 @@
+# Committed by the pull request to turn gitleaks off for the file. Argus never loads it.
+[allowlist]
+paths = ['''settings\.py''']

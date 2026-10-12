@@ -1,0 +1,162 @@
+{
+  "version": "1.157.0",
+  "results": [
+    {
+      "check_id": "argus.python.subprocess-shell-true",
+      "path": "$CHECKOUT/app.py",
+      "start": {
+        "line": 6,
+        "col": 5,
+        "offset": 52
+      },
+      "end": {
+        "line": 6,
+        "col": 36,
+        "offset": 83
+      },
+      "extra": {
+        "message": "A subprocess runs through a shell. If any part of the command comes from input, this is command injection; pass an argument list without shell=True.",
+        "metadata": {
+          "cwe": "CWE-78: OS Command Injection",
+          "category": "security"
+        },
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "argus.python.subprocess-shell-true",
+      "path": "$CHECKOUT/app.py",
+      "start": {
+        "line": 11,
+        "col": 5,
+        "offset": 175
+      },
+      "end": {
+        "line": 11,
+        "col": 36,
+        "offset": 206
+      },
+      "extra": {
+        "message": "A subprocess runs through a shell. If any part of the command comes from input, this is command injection; pass an argument list without shell=True.",
+        "metadata": {
+          "cwe": "CWE-78: OS Command Injection",
+          "category": "security"
+        },
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "argus.python.unsafe-deserialization",
+      "path": "$CHECKOUT/app.py",
+      "start": {
+        "line": 15,
+        "col": 12,
+        "offset": 236
+      },
+      "end": {
+        "line": 15,
+        "col": 30,
+        "offset": 254
+      },
+      "extra": {
+        "message": "Deserializing with pickle/marshal/shelve or yaml.load without a safe loader can execute code from the payload.",
+        "metadata": {
+          "cwe": "CWE-502: Deserialization of Untrusted Data",
+          "category": "security"
+        },
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "$CHECKOUT/app.py"
+    ]
+  },
+  "time": {
+    "rules": [],
+    "rules_parse_time": 0.012875080108642578,
+    "profiling_times": {
+      "config_time": 0.1843111515045166,
+      "core_time": 0.32692623138427734,
+      "ignores_time": 0.000035762786865234375,
+      "total_time": 0.5199780464172363
+    },
+    "parsing_time": {
+      "total_time": 0.0,
+      "per_file_time": {
+        "mean": 0.0,
+        "std_dev": 0.0
+      },
+      "very_slow_stats": {
+        "time_ratio": 0.0,
+        "count_ratio": 0.0
+      },
+      "very_slow_files": []
+    },
+    "scanning_time": {
+      "total_time": 0.006192922592163086,
+      "per_file_time": {
+        "mean": 0.006192922592163086,
+        "std_dev": 0.0
+      },
+      "very_slow_stats": {
+        "time_ratio": 0.0,
+        "count_ratio": 0.0
+      },
+      "very_slow_files": []
+    },
+    "matching_time": {
+      "total_time": 0.0,
+      "per_file_and_rule_time": {
+        "mean": 0.0,
+        "std_dev": 0.0
+      },
+      "very_slow_stats": {
+        "time_ratio": 0.0,
+        "count_ratio": 0.0
+      },
+      "very_slow_rules_on_files": []
+    },
+    "tainting_time": {
+      "total_time": 0.0,
+      "per_def_and_rule_time": {
+        "mean": 0.0,
+        "std_dev": 0.0
+      },
+      "very_slow_stats": {
+        "time_ratio": 0.0,
+        "count_ratio": 0.0
+      },
+      "very_slow_rules_on_defs": []
+    },
+    "fixpoint_timeouts": [],
+    "prefiltering": {
+      "project_level_time": 0.0,
+      "file_level_time": 0.0,
+      "rules_with_project_prefilters_ratio": 0.0,
+      "rules_with_file_prefilters_ratio": 1.0,
+      "rules_selected_ratio": 0.4,
+      "rules_matched_ratio": 0.4
+    },
+    "targets": [],
+    "total_bytes": 0,
+    "max_memory_bytes": 95863936
+  },
+  "engine_requested": "OSS",
+  "skipped_rules": [],
+  "profiling_results": []
+}

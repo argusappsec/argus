@@ -77,20 +77,28 @@ func TestToolCall_ScannerRunsAgainstAnAbsolutePathOnTheHost(t *testing.T) {
 	}
 }
 
+// recordedReports is a one-finding report in each scanner's own format, so a
+// test can see the finding come back through the Tool's parsing.
+var recordedReports = map[string]string{
+	"run_semgrep":     `{"results":[{"check_id":"argus-fixture-rule","path":"/x/main.go","start":{"line":1},"end":{"line":1},"extra":{"message":"m","severity":"ERROR"}}],"errors":[]}`,
+	"run_gitleaks":    `[{"RuleID":"argus-fixture-rule","File":"/x/main.go","StartLine":1,"EndLine":1}]`,
+	"run_osv_scanner": `{"results":[{"source":{"path":"/x/go.mod"},"packages":[{"package":{"name":"lodash"},"vulnerabilities":[{"id":"argus-fixture-rule"}]}]}]}`,
+}
+
 func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {
 	// One target argument, the same on all three: the calling AI learns the
 	// convention once and uses whichever scanner the question needs.
 	for _, name := range scannerTools {
 		t.Run(name, func(t *testing.T) {
 			s, _ := toolboxServer(t, auth.RoleAnalyst)
-			runner := stubScanners(t, s, `{"findings":"lodash CVE"}`)
+			runner := stubScanners(t, s, recordedReports[name])
 			target := t.TempDir()
 
 			res := callToolWith(t, s, name, `{"path":`+quote(target)+`}`)
 			if res.IsError {
 				t.Fatalf("%s must succeed against a readable directory: %s", name, toolText(res))
 			}
-			if !strings.Contains(toolText(res), "lodash CVE") {
+			if !strings.Contains(toolText(res), "argus-fixture-rule") {
 				t.Errorf("%s returned %q, want the scanner's own report", name, toolText(res))
 			}
 			if got := runner.args(); !slices.Contains(got, target) {

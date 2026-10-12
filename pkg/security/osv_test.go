@@ -28,7 +28,7 @@ func TestOSVScanner_PassesPathAndReturnsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out, "results") {
+	if !strings.Contains(out, "findings") {
 		t.Errorf("output = %q", out)
 	}
 	joined := strings.Join(fr.gotArgs, " ")
@@ -53,7 +53,7 @@ func TestOSVScanner_ErrorsWhenNoTargetSet(t *testing.T) {
 // written report as authoritative even if the binary errored.
 func TestOSVScanner_TolerantOfExit1WhenReportPresent(t *testing.T) {
 	fr := &fakeRunner{
-		out: `{"results":[{"packages":[{"package":{"name":"lodash"}}]}]}`,
+		out: `{"results":[{"source":{"path":"/repo/package-lock.json"},"packages":[{"package":{"name":"lodash","ecosystem":"npm"},"vulnerabilities":[{"id":"GHSA-p6mc-m468-83gw"}],"groups":[{"ids":["GHSA-p6mc-m468-83gw"]}]}]}]}`,
 		err: errExit1{},
 	}
 	o := security.NewOSVScanner(sessionAt("/repo"), fr)
