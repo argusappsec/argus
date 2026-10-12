@@ -221,3 +221,53 @@ func checkNames(checks []doctor.Check) []string {
 	}
 	return out
 }
+
+// imageBinaries is what the official image ships (the Dockerfile): git plus
+// the Manifest's binaries, with opengrep as its SAST engine.
+var imageBinaries = []string{"git", "opengrep", "gitleaks", "osv-scanner"}
+
+// doctorBinaries runs `argus doctor --binaries` on a PATH holding exactly the
+// given binaries (as stubs) and reports whether it passed, with its output.
+func doctorBinaries(t *testing.T, binaries []string) (bool, string) {
+	t.Helper()
+	binDir := t.TempDir()
+	for _, b := range binaries {
+		if err := os.WriteFile(filepath.Join(binDir, b), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+
+	c := doctorCmd()
+	var out strings.Builder
+	c.SetOut(&out)
+	c.SetErr(io.Discard)
+	c.SetArgs([]string{"--home", t.TempDir(), "--binaries"})
+	err := c.Execute()
+	return err == nil, out.String()
+}
+
+// The image contract is the Manifest. The image's binaries satisfy it, and a
+// catalogued Tool the image does not ship (gosec, which needs go) does not
+// fail it, whatever this host would register.
+func TestDoctorBinaries_PassesOnTheImagesBinaries(t *testing.T) {
+	ok, out := doctorBinaries(t, imageBinaries)
+	if !ok {
+		t.Fatalf("doctor --binaries failed on the image's binaries:\n%s", out)
+	}
+	if strings.Contains(out, "gosec") {
+		t.Errorf("gosec is not in the Manifest, so the image contract has no row for it:\n%s", out)
+	}
+}
+
+// Dropping any Manifest binary from the image fails the contract.
+func TestDoctorBinaries_FailsWhenAManifestBinaryIsMissing(t *testing.T) {
+	for _, missing := range imageBinaries {
+		t.Run(missing, func(t *testing.T) {
+			rest := slices.DeleteFunc(slices.Clone(imageBinaries), func(b string) bool { return b == missing })
+			if ok, out := doctorBinaries(t, rest); ok {
+				t.Errorf("doctor --binaries passed without %s:\n%s", missing, out)
+			}
+		})
+	}
+}

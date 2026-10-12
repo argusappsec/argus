@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -361,7 +362,7 @@ func TestRun_BinariesOnly_DisabledToolStillOwesItsBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	checks := doctor.Run(doctor.Options{
-		Catalog:       []security.Entry{stubEntry("scanner", "scanner-bin")},
+		Catalog:       []security.Entry{manifestEntry("scanner", "scanner-bin")},
 		DisabledTools: []string{"scanner"},
 		BinariesOnly:  true,
 	})
@@ -449,6 +450,84 @@ func TestRun_ReportsAToolOverAlternativeEnginesAsMissingWithEitherInstallHint(t 
 	}
 }
 
+// manifestEntry is a catalogued Tool the official image ships (the Manifest).
+func manifestEntry(id string, binaries ...string) security.Entry {
+	e := stubEntry(id, binaries...)
+	e.Manifest = true
+	return e
+}
+
+// The image contract is the Manifest: a Tool the image does not ship is the
+// operator's to install, so its absence is not a broken image.
+func TestRun_BinariesOnly_IgnoresAToolOutsideTheManifest(t *testing.T) {
+	binDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
+	t.Setenv("PATH", binDir)
+
+	checks := doctor.Run(doctor.Options{
+		Catalog: []security.Entry{
+			manifestEntry("scanner", "scanner-bin"),
+			stubEntry("extra", "toolchain", "extra-bin"),
+		},
+		BinariesOnly: true,
+	})
+
+	if doctor.Summarize(checks).HasBlockingFailure() {
+		t.Errorf("a missing Tool outside the Manifest must not fail the image contract: %+v", checks)
+	}
+	if slices.ContainsFunc(checks, func(c doctor.Check) bool { return c.Name == "extra" }) {
+		t.Errorf("the image contract checks the Manifest only, got an %q row: %+v", "extra", checks)
+	}
+}
+
+// Every Manifest Tool is owed, and the row names what is missing.
+func TestRun_BinariesOnly_MissingManifestBinaryBlocks(t *testing.T) {
+	binDir := t.TempDir()
+	makeStubBinary(t, binDir, "scanner-bin")
+	t.Setenv("PATH", binDir)
+
+	checks := doctor.Run(doctor.Options{
+		Catalog:      []security.Entry{manifestEntry("scanner", "scanner-bin", "toolchain")},
+		BinariesOnly: true,
+	})
+
+	c := checkNamed(t, checks, "scanner")
+	if c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
+		t.Errorf("a Manifest Tool missing a binary must block, got %v/%v", c.Status, c.Severity)
+	}
+	if !strings.Contains(c.Message, "brew install toolchain") {
+		t.Errorf("the row should name the missing binary's install hint, got %q", c.Message)
+	}
+}
+
+// A Manifest Tool over alternative engines is owed one engine, not all of
+// them: the image ships whichever it chose.
+func TestRun_BinariesOnly_AManifestToolOverAlternativeEnginesNeedsOneEngine(t *testing.T) {
+	engines := enginesEntry()
+	engines.Manifest = true
+
+	t.Run("one engine", func(t *testing.T) {
+		binDir := t.TempDir()
+		makeStubBinary(t, binDir, "preferred-engine")
+		t.Setenv("PATH", binDir)
+
+		checks := doctor.Run(doctor.Options{Catalog: []security.Entry{engines}, BinariesOnly: true})
+
+		if c := checkNamed(t, checks, "sast"); c.Status != doctor.Pass {
+			t.Errorf("one engine satisfies the image contract, got %v (%s)", c.Status, c.Message)
+		}
+	})
+	t.Run("no engine", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+
+		checks := doctor.Run(doctor.Options{Catalog: []security.Entry{engines}, BinariesOnly: true})
+
+		if c := checkNamed(t, checks, "sast"); c.Status != doctor.Fail || c.Severity != doctor.SeverityRequired {
+			t.Errorf("no engine must block the image contract, got %v/%v", c.Status, c.Severity)
+		}
+	})
+}
+
 func TestRun_BinariesOnly_AllPresentSucceeds(t *testing.T) {
 	binDir := t.TempDir()
 	homeDir := t.TempDir()
@@ -460,7 +539,7 @@ func TestRun_BinariesOnly_AllPresentSucceeds(t *testing.T) {
 
 	checks := doctor.Run(doctor.Options{
 		Home:         homeDir,
-		Catalog:      []security.Entry{stubEntry("scanner", "scanner-bin")},
+		Catalog:      []security.Entry{manifestEntry("scanner", "scanner-bin")},
 		BinariesOnly: true,
 		ExtraBinaries: []doctor.ExtraBinary{
 			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
@@ -487,7 +566,7 @@ func TestRun_BinariesOnly_MissingToolBinaryBlocks(t *testing.T) {
 
 	checks := doctor.Run(doctor.Options{
 		Home:         homeDir,
-		Catalog:      []security.Entry{stubEntry("scanner", "scanner-bin")},
+		Catalog:      []security.Entry{manifestEntry("scanner", "scanner-bin")},
 		BinariesOnly: true,
 		ExtraBinaries: []doctor.ExtraBinary{
 			{Name: "git", Required: true, UsedBy: "cloning", InstallHint: "brew install git"},
@@ -509,7 +588,7 @@ func TestRun_BinariesOnly_MissingExtraBinaryBlocks(t *testing.T) {
 
 	checks := doctor.Run(doctor.Options{
 		Home:         homeDir,
-		Catalog:      []security.Entry{stubEntry("scanner", "scanner-bin")},
+		Catalog:      []security.Entry{manifestEntry("scanner", "scanner-bin")},
 		BinariesOnly: true,
 		ExtraBinaries: []doctor.ExtraBinary{
 			// Declared as NOT required — binaries-only mode must still block.

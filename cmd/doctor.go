@@ -34,7 +34,7 @@ func doctorCmd() *cobra.Command {
 		Short: "Check that Argus's dependencies and configuration are ready.",
 		Long: "Run a pre-flight check on:\n" +
 			"  • CLI binaries Argus shells out to (git), and every catalogued scanner\n" +
-			"    (semgrep, gitleaks, osv-scanner, …) as installed or not installed — a\n" +
+			"    (sast, gitleaks, osv-scanner, …) as installed or not installed — a\n" +
 			"    scanner that is not installed is information, not a failure\n" +
 			"  • argus.yaml (provider configured? default model set?)\n" +
 			"  • the API key each configured provider needs (in .env or shell)\n" +
@@ -45,11 +45,12 @@ func doctorCmd() *cobra.Command {
 			"  • SOUL.md (present? populated?)\n" +
 			"  • context/ (any documents on file?)\n\n" +
 			"Exit code 0 = all required checks pass; 1 = at least one required check failed.\n\n" +
-			"--binaries runs the image-contract check only: it verifies just the CLI\n" +
-			"binaries and treats every one as blocking (ADR 0013). This is the gate CI\n" +
-			"runs inside the official batteries-included image — there \"optional\" does\n" +
-			"not exist; everything the image promises is owed. Exit 0 = all present, 1 =\n" +
-			"any missing.",
+			"--binaries runs the image-contract check only: it verifies git and every\n" +
+			"scanner in the Manifest — the part of the catalog the official image ships\n" +
+			"(ADR 0027) — and treats each as blocking. This is the gate CI runs inside\n" +
+			"the official image: there \"optional\" does not exist; everything the image\n" +
+			"promises is owed. Catalogued scanners outside the Manifest are not checked.\n" +
+			"Exit 0 = all present, 1 = any missing.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolveHome(homeDir)
 			if err != nil {
@@ -79,7 +80,7 @@ func doctorCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")
-	c.Flags().BoolVar(&binariesOnly, "binaries", false, "Check only CLI binaries, treating every one as blocking (image contract / CI gate)")
+	c.Flags().BoolVar(&binariesOnly, "binaries", false, "Check only git and the Manifest's scanner binaries, treating every one as blocking (image contract / CI gate)")
 	return c
 }
 

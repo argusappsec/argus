@@ -136,11 +136,12 @@ type Options struct {
 	// here. Nil means the generation is not attempted.
 	ProviderToolCall func(ctx context.Context) (bool, error)
 
-	// BinariesOnly restricts Run to the image-contract check (ADR 0013):
-	// only binary checks execute, and every binary is treated as blocking
-	// (Required) regardless of its per-tool "optional" severity. This is the
-	// check CI runs against the batteries-included image — inside the official
-	// image "optional" does not exist; everything the image promises is owed.
+	// BinariesOnly restricts Run to the image-contract check (ADR 0013, as
+	// amended by ADR 0027): only the ExtraBinaries and the Catalog's Manifest
+	// Tools are checked — not what this host would register — and every one is
+	// treated as blocking (Required). A Manifest Tool over Alternatives owes
+	// one of its engines. This is the check CI runs against the official image —
+	// inside it "optional" does not exist; everything the image promises is owed.
 	// Non-binary checks (config, API keys, the LLM Provider probe, SOUL, context,
 	// GitHub, the front door) are skipped and cannot affect the outcome — which
 	// also means the image contract never reaches the network.
@@ -150,7 +151,7 @@ type Options struct {
 // Run executes all checks and returns the results in display order.
 func Run(opts Options) []Check {
 	if opts.BinariesOnly {
-		checks := binaryChecks(opts.Catalog, opts.ExtraBinaries, nil)
+		checks := binaryChecks(manifest(opts.Catalog), opts.ExtraBinaries, nil)
 		for i := range checks {
 			checks[i].Severity = SeverityRequired
 			// A Tool that is merely not installed is Info everywhere else; in
@@ -281,6 +282,19 @@ func binaryChecks(catalog []security.Entry, extras []ExtraBinary, disabled []str
 			continue
 		}
 		out = append(out, catalogCheck(e))
+	}
+	return out
+}
+
+// manifest is the part of the Catalog the official image ships and guarantees
+// (ADR 0027). It is what the image contract checks: a catalogued Tool outside
+// it is the operator's to install, so its absence is not a broken image.
+func manifest(catalog []security.Entry) []security.Entry {
+	var out []security.Entry
+	for _, e := range catalog {
+		if e.Manifest {
+			out = append(out, e)
+		}
 	}
 	return out
 }
