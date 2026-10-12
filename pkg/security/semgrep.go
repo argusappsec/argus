@@ -56,7 +56,8 @@ func init() {
 			Name:        "semgrep",
 			InstallHint: "brew install semgrep  (or pip install semgrep)",
 		}},
-		New: func(d Deps) tool.Tool { return NewSemgrep(d.Session, d.Commands) },
+		Trust: TrustSafe, // pattern-matches source files; never builds them
+		New:   func(d Deps) tool.Tool { return NewSemgrep(d.Session, d.Commands) },
 	})
 }
 
