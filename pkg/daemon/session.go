@@ -79,7 +79,7 @@ type Session struct {
 func (s *Session) ID() string { return s.id }
 
 // SetToolRoot points the Session's file-scoped tools (list_files, read_file,
-// grep, run_semgrep, …) at path. The review paths set it from their checkout;
+// grep, run_sast, …) at path. The review paths set it from their checkout;
 // the GitHub channel's rescope action sets it after cloning the PR head so the
 // in-thread focused pass can read the tree.
 func (s *Session) SetToolRoot(path string) { s.toolState.SetRoot(path) }
@@ -509,7 +509,8 @@ func buildRegistry(toolState *session.Session, dc *Context, automatic bool) (*to
 	// is never offered. Every scanner is exposed — a caller over MCP does not
 	// already have it. An automatic review also leaves out every scanner that
 	// drives a toolchain over the code, and builds the rest in their automatic
-	// mode.
+	// mode. Each is built over the binaries discovery found for it, which is
+	// how the SAST Tool runs opengrep when it is there and semgrep otherwise.
 	deps := security.Deps{Session: toolState, Commands: dc.commands(), Automatic: automatic}
 	var withheld []string
 	for _, e := range dc.Tools().Installed {
@@ -517,7 +518,9 @@ func buildRegistry(toolState *session.Session, dc *Context, automatic bool) (*to
 			withheld = append(withheld, e.ID)
 			continue
 		}
-		reg.Expose(e.New(deps))
+		d := deps
+		d.Found = e.Found
+		reg.Expose(e.New(d))
 	}
 	reg.Expose(tool.NewListSkills(dc.Skills))
 	reg.Expose(tool.NewReadSkill(dc.Skills))

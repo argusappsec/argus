@@ -27,7 +27,7 @@ import (
 // is stubbed, which is what moving it onto the Context was for.
 
 // scannerTools is the slice of the deterministic surface this file carries.
-var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_semgrep"}
+var scannerTools = []string{"run_gitleaks", "run_gosec", "run_govulncheck", "run_osv_scanner", "run_sast"}
 
 func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
@@ -51,7 +51,7 @@ func TestToolsList_OffersOnlyTheScannersInstalledOnTheHost(t *testing.T) {
 	if !slices.Contains(names, "run_gitleaks") {
 		t.Errorf("gitleaks is installed, so run_gitleaks must be listed; got %v", names)
 	}
-	for _, absent := range []string{"run_semgrep", "run_osv_scanner"} {
+	for _, absent := range []string{"run_sast", "run_osv_scanner"} {
 		if slices.Contains(names, absent) {
 			t.Errorf("%s's binary is missing, so it must not be listed; got %v", absent, names)
 		}
@@ -65,22 +65,22 @@ func TestToolCall_ScannerRunsAgainstAnAbsolutePathOnTheHost(t *testing.T) {
 	runner := stubScanners(t, s, `{"results":[{"check_id":"sqli"}]}`)
 	target := t.TempDir()
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(target)+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(target)+`}`)
 	if res.IsError {
-		t.Fatalf("run_semgrep must succeed against a readable directory: %s", toolText(res))
+		t.Fatalf("run_sast must succeed against a readable directory: %s", toolText(res))
 	}
 	if !strings.Contains(toolText(res), "sqli") {
 		t.Errorf("the scanner's own report must reach the caller: %q", toolText(res))
 	}
 	if got := runner.args(); !slices.Contains(got, target) {
-		t.Errorf("semgrep was run as %v, want the caller's target %q among its arguments", got, target)
+		t.Errorf("the SAST engine was run as %v, want the caller's target %q among its arguments", got, target)
 	}
 }
 
 // recordedReports is a one-finding report in each scanner's own format, so a
 // test can see the finding come back through the Tool's parsing.
 var recordedReports = map[string]string{
-	"run_semgrep":     `{"results":[{"check_id":"argus-fixture-rule","path":"/x/main.go","start":{"line":1},"end":{"line":1},"extra":{"message":"m","severity":"ERROR"}}],"errors":[]}`,
+	"run_sast":        `{"results":[{"check_id":"argus-fixture-rule","path":"/x/main.go","start":{"line":1},"end":{"line":1},"extra":{"message":"m","severity":"ERROR"}}],"errors":[]}`,
 	"run_gitleaks":    `[{"RuleID":"argus-fixture-rule","File":"/x/main.go","StartLine":1,"EndLine":1}]`,
 	"run_osv_scanner": `{"results":[{"source":{"path":"/x/go.mod"},"packages":[{"package":{"name":"lodash"},"vulnerabilities":[{"id":"argus-fixture-rule"}]}]}]}`,
 	"run_gosec":       `{"Golang errors":{},"Issues":[{"rule_id":"argus-fixture-rule","file":"/x/main.go","line":"1","severity":"HIGH"}]}`,
@@ -116,7 +116,7 @@ func TestToolCall_ScannerRejectsATargetThatDoesNotExist(t *testing.T) {
 	runner := stubScanners(t, s, `{}`)
 	missing := filepath.Join(t.TempDir(), "no-such-project")
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(missing)+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(missing)+`}`)
 	if !res.IsError {
 		t.Fatalf("a target that does not exist must be refused, got %q", toolText(res))
 	}
@@ -134,7 +134,7 @@ func TestToolCall_ScannerRejectsARelativeTarget(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
 	runner := stubScanners(t, s, `{}`)
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":"./src"}`)
+	res := callToolWith(t, s, "run_sast", `{"path":"./src"}`)
 	if !res.IsError {
 		t.Fatalf("a relative target must be refused, got %q", toolText(res))
 	}
@@ -158,7 +158,7 @@ func TestToolCall_ScannerRejectsATargetItCannotRead(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(target, 0o700) })
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(target)+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(target)+`}`)
 	if !res.IsError {
 		t.Fatalf("an unreadable target must be refused, got %q", toolText(res))
 	}
@@ -176,7 +176,7 @@ func TestToolCall_ScannerWithNoTargetSaysWhatToPass(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
 	stubScanners(t, s, `{}`)
 
-	res := callToolWith(t, s, "run_semgrep", `{}`)
+	res := callToolWith(t, s, "run_sast", `{}`)
 	if !res.IsError {
 		t.Fatalf("a scan with no target must be refused, got %q", toolText(res))
 	}
@@ -194,9 +194,9 @@ func TestToolCall_ViewerIsRefusedOnTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleViewer)
 	runner := stubScanners(t, s, `{}`)
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(t.TempDir())+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(t.TempDir())+`}`)
 	if !res.IsError || !strings.Contains(toolText(res), "permission denied") {
-		t.Fatalf("a viewer must be refused on run_semgrep, got %q", toolText(res))
+		t.Fatalf("a viewer must be refused on run_sast, got %q", toolText(res))
 	}
 	if runner.calls() != 0 {
 		t.Error("a refused caller must not reach the scanner binary")
@@ -206,14 +206,14 @@ func TestToolCall_ViewerIsRefusedOnTheScanners(t *testing.T) {
 func TestToolCall_ScannerRunIsAuditedAndAttributed(t *testing.T) {
 	s, auditPath := toolboxServer(t, auth.RoleAnalyst)
 	stubScanners(t, s, `{"results":[]}`)
-	callToolWith(t, s, "run_semgrep", `{"path":`+quote(t.TempDir())+`}`)
+	callToolWith(t, s, "run_sast", `{"path":`+quote(t.TempDir())+`}`)
 
 	e := findEvent(t, auditPath, "mcp_tool_call")
 	if e == nil {
 		t.Fatal("expected an mcp_tool_call audit event")
 	}
-	if e.Data["tool"] != "run_semgrep" {
-		t.Errorf("audit tool = %v, want run_semgrep", e.Data["tool"])
+	if e.Data["tool"] != "run_sast" {
+		t.Errorf("audit tool = %v, want run_sast", e.Data["tool"])
 	}
 	if e.Data["principal"] != "davide" {
 		t.Errorf("audit principal = %v, want the Person the bearer token resolved to", e.Data["principal"])

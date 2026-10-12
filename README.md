@@ -62,7 +62,7 @@ New here? Start with **[Getting started](docs/guide/getting-started.md)**.
 - **Reviews you can talk to.** Ask in chat, call over MCP, or let GitHub
   webhooks trigger them automatically — then discuss the findings instead of
   grepping a SARIF file.
-- **Real scanners, no shell escape.** `semgrep`, `gitleaks`, and
+- **Real scanners, no shell escape.** `opengrep` or `semgrep`, `gitleaks`, and
   `osv-scanner` run as structured, code-reviewed Go tools; the model is
   deliberately given no generic `bash`/`exec`.
 - **Knows your organization.** A SOUL file (company profile, stack,

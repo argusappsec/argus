@@ -59,7 +59,7 @@ func TestRegistry_LeavesOutAScannerWhoseBinaryIsMissing(t *testing.T) {
 
 	reg := dc.NewToolRegistry()
 
-	for _, name := range []string{"run_semgrep", "run_osv_scanner"} {
+	for _, name := range []string{"run_sast", "run_osv_scanner"} {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("%s is registered although its binary is missing", name)
 		}
@@ -91,8 +91,55 @@ func TestRegistry_LeavesOutAnInstalledScannerThatIsDisabled(t *testing.T) {
 	if slices.Contains(exposedNames(reg), "run_gitleaks") {
 		t.Errorf("run_gitleaks is disabled but exposed; exposed = %v", exposedNames(reg))
 	}
-	if _, ok := reg.Get("run_semgrep"); !ok {
-		t.Error("run_semgrep is installed and not disabled, so it must be registered")
+	if _, ok := reg.Get("run_sast"); !ok {
+		t.Error("run_sast is installed and not disabled, so it must be registered")
+	}
+}
+
+// One SAST Tool, run_sast, stands for both engines (ADR 0027). It is registered
+// when either is installed, runs opengrep when that is there and semgrep
+// otherwise, and is absent when neither is. The engine is observed the way the
+// host would: by which binary the Tool asks the runner to execute.
+func TestRegistry_RegistersOneSASTToolOverThePreferredInstalledEngine(t *testing.T) {
+	cases := []struct {
+		name   string
+		onPath []string
+		engine string // "" means run_sast must not be registered
+	}{
+		{"opengrep only", []string{"opengrep"}, "opengrep"},
+		{"semgrep only", []string{"semgrep"}, "semgrep"},
+		{"both: opengrep wins", []string{"semgrep", "opengrep"}, "opengrep"},
+		{"neither", []string{"gitleaks"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dc := testContext(t, nil, 4)
+			dc.LookPath = installed(c.onPath...)
+			fr := &recordingRunner{}
+			dc.Commands = fr
+
+			reg := dc.NewToolRegistry()
+
+			sast, ok := reg.Get("run_sast")
+			if c.engine == "" {
+				if ok || slices.Contains(exposedNames(reg), "run_sast") {
+					t.Fatal("run_sast is registered although no engine is installed")
+				}
+				return
+			}
+			if !ok || !slices.Contains(exposedNames(reg), "run_sast") {
+				t.Fatalf("run_sast must be registered and exposed; exposed = %v", exposedNames(reg))
+			}
+			for _, old := range []string{"run_semgrep", "run_opengrep"} {
+				if _, ok := reg.Get(old); ok {
+					t.Errorf("%s is registered; the engines share the one run_sast Tool", old)
+				}
+			}
+			_, _ = sast.Execute(context.Background(), map[string]any{"path": t.TempDir()})
+			if len(fr.args) == 0 || fr.args[0] != c.engine {
+				t.Errorf("run_sast ran %v, want the %s engine", fr.args, c.engine)
+			}
+		})
 	}
 }
 
@@ -153,7 +200,7 @@ func TestPRReviewSeed_NamesOnlyTheScannersRegisteredInTheSession(t *testing.T) {
 	if !strings.Contains(seed, "run_gitleaks") {
 		t.Errorf("the seed must name the registered scanner run_gitleaks:\n%s", seed)
 	}
-	for _, absent := range []string{"run_semgrep", "run_osv_scanner"} {
+	for _, absent := range []string{"run_sast", "run_osv_scanner"} {
 		if strings.Contains(seed, absent) {
 			t.Errorf("the seed names %s, which is not registered:\n%s", absent, seed)
 		}

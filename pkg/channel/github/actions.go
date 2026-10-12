@@ -166,7 +166,7 @@ func memoryAdvisory(repo string, number int, f report.Finding, reason string) st
 // admin asking Argus to "also check the auth module" gets a focused additional
 // pass, not a full re-review: the tool clones the PR head, points the
 // file-scoped tools at the checkout, and hands the agent the area to inspect so
-// it scans there with grep/read_file/run_semgrep within the SAME thread turn.
+// it scans there with grep/read_file and its scanners within the SAME thread turn.
 type rescopeReview struct {
 	role    auth.Role
 	store   *prReviewStore
@@ -181,7 +181,7 @@ func (t *rescopeReview) Name() string { return "rescope_review" }
 func (t *rescopeReview) Description() string {
 	return "Run a focused additional security pass over a specific area of this pull request (e.g. a " +
 		"module or directory the teammate asked you to also check). This checks out the PR head and lets " +
-		"you inspect that area with read_file / grep / run_semgrep — it does NOT re-run the whole review. " +
+		"you inspect that area with read_file / grep and the scanners among your tools — it does NOT re-run the whole review. " +
 		"Report what you find in your reply. Only call this when a teammate asks you to also check or " +
 		"re-examine a part of the change."
 }
@@ -222,7 +222,7 @@ func (t *rescopeReview) Execute(ctx context.Context, args map[string]any) (strin
 
 	return fmt.Sprintf(
 		"Checked out the PR head (%s). Focus your additional analysis on: %s. "+
-			"Use list_files / grep / read_file / run_semgrep scoped to that area, then summarize anything "+
+			"Use list_files / grep / read_file and the scanners among your tools, scoped to that area, then summarize anything "+
 			"relevant in your reply. Do not re-review the rest of the change.",
 		co.SHA, area), nil
 }

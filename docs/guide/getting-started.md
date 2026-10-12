@@ -23,7 +23,7 @@ mise install     # optional: pins go + golangci-lint versions
 make build       # builds the ./argus binary
 ```
 
-Scanner binaries (`semgrep`, `gitleaks`, `osv-scanner`) are optional but
+Scanner binaries (`opengrep` or `semgrep`, `gitleaks`, `osv-scanner`) are optional but
 recommended — install them on the daemon host and run `argus doctor` to check
 what's available.
 

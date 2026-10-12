@@ -41,7 +41,7 @@ func (t *startReviewGitHub) Name() string { return "start_review_github" }
 func (t *startReviewGitHub) Description() string {
 	return "Start a security review on a GitHub repository. " +
 		"Clones the repository (shallow, authenticated so private repos the App can access work) into a local cache and points subsequent " +
-		"file-scoped tools (list_files, read_file, grep, run_semgrep, run_gitleaks, run_osv_scanner) at the checkout. " +
+		"file-scoped tools (list_files, read_file, grep, and whichever scanners this session has) at the checkout. " +
 		"Use when the user provides a github.com URL or short form like github.com/owner/repo. " +
 		"For paths already on disk use start_review_local instead."
 }
@@ -83,5 +83,5 @@ func (t *startReviewGitHub) Execute(ctx context.Context, args map[string]any) (s
 	}
 
 	t.sess.SetRoot(co.Path)
-	return fmt.Sprintf("Cloned %s at %s to %s. Proceed with list_files / read_file / grep / run_semgrep / run_gitleaks / run_osv_scanner.", repo.FullName, co.SHA, co.Path), nil
+	return fmt.Sprintf("Cloned %s at %s to %s. Proceed with list_files / read_file / grep and the scanners among your tools.", repo.FullName, co.SHA, co.Path), nil
 }
