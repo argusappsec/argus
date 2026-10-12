@@ -54,7 +54,8 @@ func init() {
 			Name:        "gitleaks",
 			InstallHint: "brew install gitleaks",
 		}},
-		New: func(d Deps) tool.Tool { return NewGitleaks(d.Session, d.Commands) },
+		Trust: TrustSafe, // reads files and git history; runs nothing
+		New:   func(d Deps) tool.Tool { return NewGitleaks(d.Session, d.Commands) },
 	})
 }
 

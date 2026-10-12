@@ -83,3 +83,18 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 		t.Errorf("Missing = %v, want [osv-scanner semgrep]", got)
 	}
 }
+
+// The three scanners Argus has always wrapped only read files: none drives a
+// toolchain or package manager over the code under review, so all of them stay
+// in an automatic review's registry (ADR 0018, ADR 0027).
+func TestCatalog_TheExistingScannersAreSafeOnUntrustedInput(t *testing.T) {
+	for _, id := range []string{"gitleaks", "osv-scanner", "semgrep"} {
+		i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == id })
+		if i < 0 {
+			t.Fatalf("%s is not catalogued", id)
+		}
+		if got := security.Catalog()[i].Trust; got != security.TrustSafe {
+			t.Errorf("%s trust = %q, want %q", id, got, security.TrustSafe)
+		}
+	}
+}
