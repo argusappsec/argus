@@ -240,7 +240,15 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 	// reports the same answer (ADR 0027). The operator's tools.disabled is
 	// applied to it, so a disabled Tool is never registered.
 	dc.DisabledTools = cfg.Tools.Disabled
-	dc.Tools()
+	// The audit log records the answer too, so an auditor can reconstruct what
+	// any review on this daemon could have run (and, with tools_withheld, what
+	// an automatic one was denied).
+	d := dc.Tools()
+	_ = dc.Audit.Log(auditEvent("tools_registered", map[string]any{
+		"registered": entryIDs(d.Installed),
+		"missing":    entryIDs(d.Missing),
+		"disabled":   entryIDs(d.Disabled),
+	}))
 
 	dc.Sessions = NewSessionManager(dc, cfg.Daemon.SessionCap())
 	return dc, nil
@@ -260,6 +268,16 @@ func (dc *Context) Tools() security.Discovery {
 		dc.tools = security.Discover(lookPath).Disable(dc.DisabledTools)
 	})
 	return dc.tools
+}
+
+// entryIDs lists the Catalog IDs of entries, in order. It is never nil, so an
+// empty half is recorded as an empty list rather than as null.
+func entryIDs(entries []security.Entry) []string {
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	return ids
 }
 
 // commands is the Runner the scanner Tools shell out through: the one injected
