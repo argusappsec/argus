@@ -12,6 +12,15 @@ import (
 	"github.com/argusappsec/argus/pkg/tool"
 )
 
+func init() {
+	f := toolFixture{empty: `{"results":[]}`}
+	// An explicit --config overrides every osv-scanner.toml next to a
+	// lockfile, and --no-ignore stops a committed .gitignore from hiding one.
+	f.repoConfig.switches = []string{"--no-ignore"}
+	f.repoConfig.scratch = []string{"--config"}
+	fixture("osv-scanner", f)
+}
+
 func TestOSVScanner_ToolMetadata(t *testing.T) {
 	o := security.NewOSVScanner(sessionAt("/tmp"), &fakeRunner{})
 	if o.Name() != "run_osv_scanner" {

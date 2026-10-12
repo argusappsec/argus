@@ -19,13 +19,20 @@ func entryIDs(entries []security.Entry) []string {
 	return ids
 }
 
-// The Catalog lists the scanners Argus wraps today, whatever the host has
-// installed, in a stable order.
+// The Catalog lists every scanner Argus wraps, whatever the host has
+// installed, once each and in a stable order (by ID). Which scanners those are
+// is each Tool's own business: every one is held to the shared tests through
+// its fixture (TestScanners_EveryCataloguedToolHasHardeningCoverage).
 func TestCatalog_ListsEveryScannerInIDOrder(t *testing.T) {
 	got := entryIDs(security.Catalog())
-	want := []string{"gitleaks", "gosec", "govulncheck", "osv-scanner", "sast", "trivy", "zizmor"}
-	if !slices.Equal(got, want) {
-		t.Errorf("Catalog IDs = %v, want %v", got, want)
+	if len(got) == 0 {
+		t.Fatal("the Catalog is empty")
+	}
+	if !slices.IsSorted(got) || len(slices.Compact(slices.Clone(got))) != len(got) {
+		t.Errorf("Catalog IDs = %v, want each once, in ID order", got)
+	}
+	if !slices.Equal(got, entryIDs(security.Catalog())) {
+		t.Error("the Catalog's order must not change between calls")
 	}
 }
 
@@ -80,8 +87,9 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 	if got := entryIDs(d.Installed); !slices.Equal(got, []string{"gitleaks"}) {
 		t.Errorf("Installed = %v, want [gitleaks]", got)
 	}
-	if got := entryIDs(d.Missing); !slices.Equal(got, []string{"gosec", "govulncheck", "osv-scanner", "sast", "trivy", "zizmor"}) {
-		t.Errorf("Missing = %v, want [gosec govulncheck osv-scanner sast trivy zizmor]", got)
+	want := slices.DeleteFunc(entryIDs(security.Catalog()), func(id string) bool { return id == "gitleaks" })
+	if got := entryIDs(d.Missing); !slices.Equal(got, want) {
+		t.Errorf("Missing = %v, want every other catalogued Tool, %v", got, want)
 	}
 }
 

@@ -15,6 +15,13 @@ import (
 	"github.com/argusappsec/argus/pkg/security"
 )
 
+func init() {
+	// govulncheck has no config file, ignore file or in-code suppression to
+	// switch off: it obeys nothing in the checkout.
+	fixture("govulncheck", toolFixture{empty: `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0","db":"https://vuln.go.dev","go_version":"go1.26.0","scan_level":"symbol","scan_mode":"source"}}
+{"progress":{"message":"No vulnerabilities found."}}`})
+}
+
 // govulncheck reports the known vulnerabilities in a Go module's dependencies
 // that its code can reach. It loads the reviewed packages through the go
 // command, exactly as gosec does, so it needs go as well as govulncheck, it is
@@ -101,7 +108,7 @@ func TestGovulncheck_RunsInTheHardenedGoEnvironment(t *testing.T) {
 		t.Setenv(k, v)
 	}
 
-	fr := &fakeRunner{out: emptyReport["govulncheck"]}
+	fr := &fakeRunner{out: emptyReport("govulncheck")}
 	if _, err := security.NewGovulncheck(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -150,7 +157,7 @@ func TestGovulncheck_RunsInTheHardenedGoEnvironment(t *testing.T) {
 // than left to a default.
 func TestGovulncheck_ScansEveryPackageOfTheTargetInSourceMode(t *testing.T) {
 	root := checkout(t)
-	fr := &fakeRunner{out: emptyReport["govulncheck"]}
+	fr := &fakeRunner{out: emptyReport("govulncheck")}
 	if _, err := security.NewGovulncheck(sessionAt(root), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}

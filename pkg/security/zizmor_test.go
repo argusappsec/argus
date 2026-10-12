@@ -13,6 +13,17 @@ import (
 	"github.com/argusappsec/argus/pkg/security"
 )
 
+func init() {
+	f := toolFixture{empty: `[]`}
+	// zizmor.yml (wherever zizmor would discover it) is not loaded, and
+	// `# zizmor: ignore[...]` comments and config ignores are not honoured.
+	// --collect=all also audits workflows a committed .gitignore lists: by
+	// default zizmor skips them, which is a way to hide one (checked against
+	// the real zizmor 1.30.1).
+	f.repoConfig.switches = []string{"--no-config", "--no-ignores", "--collect=all"}
+	fixture("zizmor", f)
+}
+
 // zizmor audits GitHub Actions workflows (and Dependabot and pre-commit
 // config). It parses YAML and runs nothing it reads, so automatic reviews may
 // run it, and it is a single binary the official image ships.
@@ -60,7 +71,7 @@ func TestZizmor_NeverGoesOnline(t *testing.T) {
 		t.Setenv(k, v)
 	}
 
-	fr := &fakeRunner{out: emptyReport["zizmor"]}
+	fr := &fakeRunner{out: emptyReport("zizmor")}
 	if _, err := security.NewZizmor(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -86,7 +97,7 @@ func TestZizmor_NeverGoesOnline(t *testing.T) {
 // switched off: finding something is a successful audit.
 func TestZizmor_ReportsItsVersionedJSONOverTheTarget(t *testing.T) {
 	root := checkout(t)
-	fr := &fakeRunner{out: emptyReport["zizmor"]}
+	fr := &fakeRunner{out: emptyReport("zizmor")}
 	if _, err := security.NewZizmor(sessionAt(root), fr).Execute(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
