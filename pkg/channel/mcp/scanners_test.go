@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/daemon"
 	"github.com/argusappsec/argus/pkg/security"
 )
 
@@ -33,6 +35,25 @@ func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	for _, want := range scannerTools {
 		if !slices.Contains(names, want) {
 			t.Errorf("a Toolbox must advertise %q — a scanner needs no Provider; got %v", want, names)
+		}
+	}
+}
+
+// The scanner surface is the registry's: a scanner whose binary the host lacks
+// is not registered, so a calling agent never sees it — what tools/list offers
+// is exactly what this host can run.
+func TestToolsList_OffersOnlyTheScannersInstalledOnTheHost(t *testing.T) {
+	s, _ := toolboxServer(t, auth.RoleAnalyst)
+	installOnly(s, "gitleaks")
+
+	names := listedTools(t, s)
+
+	if !slices.Contains(names, "run_gitleaks") {
+		t.Errorf("gitleaks is installed, so run_gitleaks must be listed; got %v", names)
+	}
+	for _, absent := range []string{"run_semgrep", "run_osv_scanner"} {
+		if slices.Contains(names, absent) {
+			t.Errorf("%s's binary is missing, so it must not be listed; got %v", absent, names)
 		}
 	}
 }
@@ -234,6 +255,25 @@ func (f *fakeRunner) args() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastArgs
+}
+
+// installOnly makes the daemon's binary lookup find exactly the named binaries,
+// so which scanners are "installed" is the test's choice, never the host's
+// PATH. It must run before the first registry is built: discovery runs once.
+func installOnly(s *Server, binaries ...string) {
+	s.dc.LookPath = func(name string) (string, error) {
+		if slices.Contains(binaries, name) {
+			return "/usr/local/bin/" + name, nil
+		}
+		return "", exec.ErrNotFound
+	}
+}
+
+// installEveryScanner makes every catalogued scanner look installed. The test
+// helpers that build a Server call it, so the surface they assert on is the
+// whole Catalog's on any machine — CI runs without scanner binaries.
+func installEveryScanner(dc *daemon.Context) {
+	dc.LookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
 }
 
 // quote renders a path as a JSON string, so a temp directory can be dropped

@@ -19,11 +19,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/deployment"
+	"github.com/argusappsec/argus/pkg/security"
 	"github.com/argusappsec/argus/pkg/soul"
-	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // Status is the outcome of a single check.
@@ -75,11 +76,11 @@ type Options struct {
 	// reported as broken for having none.
 	Shape deployment.Shape
 
-	// Registry is the tool registry to inspect for binary deps. Tools that
-	// implement tool.Requirer are asked what they need; tools that don't are
-	// ignored. Pass nil to skip tool-derived checks (rare; only useful in
-	// tests).
-	Registry *tool.Registry
+	// Catalog is every catalogued scanner Tool (security.Catalog()), each of
+	// which gets one row: installed, or not installed with its install hint and
+	// catalog page (ADR 0027). Its binary requirements are doctor's single
+	// source of truth for scanner binaries. Nil skips the rows (tests).
+	Catalog []security.Entry
 
 	// ExtraBinaries are binary deps the caller knows about but aren't owned
 	// by any tool (e.g. git).
@@ -142,15 +143,20 @@ type Options struct {
 // Run executes all checks and returns the results in display order.
 func Run(opts Options) []Check {
 	if opts.BinariesOnly {
-		checks := binaryChecks(opts.Registry, opts.ExtraBinaries)
+		checks := binaryChecks(opts.Catalog, opts.ExtraBinaries)
 		for i := range checks {
 			checks[i].Severity = SeverityRequired
+			// A Tool that is merely not installed is Info everywhere else; in
+			// the image contract it is owed, so it fails.
+			if checks[i].Status == Info {
+				checks[i].Status = Fail
+			}
 		}
 		return checks
 	}
 
 	var out []Check
-	out = append(out, binaryChecks(opts.Registry, opts.ExtraBinaries)...)
+	out = append(out, binaryChecks(opts.Catalog, opts.ExtraBinaries)...)
 	out = append(out, configChecks(opts.Home, opts.Shape)...)
 	// Straight after the configuration rows: those say what is configured, this
 	// one says whether it works.
@@ -245,12 +251,13 @@ func githubCheck(cfg config.CodeHostConfig, mint func(ctx context.Context) error
 	return c
 }
 
-// binaryChecks composes two sources: (a) ExtraBinaries from the caller and
-// (b) Requirements declared by tools in the registry that implement
-// tool.Requirer. Duplicates (same Binary name) are kept only once.
-func binaryChecks(reg *tool.Registry, extras []ExtraBinary) []Check {
+// binaryChecks composes two sources: (a) ExtraBinaries from the caller, one
+// row per binary, and (b) the Catalog, one row per Tool. The Catalog is the
+// whole list of scanners Argus can drive, so every one of them is accounted
+// for whether or not this host has it.
+func binaryChecks(catalog []security.Entry, extras []ExtraBinary) []Check {
 	seen := map[string]bool{}
-	out := make([]Check, 0, len(extras)+4)
+	out := make([]Check, 0, len(extras)+len(catalog))
 
 	// ExtraBinaries first — they include the required ones (git).
 	for _, e := range extras {
@@ -261,27 +268,36 @@ func binaryChecks(reg *tool.Registry, extras []ExtraBinary) []Check {
 		out = append(out, binaryCheck(e.Name, severityFromRequired(e.Required), e.UsedBy, e.InstallHint))
 	}
 
-	// Then tool-derived binaries.
-	if reg != nil {
-		for _, decl := range reg.Decls() {
-			t, ok := reg.Get(decl.Name)
-			if !ok {
-				continue
-			}
-			req, ok := t.(tool.Requirer)
-			if !ok {
-				continue
-			}
-			for _, r := range req.Requires() {
-				if seen[r.Binary] {
-					continue
-				}
-				seen[r.Binary] = true
-				out = append(out, binaryCheck(r.Binary, SeverityOptional, decl.Name+" tool", r.InstallHint))
-			}
-		}
+	for _, e := range catalog {
+		out = append(out, catalogCheck(e))
 	}
 	return out
+}
+
+// catalogCheck reports one catalogued Tool. Installed means every binary it
+// requires resolves on PATH — the same test the daemon applies before it
+// registers the Tool. A Tool that is not installed is Info, not a failure:
+// the Catalog is what Argus *can* drive, and a host without one of its Tools
+// is a choice, not a fault. (BinariesOnly turns it into a blocking failure.)
+func catalogCheck(e security.Entry) Check {
+	c := Check{Name: e.ID}
+	var hints []string
+	for _, b := range e.Binaries {
+		if _, err := exec.LookPath(b.Name); err != nil {
+			hints = append(hints, b.InstallHint)
+		}
+	}
+	if len(hints) == 0 {
+		c.Status = Pass
+		c.Severity = SeverityOptional
+		c.Message = "installed — " + e.Tool + " tool"
+		return c
+	}
+	c.Status = Info
+	c.Severity = SeverityInfo
+	c.Hint = "install: " + strings.Join(hints, "; ")
+	c.Message = "not installed, so " + e.Tool + " is not offered — " + c.Hint + " — see " + e.URL()
+	return c
 }
 
 func binaryCheck(name string, sev Severity, usedBy, hint string) Check {

@@ -42,6 +42,7 @@ func testServer(t *testing.T) (*Server, string) {
 		Auth:  auth.NewResolver(usersPath),
 		Audit: aud,
 	}
+	installEveryScanner(dc)
 	return NewServer(dc), auditPath
 }
 
