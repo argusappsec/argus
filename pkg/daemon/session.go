@@ -53,6 +53,7 @@ type Session struct {
 	principal auth.Principal
 	maxTurns  int
 	ephemeral bool // one-shot Session: skip end-of-session memory curation
+	automatic bool // a Service-triggered review: registry restricted to safe Tools
 
 	dc          *Context
 	toolState   *session.Session
@@ -465,8 +466,12 @@ func (s *Session) Usage() (tokensIn, tokensOut int) {
 // what the MCP channel projects its deterministic surface from (ADR 0023) —
 // there is one place that knows which Tools exist, so a Tool added for the agent
 // loop and a Tool offered over MCP can never drift apart.
+//
+// A call over MCP is never an automatic review (ADR 0027): the caller asked for
+// it, so this is the full registry.
 func (dc *Context) NewToolRegistry() *tool.Registry {
-	return buildRegistry(session.New(), dc)
+	reg, _ := buildRegistry(session.New(), dc, false)
+	return reg
 }
 
 // buildRegistry assembles the per-Session tool registry around its tool
@@ -481,7 +486,12 @@ func (dc *Context) NewToolRegistry() *tool.Registry {
 // caller does not already have" — which is why the file tools below are
 // registered, and the scanners, the organization's knowledge and its skills
 // are exposed.
-func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
+//
+// automatic marks the registry of an automatic, Service-triggered review, which
+// runs over a stranger's code and so gets only the scanners safe on untrusted
+// input (ADR 0018, ADR 0027). The IDs of the installed scanners it withheld for
+// that reason are returned, for the audit log.
+func buildRegistry(toolState *session.Session, dc *Context, automatic bool) (*tool.Registry, []string) {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewListFiles(toolState))
 	reg.Register(tool.NewReadFile(toolState))
@@ -497,15 +507,22 @@ func buildRegistry(toolState *session.Session, dc *Context) *tool.Registry {
 	// The scanners come from the Catalog, filtered to what the host can run
 	// (ADR 0027): a catalogued Tool whose binaries did not resolve at startup
 	// is never offered. Every scanner is exposed — a caller over MCP does not
-	// already have it.
-	deps := security.Deps{Session: toolState, Commands: dc.commands()}
+	// already have it. An automatic review also leaves out every scanner that
+	// drives a toolchain over the code, and builds the rest in their automatic
+	// mode.
+	deps := security.Deps{Session: toolState, Commands: dc.commands(), Automatic: automatic}
+	var withheld []string
 	for _, e := range dc.Tools().Installed {
+		if automatic && e.Trust != security.TrustSafe {
+			withheld = append(withheld, e.ID)
+			continue
+		}
 		reg.Expose(e.New(deps))
 	}
 	reg.Expose(tool.NewListSkills(dc.Skills))
 	reg.Expose(tool.NewReadSkill(dc.Skills))
 	reg.Expose(tool.NewReadSkillFile(dc.Skills))
-	return reg
+	return reg, withheld
 }
 
 func contextDir(dc *Context) string {

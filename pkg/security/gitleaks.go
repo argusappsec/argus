@@ -50,13 +50,13 @@ func init() {
 		DocsURL:    "https://github.com/gitleaks/gitleaks#readme",
 		InstallURL: "https://github.com/gitleaks/gitleaks#installing",
 		License:    "MIT",
-		Trust:      TrustSafe,
 		Manifest:   true,
 		Binaries: []Binary{{
 			Name:        "gitleaks",
 			InstallHint: "brew install gitleaks",
 		}},
-		New: func(d Deps) tool.Tool { return NewGitleaks(d.Session, d.Commands) },
+		Trust: TrustSafe, // reads files and git history; runs nothing
+		New:   func(d Deps) tool.Tool { return NewGitleaks(d.Session, d.Commands) },
 	})
 }
 

@@ -20,6 +20,12 @@ func NewOSVScanner(s *session.Session, r Runner) tool.Tool {
 type osvScanner struct {
 	sess   *session.Session
 	runner Runner
+
+	// noCallAnalysis is set on automatic reviews. With go on PATH, osv-scanner
+	// runs Go call analysis by default, which loads the reviewed packages
+	// through the Go toolchain: not something to do with a stranger's code
+	// (ADR 0027). Reviews a Person asked for keep the reachability filtering.
+	noCallAnalysis bool
 }
 
 func (o *osvScanner) Name() string { return "run_osv_scanner" }
@@ -52,13 +58,17 @@ func init() {
 		DocsURL:    "https://google.github.io/osv-scanner/",
 		InstallURL: "https://google.github.io/osv-scanner/installation/",
 		License:    "Apache-2.0",
-		Trust:      TrustSafe,
 		Manifest:   true,
 		Binaries: []Binary{{
 			Name:        "osv-scanner",
 			InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest)",
 		}},
-		New: func(d Deps) tool.Tool { return NewOSVScanner(d.Session, d.Commands) },
+		// Safe because an automatic review switches off its one toolchain-driving
+		// mode, Go call analysis (see Execute).
+		Trust: TrustSafe,
+		New: func(d Deps) tool.Tool {
+			return &osvScanner{sess: d.Session, runner: d.Commands, noCallAnalysis: d.Automatic}
+		},
 	})
 }
 
@@ -87,11 +97,15 @@ func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, 
 	// osv-scanner keeps its vulnerability database cache under the user cache
 	// directory, which Go resolves through XDG_CACHE_HOME or HOME; both point
 	// into the scratch directory.
-	runOut, runErr := o.runner.Run(ctx, sc.command(sc.xdg(), "osv-scanner",
+	argv := []string{"osv-scanner",
 		"--format", "json",
 		"--output", reportPath,
-		"--recursive", root,
-	))
+	}
+	if o.noCallAnalysis {
+		argv = append(argv, "--no-call-analysis=go")
+	}
+	argv = append(argv, "--recursive", root)
+	runOut, runErr := o.runner.Run(ctx, sc.command(sc.xdg(), argv...))
 
 	body, readErr := os.ReadFile(reportPath)
 	if runErr != nil && (readErr != nil || len(body) == 0) {

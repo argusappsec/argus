@@ -49,18 +49,20 @@ const (
 	ReadMultiLanguage Read = "multi-language"
 )
 
-// Trust is how safe a Tool is to run over untrusted review content (ADR 0027,
-// ADR 0018): whether it only reads files, or drives a toolchain or package
-// manager over the code under review.
+// Trust is what a catalogued Tool does with the code under review, which
+// decides whether an automatic review may run it (ADR 0018, ADR 0027). An
+// automatic review is started by a Service over a stranger's pull request, so
+// its code is hostile.
 type Trust string
 
-// The trust levels a catalogued Tool declares.
 const (
-	// TrustSafe Tools only read files, so they are safe on a hostile pull
-	// request.
+	// TrustSafe is a Tool that only reads the files under review. Hostile input
+	// can make it report nonsense, but never make it run that input.
 	TrustSafe Trust = "safe"
-	// TrustToolchain Tools drive a toolchain or package manager over the
-	// reviewed code, which then executes or loads code the review is about.
+
+	// TrustToolchain is a Tool that drives a toolchain or package manager over
+	// the code under review (loading, building or resolving its packages), so
+	// hostile input can reach code execution. Automatic reviews never get it.
 	TrustToolchain Trust = "toolchain-driving"
 )
 
@@ -76,6 +78,12 @@ type Binary struct {
 type Deps struct {
 	Session  *session.Session // the tool state the Tool resolves its target against
 	Commands Runner           // what the Tool shells out through
+
+	// Automatic is set when the Tool is built for an automatic,
+	// Service-triggered review. The code is untrusted, so a TrustSafe Tool
+	// with a mode that drives a toolchain (osv-scanner's Go call analysis)
+	// switches that mode off.
+	Automatic bool
 }
 
 // Entry is one catalogued Tool.
@@ -100,9 +108,6 @@ type Entry struct {
 	InstallURL string // the tool's official install guide (absolute)
 	License    string // SPDX identifier
 
-	// Trust is the Tool's trust level on untrusted input.
-	Trust Trust
-
 	// Manifest is whether the official image ships the Tool and guarantees
 	// its binaries (ADR 0027).
 	Manifest bool
@@ -111,6 +116,10 @@ type Entry struct {
 	// on PATH for the Tool to be registered. They are also doctor's single
 	// source of truth for which scanner binaries to check.
 	Binaries []Binary
+
+	// Trust says whether the Tool is safe on untrusted input. Automatic reviews
+	// register only TrustSafe Tools. It is required: every Tool has to decide.
+	Trust Trust
 
 	// New builds the Tool over its dependencies.
 	New func(Deps) tool.Tool
@@ -134,6 +143,9 @@ var catalog []Entry
 func catalogue(e Entry) {
 	if e.ID == "" || e.Tool == "" || e.New == nil || len(e.Binaries) == 0 {
 		panic(fmt.Sprintf("security: catalogue %q: ID, Tool, New and Binaries are required", e.ID))
+	}
+	if e.Trust != TrustSafe && e.Trust != TrustToolchain {
+		panic(fmt.Sprintf("security: catalogue %q: Trust must be TrustSafe or TrustToolchain", e.ID))
 	}
 	for _, c := range catalog {
 		if c.ID == e.ID || c.Tool == e.Tool {

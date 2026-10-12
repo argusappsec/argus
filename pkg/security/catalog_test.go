@@ -84,17 +84,32 @@ func TestDiscover_SplitsTheCatalogByWhatResolvesOnPath(t *testing.T) {
 	}
 }
 
-// The catalog pages tell an operator whether a Tool is safe to point at an
-// untrusted pull request and whether the official image already ships it, so
-// every Entry declares both. The three scanners Argus has always wrapped only
-// read files, and the official image has always carried them.
-func TestCatalog_ExistingScannersAreSafeAndInTheManifest(t *testing.T) {
-	for _, e := range security.Catalog() {
-		if e.Trust != security.TrustSafe {
-			t.Errorf("%s: Trust = %q, want %q", e.ID, e.Trust, security.TrustSafe)
+// The catalog pages tell an operator whether the official image already ships
+// a Tool. The official image has always carried the three scanners Argus has
+// always wrapped.
+func TestCatalog_TheExistingScannersAreInTheManifest(t *testing.T) {
+	for _, id := range []string{"gitleaks", "osv-scanner", "semgrep"} {
+		i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == id })
+		if i < 0 {
+			t.Fatalf("%s is not catalogued", id)
 		}
-		if !e.Manifest {
-			t.Errorf("%s: Manifest = false, want true: the official image ships it", e.ID)
+		if !security.Catalog()[i].Manifest {
+			t.Errorf("%s: Manifest = false, want true: the official image ships it", id)
+		}
+	}
+}
+
+// The three scanners Argus has always wrapped only read files: none drives a
+// toolchain or package manager over the code under review, so all of them stay
+// in an automatic review's registry (ADR 0018, ADR 0027).
+func TestCatalog_TheExistingScannersAreSafeOnUntrustedInput(t *testing.T) {
+	for _, id := range []string{"gitleaks", "osv-scanner", "semgrep"} {
+		i := slices.IndexFunc(security.Catalog(), func(e security.Entry) bool { return e.ID == id })
+		if i < 0 {
+			t.Fatalf("%s is not catalogued", id)
+		}
+		if got := security.Catalog()[i].Trust; got != security.TrustSafe {
+			t.Errorf("%s trust = %q, want %q", id, got, security.TrustSafe)
 		}
 	}
 }
