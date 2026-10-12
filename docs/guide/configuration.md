@@ -281,7 +281,9 @@ disabled, not as missing. The list is a deny-list: a scanner added to a later
 release, or installed later, is on unless you list it. Restart the daemon for
 a change to take effect.
 
-The names are the ones `argus doctor` prints, one row per scanner. A name
+The names are the ones `argus doctor` prints, one row per scanner. To decide
+which scanners to keep, see [Scanners](/guide/scanners/) for what each one
+finds. A name
 Argus does not know is a configuration error that stops the daemon from
 starting and names the offending entry, so a typo cannot silently leave a
 scanner on.
