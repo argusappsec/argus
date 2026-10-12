@@ -52,6 +52,11 @@ var repoConfigFlags = map[string]struct {
 	// govulncheck has no config file, ignore file or in-code suppression to
 	// switch off: it obeys nothing in the checkout.
 	"govulncheck": {},
+	// trivy loads trivy.yaml and .trivyignore from its working directory
+	// unless told otherwise; both are named explicitly, as Argus's own files.
+	"trivy": {
+		scratch: []string{"--config", "--ignorefile"},
+	},
 }
 
 // TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags: the checkout is the pull

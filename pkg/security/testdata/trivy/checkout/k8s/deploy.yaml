@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+          securityContext:
+            readOnlyRootFilesystem: false # trivy:ignore:KSV-0014
+            privileged: true

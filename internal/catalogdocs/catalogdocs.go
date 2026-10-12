@@ -171,7 +171,8 @@ scanner declares how safe it is to run over that code.
 
 Whatever its trust level, Argus runs every scanner outside the checkout, with a
 minimal environment, and ignores any configuration or suppression file the
-repository carries: a pull request cannot silence its own findings.
+repository carries. A finding the code marks as suppressed is still reported,
+marked as such: a pull request cannot silence its own findings unseen.
 
 ## Official image
 
