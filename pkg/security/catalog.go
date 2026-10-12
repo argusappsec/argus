@@ -70,7 +70,10 @@ const (
 // Binary is one executable a catalogued Tool requires on PATH.
 type Binary struct {
 	Name        string // command name as it appears on PATH (e.g. "gitleaks")
-	InstallHint string // a terminal one-liner (e.g. "brew install gitleaks")
+	// InstallHint is how to install the binary from a terminal: one command,
+	// optionally followed by alternatives in parentheses (e.g. "brew install
+	// osv-scanner  (or go install …)"). doctor prints it as written.
+	InstallHint string
 }
 
 // Deps is what a catalogued Tool is built from. It is a struct rather than a
