@@ -30,4 +30,5 @@ and host it.
 - [GitHub channel](/guide/channels/github/) — automatic pull-request reviews and talking to Argus on threads
 - [MCP channel](/guide/channels/mcp/) — connect your own AI tools to Argus's scanners, knowledge and skills
 - [Skills](/guide/skills/) — using, writing, and overriding skills
+- [Scanners](/guide/scanners/) — every scanner Argus can drive, and which to install for your stack
 - [Kubernetes deployment](/guide/deployment/kubernetes/) — hosting Argus on a cluster
