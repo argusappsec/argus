@@ -66,6 +66,7 @@ that host:
 | `run_gitleaks` | Secrets committed to the tree |
 | `run_osv_scanner` | Known vulnerabilities in dependencies |
 | `run_trivy` | Misconfiguration in Terraform, Kubernetes manifests, Helm charts and Dockerfiles |
+| `run_zizmor` | Security issues in GitHub Actions workflows, offline |
 
 Each takes a `path`: **an absolute path to a directory on the machine Argus runs
 on**. Argus scans code it can already see locally — it is not sent your files.
@@ -85,9 +86,11 @@ scan:
   is installed and Semgrep otherwise; the report's `scanner` field names the
   one that ran. It never fetches rules from a registry and sends no metrics.
 - Config and ignore files in the scanned tree (`.semgrepignore`,
-  `.gitleaks.toml`, `.gitleaksignore`, `osv-scanner.toml`) have no effect, and
-  neither do inline comments such as `nosemgrep`, `noopengrep` or
-  `gitleaks:allow`.
+  `.gitleaks.toml`, `.gitleaksignore`, `osv-scanner.toml`, `zizmor.yml`) have
+  no effect, and neither do inline comments such as `nosemgrep`, `noopengrep`,
+  `gitleaks:allow` or `# zizmor: ignore[...]`.
+- `run_zizmor` never calls the GitHub API: it runs offline and is never handed
+  a GitHub token, so the audits that need one are skipped.
 - `run_trivy` runs offline, with the checks built into the trivy binary, and
   never fetches the remote Terraform modules a scanned file names. A
   `trivy.yaml`, `.trivyignore` or `.trivyignore.yaml` in the scanned tree has no
@@ -103,11 +106,11 @@ scan:
 
 :::note[Install the scanners on the daemon host]
 The scanners are separate binaries — `opengrep` or `semgrep`, `gitleaks`,
-`osv-scanner`. Argus
+`osv-scanner`, `zizmor`. Argus
 looks for them once, when the daemon starts: the startup log lists the ones it
 found and the ones it did not, and `argus doctor` shows each as installed or not
 installed. A scanner installed later appears after a restart. The official
-container image ships a SAST engine, Gitleaks and OSV-Scanner. The [scanner catalog](/guide/scanners/) says
+container image ships a SAST engine, Gitleaks, OSV-Scanner and zizmor. The [scanner catalog](/guide/scanners/) says
 what each one finds and how to install it.
 :::
 

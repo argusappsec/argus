@@ -30,11 +30,19 @@ import (
 const Dir = "docs/guide/scanners"
 
 // The scanners section sits after Skills (50) and before the deployment pages
-// (60) in the guide's sidebar. Inside it, the index comes first and the Tools
-// follow in Catalog order.
+// (59 and up) in the guide's sidebar. Inside it, the index comes first and the
+// Tools follow in Catalog order.
 const (
 	indexOrder     = 55
 	firstToolOrder = 56
+)
+
+// The hand-written guide page on the official image, and its section on
+// building a custom image on top of it. The pages link there wherever an
+// operator meets a Tool the image does not ship.
+const (
+	officialImageURL = "/guide/deployment/official-image/"
+	customImageURL   = officialImageURL + "#build-your-own-image"
 )
 
 // header is the comment every generated page starts with. Starlight does not
@@ -178,7 +186,8 @@ marked as such: a pull request cannot silence its own findings unseen.
 
 Scanners marked **Included** ship in the official Argus container image, which
 guarantees they are installed. Any other scanner is yours to add: install it on
-the daemon host, or build your own image on top of the official one.
+the daemon host, or [build your own image](` + customImageURL + `) on top of
+the [official one](` + officialImageURL + `).
 `)
 	return b.Bytes(), nil
 }
@@ -217,7 +226,7 @@ func toolPage(e security.Entry, order int) ([]byte, error) {
 	if e.Manifest {
 		fmt.Fprintf(&b, "The official Argus container image already ships %s. Anywhere else, install ", e.Name)
 	} else {
-		fmt.Fprintf(&b, "The official Argus container image does not ship %s. Install ", e.Name)
+		fmt.Fprintf(&b, "The official Argus container image does not ship %s: add it by [building your own image](%s) on top of the official one, or install ", e.Name, customImageURL)
 	}
 	switch {
 	case len(e.Binaries) == 1:

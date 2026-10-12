@@ -20,6 +20,7 @@ installed or not installed, and link a missing one to its page here.
 
 - **Every repository:** [Gitleaks](/guide/scanners/gitleaks/), [OSV-Scanner](/guide/scanners/osv-scanner/), [SAST (Opengrep or Semgrep)](/guide/scanners/sast/)
 - **You write Go:** [gosec](/guide/scanners/gosec/), [govulncheck](/guide/scanners/govulncheck/)
+- **You use GitHub Actions:** [zizmor](/guide/scanners/zizmor/)
 - **You build container images:** [Trivy](/guide/scanners/trivy/)
 - **You manage infrastructure with Terraform:** [Trivy](/guide/scanners/trivy/)
 - **You deploy to Kubernetes:** [Trivy](/guide/scanners/trivy/)
@@ -34,6 +35,7 @@ installed or not installed, and link a missing one to its page here.
 | [OSV-Scanner](/guide/scanners/osv-scanner/) | Dependencies | Any language | Safe on untrusted input | Included |
 | [SAST (Opengrep or Semgrep)](/guide/scanners/sast/) | SAST | Any language | Safe on untrusted input | Included |
 | [Trivy](/guide/scanners/trivy/) | IaC misconfiguration | Terraform, Kubernetes, Dockerfile | Safe on untrusted input | Included |
+| [zizmor](/guide/scanners/zizmor/) | CI/CD | GitHub Actions | Safe on untrusted input | Included |
 
 ## Trust levels
 
@@ -56,4 +58,5 @@ marked as such: a pull request cannot silence its own findings unseen.
 
 Scanners marked **Included** ship in the official Argus container image, which
 guarantees they are installed. Any other scanner is yours to add: install it on
-the daemon host, or build your own image on top of the official one.
+the daemon host, or [build your own image](/guide/deployment/official-image/#build-your-own-image) on top of
+the [official one](/guide/deployment/official-image/).

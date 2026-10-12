@@ -57,6 +57,14 @@ var repoConfigFlags = map[string]struct {
 	"trivy": {
 		scratch: []string{"--config", "--ignorefile"},
 	},
+	// zizmor.yml (wherever zizmor would discover it) is not loaded, and
+	// `# zizmor: ignore[...]` comments and config ignores are not honoured.
+	// --collect=all also audits workflows a committed .gitignore lists: by
+	// default zizmor skips them, which is a way to hide one (checked against
+	// the real zizmor 1.30.1).
+	"zizmor": {
+		switches: []string{"--no-config", "--no-ignores", "--collect=all"},
+	},
 }
 
 // TestScanners_AlwaysPassTheirIgnoreRepoConfigFlags: the checkout is the pull

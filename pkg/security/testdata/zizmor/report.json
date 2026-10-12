@@ -1,0 +1,694 @@
+ WARN zizmor::registry::input: failed to parse input: did not find expected ',' or ']' at line 4 column 1, while parsing a flow sequence at line 3 column 6
+[
+  {
+    "ident": "artipacked",
+    "desc": "credential persistence through GitHub Actions artifacts",
+    "url": "https://docs.zizmor.sh/audits/#artipacked",
+    "determinations": {
+      "confidence": "Low",
+      "severity": "Medium",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "does not set persist-credentials: false",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 0
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Primary"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 9,
+              "column": 8
+            },
+            "end_point": {
+              "row": 11,
+              "column": 56
+            },
+            "offset_span": {
+              "start": 99,
+              "end": 195
+            }
+          },
+          "feature": "uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}",
+          "comments": []
+        }
+      }
+    ],
+    "ignored": false,
+    "fixes": [
+      {
+        "title": "set persist-credentials: false",
+        "key": {
+          "Local": {
+            "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+          }
+        },
+        "disposition": "unsafe"
+      }
+    ]
+  },
+  {
+    "ident": "excessive-permissions",
+    "desc": "overly broad permissions",
+    "url": "https://docs.zizmor.sh/audits/#excessive-permissions",
+    "determinations": {
+      "confidence": "Medium",
+      "severity": "Medium",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "this job",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Related"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 6,
+              "column": 2
+            },
+            "end_point": {
+              "row": 16,
+              "column": 0
+            },
+            "offset_span": {
+              "start": 46,
+              "end": 402
+            }
+          },
+          "feature": "  greet:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - name: greet\n        run: echo \"Hello ${{ github.event.pull_request.title }}\"\n      - name: greet again\n        run: echo \"${{ github.event.pull_request.body }}\" # zizmor: ignore[template-injection]\n",
+          "comments": [
+            "# zizmor: ignore[template-injection]"
+          ]
+        }
+      },
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "default permissions used due to no permissions: block",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Primary"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 6,
+              "column": 2
+            },
+            "end_point": {
+              "row": 16,
+              "column": 0
+            },
+            "offset_span": {
+              "start": 46,
+              "end": 402
+            }
+          },
+          "feature": "  greet:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - name: greet\n        run: echo \"Hello ${{ github.event.pull_request.title }}\"\n      - name: greet again\n        run: echo \"${{ github.event.pull_request.body }}\" # zizmor: ignore[template-injection]\n",
+          "comments": [
+            "# zizmor: ignore[template-injection]"
+          ]
+        }
+      }
+    ],
+    "ignored": false,
+    "fixes": []
+  },
+  {
+    "ident": "dangerous-triggers",
+    "desc": "use of fundamentally insecure workflow trigger",
+    "url": "https://docs.zizmor.sh/audits/#dangerous-triggers",
+    "determinations": {
+      "confidence": "Medium",
+      "severity": "High",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "pull_request_target is almost always used insecurely",
+          "route": {
+            "route": [
+              {
+                "Key": "on"
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Primary"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 2,
+              "column": 0
+            },
+            "end_point": {
+              "row": 3,
+              "column": 22
+            },
+            "offset_span": {
+              "start": 10,
+              "end": 36
+            }
+          },
+          "feature": "on:\n  pull_request_target:",
+          "comments": []
+        }
+      }
+    ],
+    "ignored": false,
+    "fixes": []
+  },
+  {
+    "ident": "template-injection",
+    "desc": "code injection via template expansion",
+    "url": "https://docs.zizmor.sh/audits/#template-injection",
+    "determinations": {
+      "confidence": "High",
+      "severity": "High",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "this step",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 1
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Hidden"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 12,
+              "column": 8
+            },
+            "end_point": {
+              "row": 13,
+              "column": 64
+            },
+            "offset_span": {
+              "start": 204,
+              "end": 280
+            }
+          },
+          "feature": "name: greet\n        run: echo \"Hello ${{ github.event.pull_request.title }}\"",
+          "comments": []
+        }
+      },
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "may expand into attacker-controllable code",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 1
+              },
+              {
+                "Key": "run"
+              }
+            ]
+          },
+          "feature_kind": {
+            "Subfeature": {
+              "after": 13,
+              "fragment": {
+                "Raw": "github.event.pull_request.title"
+              }
+            }
+          },
+          "kind": "Primary"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 13,
+              "column": 29
+            },
+            "end_point": {
+              "row": 13,
+              "column": 60
+            },
+            "offset_span": {
+              "start": 245,
+              "end": 276
+            }
+          },
+          "feature": "echo \"Hello ${{ github.event.pull_request.title }}\"",
+          "comments": []
+        }
+      },
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "this run block",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 1
+              },
+              {
+                "Key": "run"
+              }
+            ]
+          },
+          "feature_kind": "KeyOnly",
+          "kind": "Related"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 13,
+              "column": 8
+            },
+            "end_point": {
+              "row": 13,
+              "column": 11
+            },
+            "offset_span": {
+              "start": 224,
+              "end": 227
+            }
+          },
+          "feature": "run",
+          "comments": []
+        }
+      }
+    ],
+    "ignored": false,
+    "fixes": [
+      {
+        "title": "replace expression with environment variable",
+        "key": {
+          "Local": {
+            "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+          }
+        },
+        "disposition": "unsafe"
+      }
+    ]
+  },
+  {
+    "ident": "template-injection",
+    "desc": "code injection via template expansion",
+    "url": "https://docs.zizmor.sh/audits/#template-injection",
+    "determinations": {
+      "confidence": "High",
+      "severity": "High",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "this step",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 2
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Hidden"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 14,
+              "column": 8
+            },
+            "end_point": {
+              "row": 16,
+              "column": 0
+            },
+            "offset_span": {
+              "start": 289,
+              "end": 402
+            }
+          },
+          "feature": "name: greet again\n        run: echo \"${{ github.event.pull_request.body }}\" # zizmor: ignore[template-injection]\n",
+          "comments": [
+            "# zizmor: ignore[template-injection]"
+          ]
+        }
+      },
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "may expand into attacker-controllable code",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 2
+              },
+              {
+                "Key": "run"
+              }
+            ]
+          },
+          "feature_kind": {
+            "Subfeature": {
+              "after": 7,
+              "fragment": {
+                "Raw": "github.event.pull_request.body"
+              }
+            }
+          },
+          "kind": "Primary"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 15,
+              "column": 23
+            },
+            "end_point": {
+              "row": 15,
+              "column": 53
+            },
+            "offset_span": {
+              "start": 330,
+              "end": 360
+            }
+          },
+          "feature": "echo \"${{ github.event.pull_request.body }}\"",
+          "comments": [
+            "# zizmor: ignore[template-injection]"
+          ]
+        }
+      },
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "this run block",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 2
+              },
+              {
+                "Key": "run"
+              }
+            ]
+          },
+          "feature_kind": "KeyOnly",
+          "kind": "Related"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 15,
+              "column": 8
+            },
+            "end_point": {
+              "row": 15,
+              "column": 11
+            },
+            "offset_span": {
+              "start": 315,
+              "end": 318
+            }
+          },
+          "feature": "run",
+          "comments": [
+            "# zizmor: ignore[template-injection]"
+          ]
+        }
+      }
+    ],
+    "ignored": true,
+    "fixes": [
+      {
+        "title": "replace expression with environment variable",
+        "key": {
+          "Local": {
+            "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+          }
+        },
+        "disposition": "unsafe"
+      }
+    ]
+  },
+  {
+    "ident": "unpinned-uses",
+    "desc": "unpinned action reference",
+    "url": "https://docs.zizmor.sh/audits/#unpinned-uses",
+    "determinations": {
+      "confidence": "High",
+      "severity": "High",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "this step",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 0
+              }
+            ]
+          },
+          "feature_kind": "Normal",
+          "kind": "Hidden"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 9,
+              "column": 8
+            },
+            "end_point": {
+              "row": 11,
+              "column": 56
+            },
+            "offset_span": {
+              "start": 99,
+              "end": 195
+            }
+          },
+          "feature": "uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}",
+          "comments": []
+        }
+      },
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "verbatim_path": "$CHECKOUT/.github/workflows/ci.yml"
+            }
+          },
+          "annotation": "action is not pinned to a hash (required by blanket policy)",
+          "route": {
+            "route": [
+              {
+                "Key": "jobs"
+              },
+              {
+                "Key": "greet"
+              },
+              {
+                "Key": "steps"
+              },
+              {
+                "Index": 0
+              },
+              {
+                "Key": "uses"
+              }
+            ]
+          },
+          "feature_kind": {
+            "Subfeature": {
+              "after": 0,
+              "fragment": {
+                "Raw": "actions/checkout@v4"
+              }
+            }
+          },
+          "kind": "Primary"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 9,
+              "column": 14
+            },
+            "end_point": {
+              "row": 9,
+              "column": 33
+            },
+            "offset_span": {
+              "start": 105,
+              "end": 124
+            }
+          },
+          "feature": "actions/checkout@v4",
+          "comments": []
+        }
+      }
+    ],
+    "ignored": false,
+    "fixes": []
+  }
+]
