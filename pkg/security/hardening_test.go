@@ -15,15 +15,25 @@ import (
 // scanners is every scanner Tool this package wraps, built over a Session
 // pinned at root and a fake runner, so the hardening rules are asserted once
 // for all of them.
+//
+// The SAST Tool appears once per engine it can run: opengrep and semgrep are
+// different binaries and each is held to the same rules.
 var scanners = map[string]func(*session.Session, security.Runner) tool.Tool{
-	"semgrep":     security.NewSemgrep,
+	"opengrep":    sastOver(security.EngineOpengrep),
+	"semgrep":     sastOver(security.EngineSemgrep),
 	"gitleaks":    security.NewGitleaks,
 	"osv-scanner": security.NewOSVScanner,
 	"gosec":       security.NewGosec,
 }
 
+// sastOver builds the SAST Tool over one engine, in the shape scanners holds.
+func sastOver(e security.Engine) func(*session.Session, security.Runner) tool.Tool {
+	return func(s *session.Session, r security.Runner) tool.Tool { return security.NewSAST(s, r, e) }
+}
+
 // emptyReport is what each binary writes when it finds nothing.
 var emptyReport = map[string]string{
+	"opengrep":    `{"results":[],"errors":[]}`,
 	"semgrep":     `{"results":[],"errors":[]}`,
 	"gitleaks":    `[]`,
 	"osv-scanner": `{"results":[]}`,
@@ -110,6 +120,24 @@ func TestScanners_ReceiveOnlyTheirAllowListedEnvironment(t *testing.T) {
 			home := env["HOME"]
 			if home == "" || home == realHome || inside(root, home) {
 				t.Errorf("HOME = %q, want a scratch directory outside the checkout and the real home", home)
+			}
+		})
+	}
+}
+
+// TestScanners_FindEveryDirectoryTheirEnvironmentNames: a directory variable
+// on the allow-list points at a directory that exists while the scanner runs.
+// opengrep (1.30.1) aborts with Sys_error when XDG_CONFIG_HOME names a
+// directory that is not there, before it reads a single rule.
+func TestScanners_FindEveryDirectoryTheirEnvironmentNames(t *testing.T) {
+	for name, build := range scanners {
+		t.Run(name, func(t *testing.T) {
+			fr := &fakeRunner{out: emptyReport[name]}
+			if _, err := build(sessionAt(checkout(t)), fr).Execute(context.Background(), map[string]any{}); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if len(fr.absentDirs) > 0 {
+				t.Errorf("the scanner ran with directories that did not exist: %v", fr.absentDirs)
 			}
 		})
 	}

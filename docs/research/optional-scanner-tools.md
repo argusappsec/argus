@@ -573,6 +573,17 @@ should move to digest pins with signature verification in CI.
   existing `run_semgrep` slot.** ADR 0013 chose a Python base image *because* semgrep is "only
   through Python channels". A static opengrep would remove that reason. Whether its rule
   compatibility holds for the ruleset Argus pins (ADR 0019 Phase 1) is **not verified**.
+- **Update (#104, 2026-10-12): compatible.** The `opengrep_osx_arm64` v1.30.1 release binary ran
+  `pkg/security/rules/semgrep.yaml` with Argus's flags and a stripped environment, next to
+  semgrep 1.157.0. Over a corpus with a positive and a negative case for each of the 16 rules
+  (Python, Go, JavaScript, TypeScript, Java), both engines returned the same 38 results (rule id,
+  file, lines, severity, message) and no errors. They also agreed on the `nosemgrep` fixture.
+  Two differences mattered:
+  - opengrep has no `--metrics` flag and refuses to start with it ("unknown option");
+  - it aborts with `Sys_error` when `XDG_CONFIG_HOME` names a missing directory.
+
+  It also honours a third suppression comment, `noopengrep`. The Linux (`manylinux`/`musllinux`)
+  builds were not run.
 
 ---
 

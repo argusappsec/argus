@@ -22,7 +22,12 @@ var repoConfigFlags = map[string]struct {
 	scratch  []string
 }{
 	// nosem comments and .semgrepignore files are the pull request's; the
-	// ruleset is Argus's own.
+	// ruleset is Argus's own. opengrep is a semgrep fork and takes the same
+	// switches (checked against the real opengrep 1.30.1).
+	"opengrep": {
+		switches: []string{"--disable-nosem", "--x-ignore-semgrepignore-files"},
+		scratch:  []string{"--config"},
+	},
 	"semgrep": {
 		switches: []string{"--disable-nosem", "--x-ignore-semgrepignore-files"},
 		scratch:  []string{"--config"},
@@ -123,55 +128,56 @@ func TestOSVScanner_UsesAnEmptyConfig(t *testing.T) {
 	}
 }
 
-// TestSemgrep_AlwaysRunsThePinnedRuleset: ADR 0019 Phase 1. `--config auto`
+// TestSAST_AlwaysRunsThePinnedRuleset: ADR 0019 Phase 1. `--config auto`
 // fetches rules from the registry and sends metrics, and a model-chosen config
-// is a lever a prompt injection can pull to point semgrep at a ruleset the
-// pull request committed. semgrep runs Argus's pinned ruleset and nothing else,
-// whatever the caller passes.
-func TestSemgrep_AlwaysRunsThePinnedRuleset(t *testing.T) {
+// is a lever a prompt injection can pull to point the engine at a ruleset the
+// pull request committed. Either engine runs Argus's pinned ruleset and nothing
+// else, whatever the caller passes.
+func TestSAST_AlwaysRunsThePinnedRuleset(t *testing.T) {
 	pinned, err := os.ReadFile(filepath.Join("rules", "semgrep.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, asked := range []string{"", "auto", "p/security-audit", "/repo/.semgrep.yml"} {
-		t.Run("config="+asked, func(t *testing.T) {
-			root := checkout(t)
-			fr := &fakeRunner{out: `{"results":[],"errors":[]}`}
-			args := map[string]any{}
-			if asked != "" {
-				args["config"] = asked
-			}
-			if _, err := security.NewSemgrep(sessionAt(root), fr).Execute(context.Background(), args); err != nil {
-				t.Fatalf("execute: %v", err)
-			}
-			var configs []string
-			for i, a := range fr.gotArgs {
-				if a == "--config" && i+1 < len(fr.gotArgs) {
-					configs = append(configs, fr.gotArgs[i+1])
+	for _, engine := range engines {
+		for _, asked := range []string{"", "auto", "p/security-audit", "/repo/.semgrep.yml"} {
+			t.Run(string(engine)+"/config="+asked, func(t *testing.T) {
+				root := checkout(t)
+				fr := &fakeRunner{out: `{"results":[],"errors":[]}`}
+				args := map[string]any{}
+				if asked != "" {
+					args["config"] = asked
 				}
-			}
-			if len(configs) != 1 {
-				t.Fatalf("semgrep must get exactly one --config, got %v", fr.gotArgs)
-			}
-			if fr.gotFiles[configs[0]] != string(pinned) {
-				t.Errorf("--config %q is not the pinned ruleset", configs[0])
-			}
-			if v, _ := optionValue(fr.gotArgs, "--metrics"); v != "off" {
-				t.Errorf("semgrep must run with --metrics off, got %v", fr.gotArgs)
-			}
-			if slices.Contains(fr.gotArgs, "auto") {
-				t.Errorf("semgrep was invoked with auto: %v", fr.gotArgs)
-			}
-		})
+				if _, err := security.NewSAST(sessionAt(root), fr, engine).Execute(context.Background(), args); err != nil {
+					t.Fatalf("execute: %v", err)
+				}
+				var configs []string
+				for i, a := range fr.gotArgs {
+					if a == "--config" && i+1 < len(fr.gotArgs) {
+						configs = append(configs, fr.gotArgs[i+1])
+					}
+				}
+				if len(configs) != 1 {
+					t.Fatalf("%s must get exactly one --config, got %v", engine, fr.gotArgs)
+				}
+				if fr.gotFiles[configs[0]] != string(pinned) {
+					t.Errorf("--config %q is not the pinned ruleset", configs[0])
+				}
+				if slices.Contains(fr.gotArgs, "auto") {
+					t.Errorf("%s was invoked with auto: %v", engine, fr.gotArgs)
+				}
+			})
+		}
 	}
 }
 
-// TestSemgrep_OffersNoRulesetChoice: the schema no longer advertises a config
+// TestSAST_OffersNoRulesetChoice: the schema does not advertise a config
 // argument, so the model is not invited to pick one.
-func TestSemgrep_OffersNoRulesetChoice(t *testing.T) {
-	props, _ := security.NewSemgrep(session.New(), &fakeRunner{}).Schema()["properties"].(map[string]any)
-	if _, ok := props["config"]; ok {
-		t.Error("run_semgrep must not offer a config argument")
+func TestSAST_OffersNoRulesetChoice(t *testing.T) {
+	for _, engine := range engines {
+		props, _ := security.NewSAST(session.New(), &fakeRunner{}, engine).Schema()["properties"].(map[string]any)
+		if _, ok := props["config"]; ok {
+			t.Errorf("run_sast (%s) must not offer a config argument", engine)
+		}
 	}
 }
 

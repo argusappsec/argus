@@ -290,23 +290,33 @@ func binaryChecks(catalog []security.Entry, extras []ExtraBinary, disabled []str
 // registers the Tool. A Tool that is not installed is Info, not a failure:
 // the Catalog is what Argus *can* drive, and a host without one of its Tools
 // is a choice, not a fault. (BinariesOnly turns it into a blocking failure.)
+//
+// A Tool over alternative engines (the SAST Tool's opengrep and semgrep) is
+// installed with any one of them, and its row names the engine it will run.
 func catalogCheck(e security.Entry) Check {
 	c := Check{Name: e.ID}
-	var hints []string
-	for _, b := range e.Binaries {
-		if _, err := exec.LookPath(b.Name); err != nil {
-			hints = append(hints, b.InstallHint)
-		}
-	}
-	if len(hints) == 0 {
+	found, ok := e.Resolve(exec.LookPath)
+	if ok {
 		c.Status = Pass
 		c.Severity = SeverityOptional
 		c.Message = "installed — " + e.Tool + " tool"
+		if e.Alternatives {
+			c.Message += ", running " + found[0]
+		}
 		return c
+	}
+	var hints []string
+	for _, b := range e.Binaries {
+		if !slices.Contains(found, b.Name) {
+			hints = append(hints, b.InstallHint)
+		}
 	}
 	c.Status = Info
 	c.Severity = SeverityInfo
 	c.Hint = "install: " + strings.Join(hints, "; ")
+	if e.Alternatives {
+		c.Hint = "install one of: " + strings.Join(hints, "; ")
+	}
 	c.Message = "not installed, so " + e.Tool + " is not offered — " + c.Hint + " — see " + e.URL()
 	return c
 }

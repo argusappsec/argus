@@ -218,9 +218,12 @@ func toolPage(e security.Entry, order int) ([]byte, error) {
 	} else {
 		fmt.Fprintf(&b, "The official Argus container image does not ship %s. Install ", e.Name)
 	}
-	if len(e.Binaries) == 1 {
+	switch {
+	case len(e.Binaries) == 1:
 		b.WriteString("this binary on the daemon host:\n\n")
-	} else {
+	case e.Alternatives:
+		b.WriteString("one of these binaries on the daemon host. Argus runs the first one listed that it finds:\n\n")
+	default:
 		b.WriteString("every one of these binaries on the daemon host:\n\n")
 	}
 	for _, bin := range e.Binaries {

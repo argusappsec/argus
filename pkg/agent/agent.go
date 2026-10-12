@@ -300,7 +300,7 @@ func controlToolDecls() []provider.ToolDecl {
 				"type": "object",
 				"properties": map[string]any{
 					"severity":    map[string]any{"type": "string", "enum": []string{"critical", "high", "medium", "low", "info"}},
-					"rule_id":     map[string]any{"type": "string", "description": "Short stable identifier (e.g. CWE-798, semgrep rule id)."},
+					"rule_id":     map[string]any{"type": "string", "description": "Short stable identifier (e.g. CWE-798, SAST rule id)."},
 					"file":        map[string]any{"type": "string"},
 					"line":        map[string]any{"type": "integer"},
 					"snippet":     map[string]any{"type": "string", "description": "The minimal code excerpt that contains the issue."},

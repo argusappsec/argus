@@ -197,7 +197,7 @@ func fullRegistry(t *testing.T) *tool.Registry {
 	reg.Register(tool.NewStartReviewLocal(sess))
 	reg.Register(tool.NewStartReviewGitHub(sess, nil))
 	reg.Register(tool.NewPRDiff(sess))
-	reg.Register(security.NewSemgrep(sess, security.ExecRunner{}))
+	reg.Register(security.NewSAST(sess, security.ExecRunner{}, security.EngineSemgrep))
 	reg.Register(security.NewGitleaks(sess, security.ExecRunner{}))
 	reg.Register(security.NewOSVScanner(sess, security.ExecRunner{}))
 	reg.Register(tool.NewListSkills(skills))

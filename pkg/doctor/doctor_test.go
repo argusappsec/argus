@@ -392,6 +392,63 @@ func TestRun_NamesTheMissingBinariesOfAMultiBinaryTool(t *testing.T) {
 	}
 }
 
+// enginesEntry is a catalogued Tool over two alternative engines, preferred
+// first, like the SAST Tool's opengrep and semgrep.
+func enginesEntry() security.Entry {
+	e := stubEntry("sast", "preferred-engine", "fallback-engine")
+	e.Alternatives = true
+	return e
+}
+
+// A Tool over alternative engines is installed when either engine is, and its
+// row says which one it will run: the preferred one when both are there.
+func TestRun_ReportsAToolOverAlternativeEnginesAsInstalledWithEitherEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name, onPath, want string
+		both               bool
+	}{
+		{name: "fallback only", onPath: "fallback-engine", want: "fallback-engine"},
+		{name: "both", onPath: "fallback-engine", want: "preferred-engine", both: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			makeStubBinary(t, binDir, tc.onPath)
+			if tc.both {
+				makeStubBinary(t, binDir, "preferred-engine")
+			}
+			t.Setenv("PATH", binDir)
+			t.Setenv("GEMINI_API_KEY", "stub")
+
+			c := checkNamed(t, doctor.Run(doctor.Options{Home: t.TempDir(), Catalog: []security.Entry{enginesEntry()}}), "sast")
+
+			if c.Status != doctor.Pass {
+				t.Errorf("one engine is enough, got %v (%s)", c.Status, c.Message)
+			}
+			if !strings.Contains(c.Message, tc.want) {
+				t.Errorf("message %q should name the engine that will run, %s", c.Message, tc.want)
+			}
+		})
+	}
+}
+
+// With neither engine, the row offers either one, not both: installing one is
+// enough.
+func TestRun_ReportsAToolOverAlternativeEnginesAsMissingWithEitherInstallHint(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	c := checkNamed(t, doctor.Run(doctor.Options{Home: t.TempDir(), Catalog: []security.Entry{enginesEntry()}}), "sast")
+
+	if c.Status != doctor.Info {
+		t.Errorf("a Tool with no engine is not installed, got %v", c.Status)
+	}
+	for _, want := range []string{"one of", "brew install preferred-engine", "brew install fallback-engine"} {
+		if !strings.Contains(c.Message, want) {
+			t.Errorf("message %q should mention %q", c.Message, want)
+		}
+	}
+}
+
 func TestRun_BinariesOnly_AllPresentSucceeds(t *testing.T) {
 	binDir := t.TempDir()
 	homeDir := t.TempDir()

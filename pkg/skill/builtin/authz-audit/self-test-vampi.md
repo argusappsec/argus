@@ -49,7 +49,7 @@ endpoint, so it exercises both **recall** (find the bugs) and **precision**
 ## Out of lane — delegate, do not emit
 
 - `users.get_user` builds SQL with an f-string in `text(...)` → SQLi. Note
-  "out of scope, `run_semgrep`" and do **not** emit it as an authz finding.
+  "out of scope, `run_sast`" and do **not** emit it as an authz finding.
 - Weak JWT signing key and ReDoS in the email regex — out-of-lane, note only.
 - The unauthenticated `_debug` password dump is **excessive data exposure** (a
   *read* over-serialization, API3): record it in out-of-lane notes with **no**

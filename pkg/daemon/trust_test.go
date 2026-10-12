@@ -231,8 +231,8 @@ func TestRegistry_AutomaticReviewLeavesOutADisabledScanner(t *testing.T) {
 	if _, ok := auto.registry.Get("run_gitleaks"); ok {
 		t.Error("an automatic review was offered run_gitleaks, which is disabled")
 	}
-	if _, ok := auto.registry.Get("run_semgrep"); !ok {
-		t.Error("an automatic review lost run_semgrep, which is installed and not disabled")
+	if _, ok := auto.registry.Get("run_sast"); !ok {
+		t.Error("an automatic review lost run_sast, which is installed and not disabled")
 	}
 }
 

@@ -243,7 +243,7 @@ aggregate.
 | `providers.<name>.url` | Base URL; empty means the provider's default endpoint; ignored on a `gemini` entry |
 | `providers.<name>.max_output_tokens` | Client-side cap on response length; omitted sends no ceiling; a non-zero value is an error on a `gemini` entry |
 | `persona.name` | The instance's name; used as the vocative on GitHub threads |
-| `tools.disabled` | Scanners to switch off, by name (`semgrep`, `gitleaks`, `osv-scanner`, …); an unknown name is an error |
+| `tools.disabled` | Scanners to switch off, by name (`sast`, `gitleaks`, `osv-scanner`, …); an unknown name is an error |
 | `daemon.socket` | Unix socket path for the local TUI |
 | `daemon.http_addr` | Bind address of the single HTTP front door |
 | `daemon.max_concurrent_sessions` | Cap on concurrently running sessions |

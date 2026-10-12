@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // scratch is one scanner run's private corner of the filesystem: the working
@@ -27,7 +28,15 @@ func newScratch(tool string) (*scratch, error) {
 		return nil, fmt.Errorf("%s: create scratch directory: %w", tool, err)
 	}
 	s := &scratch{dir: dir}
-	for _, sub := range []string{s.home(), s.tmp()} {
+	// Every directory the environment names exists before the binary starts:
+	// some refuse to run without them (opengrep aborts on a missing
+	// XDG_CONFIG_HOME).
+	dirs := []string{s.home(), s.tmp()}
+	for _, kv := range s.xdg() {
+		_, d, _ := strings.Cut(kv, "=")
+		dirs = append(dirs, d)
+	}
+	for _, sub := range dirs {
 		if err := os.MkdirAll(sub, 0o700); err != nil {
 			s.remove()
 			return nil, fmt.Errorf("%s: create scratch directory: %w", tool, err)

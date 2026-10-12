@@ -12,8 +12,9 @@ import (
 // The Catalog is every scanner Tool Argus knows how to wrap, with what an
 // operator needs to decide whether to install it (ADR 0027). It is static and
 // always complete: being catalogued is not being usable. A catalogued Tool is
-// *registered* only when every binary it requires resolves on PATH at daemon
-// start, and *exposed* according to its admission (ADR 0023).
+// *registered* only when every binary it requires (or, for alternative
+// engines, one of them) resolves on PATH at daemon start, and *exposed*
+// according to its admission (ADR 0023).
 //
 // Each Tool declares its own Entry next to its implementation and adds it with
 // catalogue from an init function, so adding a scanner means adding a file —
@@ -84,6 +85,11 @@ type Deps struct {
 	// with a mode that drives a toolchain (osv-scanner's Go call analysis)
 	// switches that mode off.
 	Automatic bool
+
+	// Found is the Entry's binaries that resolved on PATH at discovery, in the
+	// Entry's order. A Tool whose binaries are Alternatives (the SAST engines)
+	// is built over the first one found.
+	Found []string
 }
 
 // Entry is one catalogued Tool.
@@ -113,9 +119,20 @@ type Entry struct {
 	Manifest bool
 
 	// Binaries are every executable the Tool needs. All of them must resolve
-	// on PATH for the Tool to be registered. They are also doctor's single
-	// source of truth for which scanner binaries to check.
+	// on PATH for the Tool to be registered, unless they are Alternatives.
+	// They are also doctor's single source of truth for which scanner
+	// binaries to check.
 	Binaries []Binary
+
+	// Alternatives marks Binaries as interchangeable engines for one
+	// capability, in order of preference: one resolving is enough, and the
+	// Tool runs the first that does. The SAST Tool uses it for opengrep and
+	// semgrep, so one capability is offered whichever is installed.
+	Alternatives bool
+
+	// Found is set by Discover on an installed Entry: the binaries that
+	// resolved, in the order of Binaries. It is empty in the Catalog itself.
+	Found []string
 
 	// Trust says whether the Tool is safe on untrusted input. Automatic reviews
 	// register only TrustSafe Tools. It is required: every Tool has to decide.
@@ -207,7 +224,8 @@ func (d Discovery) Disable(ids []string) Discovery {
 func Discover(lookPath func(string) (string, error)) Discovery {
 	var d Discovery
 	for _, e := range Catalog() {
-		if e.resolves(lookPath) {
+		if found, ok := e.Resolve(lookPath); ok {
+			e.Found = found
 			d.Installed = append(d.Installed, e)
 		} else {
 			d.Missing = append(d.Missing, e)
@@ -216,11 +234,18 @@ func Discover(lookPath func(string) (string, error)) Discovery {
 	return d
 }
 
-func (e Entry) resolves(lookPath func(string) (string, error)) bool {
+// Resolve looks the Entry's binaries up with lookPath and reports which
+// resolved, in the order of Binaries, and whether that is enough to run the
+// Tool: every binary, or any one of them when they are Alternatives. Discovery
+// and doctor both decide "installed" here, so they cannot disagree.
+func (e Entry) Resolve(lookPath func(string) (string, error)) (found []string, ok bool) {
 	for _, b := range e.Binaries {
-		if _, err := lookPath(b.Name); err != nil {
-			return false
+		if _, err := lookPath(b.Name); err == nil {
+			found = append(found, b.Name)
 		}
 	}
-	return true
+	if e.Alternatives {
+		return found, len(found) > 0
+	}
+	return found, len(found) == len(e.Binaries)
 }

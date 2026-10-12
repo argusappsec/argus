@@ -1,0 +1,125 @@
+{
+  "version": "1.30.1",
+  "results": [
+    {
+      "check_id": "argus.python.subprocess-shell-true",
+      "path": "$CHECKOUT/app.py",
+      "start": {
+        "line": 6,
+        "col": 5,
+        "offset": 52
+      },
+      "end": {
+        "line": 6,
+        "col": 36,
+        "offset": 83
+      },
+      "extra": {
+        "metavars": {
+          "$FUNC": {
+            "start": {
+              "line": 6,
+              "col": 16,
+              "offset": 63
+            },
+            "end": {
+              "line": 6,
+              "col": 19,
+              "offset": 66
+            },
+            "abstract_content": "run"
+          }
+        },
+        "message": "A subprocess runs through a shell. If any part of the command comes from input, this is command injection; pass an argument list without shell=True.",
+        "metadata": {
+          "cwe": "CWE-78: OS Command Injection",
+          "category": "security"
+        },
+        "severity": "ERROR",
+        "fingerprint": "de199c52310d48044550d1c3824d7c1abf911f13964eb782cd58e49fc393e80c04262ed83c644a5128c37d3d8e6cf170ad9247bddc45bd56a1c5f5d39a0807f2_0",
+        "lines": "    subprocess.run(cmd, shell=True)  # noopengrep",
+        "is_ignored": true,
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "argus.python.subprocess-shell-true",
+      "path": "$CHECKOUT/app.py",
+      "start": {
+        "line": 11,
+        "col": 5,
+        "offset": 176
+      },
+      "end": {
+        "line": 11,
+        "col": 36,
+        "offset": 207
+      },
+      "extra": {
+        "metavars": {
+          "$FUNC": {
+            "start": {
+              "line": 11,
+              "col": 16,
+              "offset": 187
+            },
+            "end": {
+              "line": 11,
+              "col": 19,
+              "offset": 190
+            },
+            "abstract_content": "run"
+          }
+        },
+        "message": "A subprocess runs through a shell. If any part of the command comes from input, this is command injection; pass an argument list without shell=True.",
+        "metadata": {
+          "cwe": "CWE-78: OS Command Injection",
+          "category": "security"
+        },
+        "severity": "ERROR",
+        "fingerprint": "de199c52310d48044550d1c3824d7c1abf911f13964eb782cd58e49fc393e80c04262ed83c644a5128c37d3d8e6cf170ad9247bddc45bd56a1c5f5d39a0807f2_1",
+        "lines": "    subprocess.run(cmd, shell=True)",
+        "is_ignored": true,
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "argus.python.unsafe-deserialization",
+      "path": "$CHECKOUT/app.py",
+      "start": {
+        "line": 15,
+        "col": 12,
+        "offset": 237
+      },
+      "end": {
+        "line": 15,
+        "col": 30,
+        "offset": 255
+      },
+      "extra": {
+        "metavars": {},
+        "message": "Deserializing with pickle/marshal/shelve or yaml.load without a safe loader can execute code from the payload.",
+        "metadata": {
+          "cwe": "CWE-502: Deserialization of Untrusted Data",
+          "category": "security"
+        },
+        "severity": "ERROR",
+        "fingerprint": "344eb0527dd8c5dda19ea435c1dd246aa69b6732a327747996ba3a1d7ae1ae4b8f01676cadd1cc3a94894a2854a1aeada2f1186db5dd3e032a8475ba1267bfc4_0",
+        "lines": "    return pickle.loads(blob)",
+        "is_ignored": false,
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "$CHECKOUT/app.py"
+    ]
+  },
+  "interfile_languages_used": [],
+  "skipped_rules": []
+}

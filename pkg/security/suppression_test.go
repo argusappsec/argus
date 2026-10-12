@@ -81,6 +81,29 @@ func TestSemgrep_ReportsNosemgrepFindingsAsSuppressedInRepo(t *testing.T) {
 	}
 }
 
+// TestSAST_ReportsOpengrepSuppressionCommentsAsSuppressedInRepo: opengrep
+// honours `noopengrep` as well as semgrep's `nosemgrep`. It runs with nosem
+// disabled too, so neither hides a hit, and both mark it. The report was
+// recorded from the real opengrep 1.30.1 with Argus's flags and ruleset.
+func TestSAST_ReportsOpengrepSuppressionCommentsAsSuppressedInRepo(t *testing.T) {
+	rep := scan(t, "opengrep")
+	if rep.Scanner != "opengrep" {
+		t.Errorf("scanner = %q, want opengrep", rep.Scanner)
+	}
+	if len(rep.Findings) != 3 {
+		t.Fatalf("got %d findings, want the 3 in the recorded report: %+v", len(rep.Findings), rep.Findings)
+	}
+	if inline := at(t, rep, "app.py", 6); !inline.SuppressedInRepo || !strings.Contains(inline.Suppression, "noopengrep") {
+		t.Errorf("an inline noopengrep finding must be reported as suppressed in the repo: %+v", inline)
+	}
+	if above := at(t, rep, "app.py", 11); !above.SuppressedInRepo {
+		t.Errorf("a nosemgrep comment on the line above must mark the finding: %+v", above)
+	}
+	if plain := at(t, rep, "app.py", 15); plain.SuppressedInRepo || plain.Suppression != "" {
+		t.Errorf("a finding nobody tried to silence must not be marked: %+v", plain)
+	}
+}
+
 // TestGitleaks_ReportsAllowCommentsAndIgnoreEntriesAsSuppressedInRepo:
 // gitleaks runs with its allow comments ignored and with Argus's own config, so
 // `gitleaks:allow`, a `.gitleaksignore` entry and a `.gitleaks.toml` allowlist

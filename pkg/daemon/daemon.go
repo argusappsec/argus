@@ -82,7 +82,7 @@ type Context struct {
 	// so consumers must guard for nil with a clear, user-facing error.
 	CodeHost codehost.CodeHost
 
-	// Commands is what the scanner Tools shell out through (semgrep, gitleaks,
+	// Commands is what the scanner Tools shell out through (opengrep or semgrep, gitleaks,
 	// osv-scanner). It lives on the Context rather than at Registry construction
 	// because both places that build a Registry — a Session and the MCP surface
 	// projected from one — must reach the same executor, and because a test that
