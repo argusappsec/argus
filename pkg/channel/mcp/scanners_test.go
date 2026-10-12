@@ -18,8 +18,8 @@ import (
 
 // The scanners are the capability nobody wires up on their own, and the reason
 // a developer installs Argus rather than reaching for the binaries. These tests
-// drive the real protocol and assert on what the calling AI receives: that the
-// three are on a Provider-less daemon's surface, that a target on the daemon
+// drive the real protocol and assert on what the calling AI receives: that every
+// installed scanner is on a Provider-less daemon's surface, that a target on the daemon
 // host is what they run against, that a target Argus cannot scan is refused by
 // naming the problem, and that the scanner's own report comes back.
 //
@@ -90,7 +90,7 @@ var recordedReports = map[string]string{
 }
 
 func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {
-	// One target argument, the same on all three: the calling AI learns the
+	// One target argument, the same on every scanner: the calling AI learns the
 	// convention once and uses whichever scanner the question needs.
 	for _, name := range scannerTools {
 		t.Run(name, func(t *testing.T) {
