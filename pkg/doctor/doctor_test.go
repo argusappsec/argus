@@ -326,6 +326,30 @@ func TestRun_ReportsAMissingCataloguedToolAsInfoWithItsCatalogLink(t *testing.T)
 	}
 }
 
+// What is installed is the injected lookup's answer, not the host's PATH: the
+// same seam the daemon's discovery has, so doctor and registration can be held
+// to one answer under test.
+func TestRun_AsksTheInjectedLookupWhatIsInstalled(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GEMINI_API_KEY", "stub")
+
+	lookPath := func(name string) (string, error) {
+		if name == "scanner-bin" {
+			return "/opt/bin/" + name, nil
+		}
+		return "", os.ErrNotExist
+	}
+	checks := doctor.Run(doctor.Options{
+		Home:     t.TempDir(),
+		Catalog:  []security.Entry{stubEntry("scanner", "scanner-bin")},
+		LookPath: lookPath,
+	})
+
+	if c := checkNamed(t, checks, "scanner"); c.Status != doctor.Pass {
+		t.Errorf("the lookup finds scanner-bin, so the Tool is installed; got %+v", c)
+	}
+}
+
 // A Tool the operator switched off (tools.disabled) gets a "disabled" row,
 // even though its binary is installed: it is not offered, and that is a choice,
 // so the row is information — never a failure, and never an install hint.
