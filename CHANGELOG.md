@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/argusappsec/argus/compare/v0.3.0...v0.4.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* the MCP tool run_semgrep is renamed run_sast. MCP callers must call run_sast instead. Its catalog ID (tools.disabled, doctor rows, /guide/scanners/ page) is now "sast" instead of "semgrep".
+
+### Features
+
+* the Toolbox deployment shape — Argus runs without a Provider ([#88](https://github.com/argusappsec/argus/issues/88)) ([5e38926](https://github.com/argusappsec/argus/commit/5e389261bad4b63920f3c0c5f953011fd46db21e)), closes [#87](https://github.com/argusappsec/argus/issues/87)
+* Tool Catalog — Argus offers the scanners the host can run ([#118](https://github.com/argusappsec/argus/issues/118)) ([8e260b6](https://github.com/argusappsec/argus/commit/8e260b6bdb77d311168d3471e3353195f17cceb2))
+
 ## [0.3.0](https://github.com/argusappsec/argus/compare/v0.2.0...v0.3.0) (2026-07-30)
 
 
