@@ -15,6 +15,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -81,15 +82,34 @@ type Context struct {
 	// so consumers must guard for nil with a clear, user-facing error.
 	CodeHost codehost.CodeHost
 
-	// Commands is what the scanner Tools shell out through (semgrep, gitleaks,
+	// Commands is what the scanner Tools shell out through (opengrep or semgrep, gitleaks,
 	// osv-scanner). It lives on the Context rather than at Registry construction
 	// because both places that build a Registry — a Session and the MCP surface
 	// projected from one — must reach the same executor, and because a test that
 	// drives the surface has to substitute it instead of running real binaries.
 	//
+	// Each scanner hands the Runner a full security.Command: a scratch working
+	// directory outside the checkout and an explicit environment allow-list.
+	// The real executor never adds the daemon's own environment to it, so the
+	// `.env` loaded into this process does not reach a scanner (ADR 0027).
+	//
 	// Nil means the real executor (security.ExecRunner): a Context assembled by
 	// hand runs actual scanners unless it deliberately says otherwise.
 	Commands security.Runner
+
+	// LookPath resolves a binary on PATH. Registration asks it whether each
+	// catalogued Tool's binaries are installed (ADR 0027), so it is injected
+	// the same way Commands is: a test decides what is "installed" instead of
+	// inheriting whatever the host happens to carry.
+	//
+	// Nil means the real lookup (exec.LookPath).
+	LookPath func(name string) (string, error)
+
+	// DisabledTools are the Catalog IDs the operator switched off
+	// (tools.disabled in argus.yaml). A disabled Tool is never registered, even
+	// when its binaries are installed (ADR 0027). Config validation has already
+	// rejected unknown IDs. Nil disables nothing.
+	DisabledTools []string
 
 	// NewProvider builds a provider for modelID, validating it against the
 	// configured providers. Called once per Session (cheap), so a --model
@@ -109,6 +129,10 @@ type Context struct {
 	LoadMemory func() (string, error)
 
 	Sessions *SessionManager
+
+	// toolsOnce / tools back Tools below.
+	toolsOnce sync.Once
+	tools     security.Discovery
 
 	// memoryOnce / memoryStore back MemoryStore below.
 	memoryOnce  sync.Once
@@ -211,8 +235,49 @@ func Build(home string, cfg *config.Config) (*Context, error) {
 		dc.CodeHost = ch
 	}
 
+	// Discovery runs here, once, so the registry every Session and every MCP
+	// request builds is fixed for the life of the process and the startup log
+	// reports the same answer (ADR 0027). The operator's tools.disabled is
+	// applied to it, so a disabled Tool is never registered.
+	dc.DisabledTools = cfg.Tools.Disabled
+	// The audit log records the answer too, so an auditor can reconstruct what
+	// any review on this daemon could have run (and, with tools_withheld, what
+	// an automatic one was denied).
+	d := dc.Tools()
+	_ = dc.Audit.Log(auditEvent("tools_registered", map[string]any{
+		"registered": entryIDs(d.Installed),
+		"missing":    entryIDs(d.Missing),
+		"disabled":   entryIDs(d.Disabled),
+	}))
+
 	dc.Sessions = NewSessionManager(dc, cfg.Daemon.SessionCap())
 	return dc, nil
+}
+
+// Tools is the daemon's discovery of the Catalog: which catalogued Tools the
+// host can run and which it is missing. It is computed once — at Build, or on
+// first use for a Context assembled by hand — and never again, so a Tool
+// installed while the daemon runs appears after a restart, predictably, rather
+// than halfway through a review (ADR 0027).
+func (dc *Context) Tools() security.Discovery {
+	dc.toolsOnce.Do(func() {
+		lookPath := dc.LookPath
+		if lookPath == nil {
+			lookPath = exec.LookPath
+		}
+		dc.tools = security.Discover(lookPath).Disable(dc.DisabledTools)
+	})
+	return dc.tools
+}
+
+// entryIDs lists the Catalog IDs of entries, in order. It is never nil, so an
+// empty half is recorded as an empty list rather than as null.
+func entryIDs(entries []security.Entry) []string {
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	return ids
 }
 
 // commands is the Runner the scanner Tools shell out through: the one injected

@@ -1,0 +1,108 @@
+{
+	"Golang errors": {},
+	"Issues": [
+		{
+			"severity": "HIGH",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "78",
+				"url": "https://cwe.mitre.org/data/definitions/78.html"
+			},
+			"rule_id": "G702",
+			"details": "Command injection via taint analysis",
+			"file": "$CHECKOUT/main.go",
+			"code": "14: func runQuietly(name string) error {\n15: \treturn exec.Command(\"sh\", \"-c\", name).Run() // #nosec G204 -- the caller is trusted\n16: }\n",
+			"line": "15",
+			"column": "21",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "78",
+				"url": "https://cwe.mitre.org/data/definitions/78.html"
+			},
+			"rule_id": "G702",
+			"details": "Command injection via taint analysis",
+			"file": "$CHECKOUT/main.go",
+			"code": "10: func run(name string) error {\n11: \treturn exec.Command(\"sh\", \"-c\", name).Run()\n12: }\n",
+			"line": "11",
+			"column": "21",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "328",
+				"url": "https://cwe.mitre.org/data/definitions/328.html"
+			},
+			"rule_id": "G401",
+			"details": "Use of weak cryptographic primitive",
+			"file": "$CHECKOUT/main.go",
+			"code": "19: \t//gosec:disable G401 -- not used for security\n20: \th := md5.New()\n21: \th.Write(b)\n",
+			"line": "20",
+			"column": "7",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "78",
+				"url": "https://cwe.mitre.org/data/definitions/78.html"
+			},
+			"rule_id": "G204",
+			"details": "Subprocess launched with variable",
+			"file": "$CHECKOUT/main.go",
+			"code": "14: func runQuietly(name string) error {\n15: \treturn exec.Command(\"sh\", \"-c\", name).Run() // #nosec G204 -- the caller is trusted\n16: }\n",
+			"line": "15",
+			"column": "9",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "78",
+				"url": "https://cwe.mitre.org/data/definitions/78.html"
+			},
+			"rule_id": "G204",
+			"details": "Subprocess launched with variable",
+			"file": "$CHECKOUT/main.go",
+			"code": "10: func run(name string) error {\n11: \treturn exec.Command(\"sh\", \"-c\", name).Run()\n12: }\n",
+			"line": "11",
+			"column": "9",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "327",
+				"url": "https://cwe.mitre.org/data/definitions/327.html"
+			},
+			"rule_id": "G501",
+			"details": "Blocklisted import crypto/md5: weak cryptographic primitive",
+			"file": "$CHECKOUT/main.go",
+			"code": "3: import (\n4: \t\"crypto/md5\"\n5: \t\"fmt\"\n",
+			"line": "4",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		}
+	],
+	"Stats": {
+		"files": 1,
+		"lines": 29,
+		"nosec": 0,
+		"found": 6
+	},
+	"GosecVersion": "dev"
+}

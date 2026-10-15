@@ -1,0 +1,4 @@
+# Committed by the pull request to hide a vulnerability. Argus reports it anyway.
+[[IgnoredVulns]]
+id = "CVE-2021-38561"
+reason = "not reachable"

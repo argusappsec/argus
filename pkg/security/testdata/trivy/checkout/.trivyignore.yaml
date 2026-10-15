@@ -1,0 +1,7 @@
+misconfigurations:
+  - id: AVD-KSV-0001
+    paths:
+      - k8s/deploy.yaml
+  - id: KSV-0020
+    paths:
+      - elsewhere/other.yaml

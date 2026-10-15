@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // Config is the user-editable preferences file (~/.argus/argus.yaml).
@@ -75,6 +77,35 @@ type Config struct {
 	// instance known only by its brand name Argus, identical to prior
 	// behavior.
 	Persona PersonaConfig `yaml:"persona,omitempty"`
+
+	// Tools configures the catalogued scanner Tools (ADR 0027).
+	Tools ToolsConfig `yaml:"tools,omitempty"`
+}
+
+// ToolsConfig is the tools: section of argus.yaml.
+type ToolsConfig struct {
+	// Disabled lists Catalog IDs (e.g. "gitleaks") the operator switched off.
+	// A disabled Tool is never registered, even when its binaries are
+	// installed. Omitting the key disables nothing, so a Tool newly added to
+	// the image is on by default. An ID that is not catalogued is an error, so
+	// a typo cannot silently leave a scanner on.
+	Disabled []string `yaml:"disabled,omitempty"`
+}
+
+// validate rejects any tools.disabled entry that is not a Catalog ID.
+func (t ToolsConfig) validate() error {
+	known := map[string]bool{}
+	var ids []string
+	for _, e := range security.Catalog() {
+		known[e.ID] = true
+		ids = append(ids, e.ID)
+	}
+	for _, id := range t.Disabled {
+		if !known[id] {
+			return fmt.Errorf("config: tools.disabled: unknown tool %q (catalogued tools: %s)", id, strings.Join(ids, ", "))
+		}
+	}
+	return nil
 }
 
 // PersonaConfig is the persona: section of argus.yaml — an operator-chosen name
@@ -217,6 +248,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: a github channel requires a github codehost under `codehosts:` (its clone/API credentials)")
 		}
 	}
+	// tools.disabled is not checked here: LoadConfig already refused an
+	// unknown ID, for every reader of argus.yaml and not only the daemon.
 	return nil
 }
 
@@ -414,6 +447,11 @@ func LoadConfig(path string) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	// Checked at load, not only at the daemon's startup gate, so every reader
+	// of argus.yaml (doctor included) refuses a typo rather than act on it.
+	if err := c.Tools.validate(); err != nil {
+		return nil, err
 	}
 	return &c, nil
 }

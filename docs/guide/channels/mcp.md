@@ -56,14 +56,17 @@ trail. Revoke anytime with `argus user mcp-token revoke`.
 
 ### Scanners
 
-Three tools run the real scanners on the Argus host and hand your agent their
-findings to reason over:
+These tools run the real scanners on the Argus host and hand your agent their
+findings to reason over. Each is listed only when its scanner is installed on
+that host:
 
 | Tool | Looks for |
 | --- | --- |
-| `run_semgrep` | Code-level vulnerability patterns |
+| `run_sast` | Code-level vulnerability patterns (SAST), with Opengrep or Semgrep |
 | `run_gitleaks` | Secrets committed to the tree |
 | `run_osv_scanner` | Known vulnerabilities in dependencies |
+| `run_trivy` | Misconfiguration in Terraform, Kubernetes manifests, Helm charts and Dockerfiles |
+| `run_zizmor` | Security issues in GitHub Actions workflows, offline |
 
 Each takes a `path`: **an absolute path to a directory on the machine Argus runs
 on**. Argus scans code it can already see locally — it is not sent your files.
@@ -74,10 +77,41 @@ A path that is missing, unreadable or not a directory is refused by name. That
 is deliberate: a scan that silently found nothing because it ran against the
 wrong directory is the worst answer available.
 
+Every scanner returns the same shape: a list of findings with a rule id, a
+file relative to the scanned tree, a line where there is one, and a
+description. The scanners obey only Argus's configuration, never the code they
+scan:
+
+- `run_sast` runs a security ruleset built into Argus, with Opengrep when it
+  is installed and Semgrep otherwise; the report's `scanner` field names the
+  one that ran. It never fetches rules from a registry and sends no metrics.
+- Config and ignore files in the scanned tree (`.semgrepignore`,
+  `.gitleaks.toml`, `.gitleaksignore`, `osv-scanner.toml`, `zizmor.yml`) have
+  no effect, and neither do inline comments such as `nosemgrep`, `noopengrep`,
+  `gitleaks:allow` or `# zizmor: ignore[...]`.
+- `run_zizmor` never calls the GitHub API: it runs offline and is never handed
+  a GitHub token, so the audits that need one are skipped.
+- `run_trivy` runs offline, with the checks built into the trivy binary, and
+  never fetches the remote Terraform modules a scanned file names. A
+  `trivy.yaml`, `.trivyignore` or `.trivyignore.yaml` in the scanned tree has no
+  effect.
+- A finding the code tried to silence is still returned, with
+  `suppressed_in_repo: true` and a `suppression` saying how. Treat it as a
+  finding, and the attempt to hide it as a signal. Your organization's genuine
+  false positives belong in its `known-fps` knowledge instead.
+- The one exception is a `trivy:ignore` comment in Terraform, a Helm chart or
+  a Dockerfile: trivy obeys it and cannot be told not to. `run_trivy` returns
+  the comment itself instead, suppressed, with the check it names and its line
+  and no severity. Read the code under it to see what it hides.
+
 :::note[Install the scanners on the daemon host]
-The scanners are separate binaries — `semgrep`, `gitleaks`, `osv-scanner`. Run
-`argus doctor` to see which are present. The official container image ships all
-three.
+The scanners are separate binaries — `opengrep` or `semgrep`, `gitleaks`,
+`osv-scanner`, `zizmor`, `trivy`. Argus
+looks for them once, when the daemon starts: the startup log lists the ones it
+found and the ones it did not, and `argus doctor` shows each as installed or not
+installed. A scanner installed later appears after a restart. The official
+container image ships a SAST engine, Gitleaks, OSV-Scanner, zizmor and Trivy. The [scanner catalog](/guide/scanners/) says
+what each one finds and how to install it.
 :::
 
 ### Your organization's knowledge

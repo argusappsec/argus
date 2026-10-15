@@ -155,6 +155,7 @@ func shapedServer(t *testing.T, shape deployment.Shape, prov provider.Provider, 
 		LoadSoul:   func() (*soul.Soul, error) { return &soul.Soul{}, nil },
 		LoadMemory: func() (string, error) { return "", nil },
 	}
+	installEveryScanner(dc)
 	dc.Sessions = daemon.NewSessionManager(dc, 4)
 	return NewServer(dc), auditPath
 }
@@ -558,7 +559,7 @@ func TestReview_DeleteClosesSession(t *testing.T) {
 
 func TestToolCall_UnknownToolIsMethodNotFound(t *testing.T) {
 	s, _ := reviewServer(t, &scriptedProvider{responses: findingThenFinalize()}, auth.RoleAnalyst)
-	body := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_trivy","arguments":{}}}`
+	body := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_no_such_scanner","arguments":{}}}`
 	rec := post(t, s, testToken, body)
 	var resp rpcResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {

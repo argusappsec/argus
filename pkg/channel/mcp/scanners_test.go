@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -11,20 +12,29 @@ import (
 	"testing"
 
 	"github.com/argusappsec/argus/pkg/auth"
+	"github.com/argusappsec/argus/pkg/daemon"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // The scanners are the capability nobody wires up on their own, and the reason
 // a developer installs Argus rather than reaching for the binaries. These tests
-// drive the real protocol and assert on what the calling AI receives: that the
-// three are on a Provider-less daemon's surface, that a target on the daemon
+// drive the real protocol and assert on what the calling AI receives: that every
+// installed scanner is on a Provider-less daemon's surface, that a target on the daemon
 // host is what they run against, that a target Argus cannot scan is refused by
 // naming the problem, and that the scanner's own report comes back.
 //
 // No test here shells out to a real binary: the daemon Context's command Runner
 // is stubbed, which is what moving it onto the Context was for.
 
-// scannerTools is the slice of the deterministic surface this file carries.
-var scannerTools = []string{"run_gitleaks", "run_osv_scanner", "run_semgrep"}
+// scannerTools is the slice of the deterministic surface this file carries:
+// the Tool of every catalogued scanner.
+var scannerTools = func() []string {
+	var names []string
+	for _, e := range security.Catalog() {
+		names = append(names, e.Tool)
+	}
+	return names
+}()
 
 func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
@@ -36,6 +46,25 @@ func TestToolsList_ToolboxServesTheScanners(t *testing.T) {
 	}
 }
 
+// The scanner surface is the registry's: a scanner whose binary the host lacks
+// is not registered, so a calling agent never sees it — what tools/list offers
+// is exactly what this host can run.
+func TestToolsList_OffersOnlyTheScannersInstalledOnTheHost(t *testing.T) {
+	s, _ := toolboxServer(t, auth.RoleAnalyst)
+	installOnly(s, "gitleaks")
+
+	names := listedTools(t, s)
+
+	if !slices.Contains(names, "run_gitleaks") {
+		t.Errorf("gitleaks is installed, so run_gitleaks must be listed; got %v", names)
+	}
+	for _, absent := range []string{"run_sast", "run_osv_scanner"} {
+		if slices.Contains(names, absent) {
+			t.Errorf("%s's binary is missing, so it must not be listed; got %v", absent, names)
+		}
+	}
+}
+
 func TestToolCall_ScannerRunsAgainstAnAbsolutePathOnTheHost(t *testing.T) {
 	// The caller names the directory, because in a Toolbox there is no review to
 	// inherit a target from (ADR 0024: client and daemon are the same machine).
@@ -43,35 +72,53 @@ func TestToolCall_ScannerRunsAgainstAnAbsolutePathOnTheHost(t *testing.T) {
 	runner := stubScanners(t, s, `{"results":[{"check_id":"sqli"}]}`)
 	target := t.TempDir()
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(target)+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(target)+`}`)
 	if res.IsError {
-		t.Fatalf("run_semgrep must succeed against a readable directory: %s", toolText(res))
+		t.Fatalf("run_sast must succeed against a readable directory: %s", toolText(res))
 	}
 	if !strings.Contains(toolText(res), "sqli") {
 		t.Errorf("the scanner's own report must reach the caller: %q", toolText(res))
 	}
 	if got := runner.args(); !slices.Contains(got, target) {
-		t.Errorf("semgrep was run as %v, want the caller's target %q among its arguments", got, target)
+		t.Errorf("the SAST engine was run as %v, want the caller's target %q among its arguments", got, target)
 	}
 }
 
+// recordedReports is a one-finding report in each scanner's own format, so a
+// test can see the finding come back through the Tool's parsing. A newly
+// catalogued scanner without one fails TestToolCall_EveryScannerScansTheCallersTarget.
+var recordedReports = map[string]string{
+	"run_sast":        `{"results":[{"check_id":"argus-fixture-rule","path":"/x/main.go","start":{"line":1},"end":{"line":1},"extra":{"message":"m","severity":"ERROR"}}],"errors":[]}`,
+	"run_gitleaks":    `[{"RuleID":"argus-fixture-rule","File":"/x/main.go","StartLine":1,"EndLine":1}]`,
+	"run_osv_scanner": `{"results":[{"source":{"path":"/x/go.mod"},"packages":[{"package":{"name":"lodash"},"vulnerabilities":[{"id":"argus-fixture-rule"}]}]}]}`,
+	"run_gosec":       `{"Golang errors":{},"Issues":[{"rule_id":"argus-fixture-rule","file":"/x/main.go","line":"1","severity":"HIGH"}]}`,
+	"run_zizmor":      `[{"ident":"argus-fixture-rule","desc":"d","determinations":{"severity":"High","confidence":"High"},"locations":[{"symbolic":{"key":{"Local":{"verbatim_path":"/x/.github/workflows/ci.yml"}},"kind":"Primary"},"concrete":{"location":{"start_point":{"row":0},"end_point":{"row":0}}}}]}]`,
+	"run_govulncheck": `{"config":{"scanner_name":"govulncheck"}}` + "\n" + `{"finding":{"osv":"argus-fixture-rule","trace":[{"module":"example.com/dep","version":"v1.0.0"}]}}`,
+	"run_trivy":       `{"SchemaVersion":2,"Results":[{"Target":"Dockerfile","Type":"dockerfile","Misconfigurations":[{"ID":"argus-fixture-rule","Severity":"HIGH","Status":"FAIL"}]}]}`,
+}
+
 func TestToolCall_EveryScannerScansTheCallersTarget(t *testing.T) {
-	// One target argument, the same on all three: the calling AI learns the
+	// One target argument, the same on every scanner: the calling AI learns the
 	// convention once and uses whichever scanner the question needs.
 	for _, name := range scannerTools {
 		t.Run(name, func(t *testing.T) {
+			report, ok := recordedReports[name]
+			if !ok {
+				t.Fatalf("no recorded report for %s: add one to recordedReports", name)
+			}
 			s, _ := toolboxServer(t, auth.RoleAnalyst)
-			runner := stubScanners(t, s, `{"findings":"lodash CVE"}`)
+			runner := stubScanners(t, s, report)
 			target := t.TempDir()
 
 			res := callToolWith(t, s, name, `{"path":`+quote(target)+`}`)
 			if res.IsError {
 				t.Fatalf("%s must succeed against a readable directory: %s", name, toolText(res))
 			}
-			if !strings.Contains(toolText(res), "lodash CVE") {
+			if !strings.Contains(toolText(res), "argus-fixture-rule") {
 				t.Errorf("%s returned %q, want the scanner's own report", name, toolText(res))
 			}
-			if got := runner.args(); !slices.Contains(got, target) {
+			// gosec takes the tree as a package pattern, <target>/...
+			if got := runner.args(); !slices.ContainsFunc(got, func(a string) bool { return a == target || a == target+"/..." }) {
 				t.Errorf("%s was run as %v, want the caller's target %q among its arguments", name, got, target)
 			}
 		})
@@ -83,7 +130,7 @@ func TestToolCall_ScannerRejectsATargetThatDoesNotExist(t *testing.T) {
 	runner := stubScanners(t, s, `{}`)
 	missing := filepath.Join(t.TempDir(), "no-such-project")
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(missing)+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(missing)+`}`)
 	if !res.IsError {
 		t.Fatalf("a target that does not exist must be refused, got %q", toolText(res))
 	}
@@ -101,7 +148,7 @@ func TestToolCall_ScannerRejectsARelativeTarget(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
 	runner := stubScanners(t, s, `{}`)
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":"./src"}`)
+	res := callToolWith(t, s, "run_sast", `{"path":"./src"}`)
 	if !res.IsError {
 		t.Fatalf("a relative target must be refused, got %q", toolText(res))
 	}
@@ -125,7 +172,7 @@ func TestToolCall_ScannerRejectsATargetItCannotRead(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(target, 0o700) })
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(target)+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(target)+`}`)
 	if !res.IsError {
 		t.Fatalf("an unreadable target must be refused, got %q", toolText(res))
 	}
@@ -143,7 +190,7 @@ func TestToolCall_ScannerWithNoTargetSaysWhatToPass(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleAnalyst)
 	stubScanners(t, s, `{}`)
 
-	res := callToolWith(t, s, "run_semgrep", `{}`)
+	res := callToolWith(t, s, "run_sast", `{}`)
 	if !res.IsError {
 		t.Fatalf("a scan with no target must be refused, got %q", toolText(res))
 	}
@@ -161,9 +208,9 @@ func TestToolCall_ViewerIsRefusedOnTheScanners(t *testing.T) {
 	s, _ := toolboxServer(t, auth.RoleViewer)
 	runner := stubScanners(t, s, `{}`)
 
-	res := callToolWith(t, s, "run_semgrep", `{"path":`+quote(t.TempDir())+`}`)
+	res := callToolWith(t, s, "run_sast", `{"path":`+quote(t.TempDir())+`}`)
 	if !res.IsError || !strings.Contains(toolText(res), "permission denied") {
-		t.Fatalf("a viewer must be refused on run_semgrep, got %q", toolText(res))
+		t.Fatalf("a viewer must be refused on run_sast, got %q", toolText(res))
 	}
 	if runner.calls() != 0 {
 		t.Error("a refused caller must not reach the scanner binary")
@@ -173,14 +220,14 @@ func TestToolCall_ViewerIsRefusedOnTheScanners(t *testing.T) {
 func TestToolCall_ScannerRunIsAuditedAndAttributed(t *testing.T) {
 	s, auditPath := toolboxServer(t, auth.RoleAnalyst)
 	stubScanners(t, s, `{"results":[]}`)
-	callToolWith(t, s, "run_semgrep", `{"path":`+quote(t.TempDir())+`}`)
+	callToolWith(t, s, "run_sast", `{"path":`+quote(t.TempDir())+`}`)
 
 	e := findEvent(t, auditPath, "mcp_tool_call")
 	if e == nil {
 		t.Fatal("expected an mcp_tool_call audit event")
 	}
-	if e.Data["tool"] != "run_semgrep" {
-		t.Errorf("audit tool = %v, want run_semgrep", e.Data["tool"])
+	if e.Data["tool"] != "run_sast" {
+		t.Errorf("audit tool = %v, want run_sast", e.Data["tool"])
 	}
 	if e.Data["principal"] != "davide" {
 		t.Errorf("audit principal = %v, want the Person the bearer token resolved to", e.Data["principal"])
@@ -209,7 +256,8 @@ type fakeRunner struct {
 	lastArgs []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, _ string, args ...string) (string, error) {
+func (f *fakeRunner) Run(_ context.Context, cmd security.Command) (string, error) {
+	args := cmd.Args
 	f.mu.Lock()
 	f.nCalls++
 	f.lastArgs = args
@@ -217,6 +265,9 @@ func (f *fakeRunner) Run(_ context.Context, _ string, args ...string) (string, e
 	for i, a := range args {
 		if (a == "--report-path" || a == "--output") && i+1 < len(args) {
 			_ = os.WriteFile(args[i+1], []byte(f.out), 0o600)
+		}
+		if path, ok := strings.CutPrefix(a, "-out="); ok { // gosec's spelling
+			_ = os.WriteFile(path, []byte(f.out), 0o600)
 		}
 	}
 	return f.out, nil
@@ -232,6 +283,25 @@ func (f *fakeRunner) args() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastArgs
+}
+
+// installOnly makes the daemon's binary lookup find exactly the named binaries,
+// so which scanners are "installed" is the test's choice, never the host's
+// PATH. It must run before the first registry is built: discovery runs once.
+func installOnly(s *Server, binaries ...string) {
+	s.dc.LookPath = func(name string) (string, error) {
+		if slices.Contains(binaries, name) {
+			return "/usr/local/bin/" + name, nil
+		}
+		return "", exec.ErrNotFound
+	}
+}
+
+// installEveryScanner makes every catalogued scanner look installed. The test
+// helpers that build a Server call it, so the surface they assert on is the
+// whole Catalog's on any machine — CI runs without scanner binaries.
+func installEveryScanner(dc *daemon.Context) {
+	dc.LookPath = func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
 }
 
 // quote renders a path as a JSON string, so a temp directory can be dropped

@@ -9,6 +9,15 @@ import (
 	"github.com/argusappsec/argus/pkg/session"
 )
 
+func init() {
+	f := toolFixture{empty: `[]`}
+	// gitleaks:allow comments are ignored; the config and the ignore-file
+	// location are Argus's, so (target)/.gitleaks.toml is never read.
+	f.repoConfig.switches = []string{"--ignore-gitleaks-allow"}
+	f.repoConfig.scratch = []string{"--config", "--gitleaks-ignore-path"}
+	fixture("gitleaks", f)
+}
+
 func TestGitleaks_ToolMetadata(t *testing.T) {
 	g := security.NewGitleaks(sessionAt("/tmp"), &fakeRunner{})
 	if g.Name() != "run_gitleaks" {
@@ -23,7 +32,7 @@ func TestGitleaks_PassesPathAndReturnsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if out != "[]" {
+	if !strings.Contains(out, `"findings":[]`) {
 		t.Errorf("output = %q", out)
 	}
 	joined := strings.Join(fr.gotArgs, " ")
@@ -45,7 +54,7 @@ func TestGitleaks_ErrorsWhenNoTargetSet(t *testing.T) {
 // file as authoritative even if the binary errored.
 func TestGitleaks_TolerantOfExit1WhenReportPresent(t *testing.T) {
 	fr := &fakeRunner{
-		out: `[{"RuleID":"generic-api-key","File":"main.go","Secret":"sk-abc"}]`,
+		out: `[{"RuleID":"generic-api-key","File":"/repo/main.go","StartLine":1,"Secret":"sk-abc"}]`,
 		err: errExit1{},
 	}
 	g := security.NewGitleaks(sessionAt("/repo"), fr)

@@ -20,8 +20,6 @@ import (
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
 	"github.com/argusappsec/argus/pkg/security"
-	"github.com/argusappsec/argus/pkg/session"
-	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // doctorCmd performs a pre-flight check of the environment. Exits 0 when all
@@ -35,7 +33,9 @@ func doctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check that Argus's dependencies and configuration are ready.",
 		Long: "Run a pre-flight check on:\n" +
-			"  • CLI binaries Argus shells out to (git, semgrep, gitleaks, osv-scanner, …)\n" +
+			"  • CLI binaries Argus shells out to (git), and every catalogued scanner\n" +
+			"    (sast, gitleaks, osv-scanner, …) as installed or not installed — a\n" +
+			"    scanner that is not installed is information, not a failure\n" +
 			"  • argus.yaml (provider configured? default model set?)\n" +
 			"  • the API key each configured provider needs (in .env or shell)\n" +
 			"  • the LLM provider itself: for an openai-compatible endpoint, that it is\n" +
@@ -45,11 +45,12 @@ func doctorCmd() *cobra.Command {
 			"  • SOUL.md (present? populated?)\n" +
 			"  • context/ (any documents on file?)\n\n" +
 			"Exit code 0 = all required checks pass; 1 = at least one required check failed.\n\n" +
-			"--binaries runs the image-contract check only: it verifies just the CLI\n" +
-			"binaries and treats every one as blocking (ADR 0013). This is the gate CI\n" +
-			"runs inside the official batteries-included image — there \"optional\" does\n" +
-			"not exist; everything the image promises is owed. Exit 0 = all present, 1 =\n" +
-			"any missing.",
+			"--binaries runs the image-contract check only: it verifies git and every\n" +
+			"scanner in the Manifest — the part of the catalog the official image ships\n" +
+			"(ADR 0027) — and treats each as blocking. This is the gate CI runs inside\n" +
+			"the official image: there \"optional\" does not exist; everything the image\n" +
+			"promises is owed. Catalogued scanners outside the Manifest are not checked.\n" +
+			"Exit 0 = all present, 1 = any missing.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolveHome(homeDir)
 			if err != nil {
@@ -57,12 +58,13 @@ func doctorCmd() *cobra.Command {
 			}
 			opts := doctor.Options{
 				Home:          home,
-				Registry:      doctorRegistry(),
+				Catalog:       security.Catalog(),
 				ExtraBinaries: extraBinaries(),
 				BinariesOnly:  binariesOnly,
 			}
 			if !binariesOnly {
 				opts.Shape = deploymentShape(home)
+				opts.DisabledTools = disabledTools(home)
 				opts.GitHub, opts.GitHubMint = githubDoctorOptions(home)
 				opts.FrontDoorAddr, opts.FrontDoorProbe = frontDoorDoctorOptions(home)
 				opts.Provider, opts.ProviderModels, opts.ProviderToolCall = providerDoctorOptions(home)
@@ -78,7 +80,7 @@ func doctorCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")
-	c.Flags().BoolVar(&binariesOnly, "binaries", false, "Check only CLI binaries, treating every one as blocking (image contract / CI gate)")
+	c.Flags().BoolVar(&binariesOnly, "binaries", false, "Check only git and the Manifest's scanner binaries, treating every one as blocking (image contract / CI gate)")
 	return c
 }
 
@@ -153,25 +155,6 @@ func renderSummary(w io.Writer, s doctor.Summary) {
 	}
 }
 
-// doctorRegistry builds a throwaway registry containing every tool that
-// might shell out to a binary. Tools that implement tool.Requirer expose
-// their binary deps to doctor; tools that don't are still registered but
-// invisible to the check (this is fine — they have no binary deps).
-//
-// Single source of truth: when a new security tool is added (e.g. trivy),
-// registering it here is enough — doctor picks it up automatically.
-func doctorRegistry() *tool.Registry {
-	sess := session.New()
-	runner := security.ExecRunner{}
-	reg := tool.NewRegistry()
-	reg.Register(security.NewSemgrep(sess, runner))
-	reg.Register(security.NewGitleaks(sess, runner))
-	reg.Register(security.NewOSVScanner(sess, runner))
-	// Future: trivy, trufflehog, govulncheck — adding them in
-	// pkg/security and registering them here is the only change needed.
-	return reg
-}
-
 // deploymentShape derives the Deployment shape doctor reports on, through the
 // same function the daemon uses at Build (daemon.ShapeOf) over the same inputs
 // — .env included, since the no-`providers:` fallback credential may live
@@ -189,6 +172,17 @@ func deploymentShape(home string) deployment.Shape {
 		e.ApplyToProcess()
 	}
 	return daemon.ShapeOf(cfg)
+}
+
+// disabledTools reads tools.disabled from argus.yaml, so doctor reports the
+// Tools the daemon would leave unregistered as disabled. A config that cannot
+// be read disables nothing here; the argus.yaml row carries the real problem.
+func disabledTools(home string) []string {
+	cfg, err := config.LoadConfig(filepath.Join(home, "argus.yaml"))
+	if err != nil {
+		return nil
+	}
+	return cfg.Tools.Disabled
 }
 
 // githubDoctorOptions loads the github codehost from argus.yaml and, when it is

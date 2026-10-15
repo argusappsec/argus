@@ -45,7 +45,7 @@ where your subscription already is** — in your agent, on your machine,
 authenticated as you. Argus supplies everything around it, which is the part
 that is tedious to build and impossible to improvise:
 
-- **The scanners** — Semgrep, Gitleaks and OSV-Scanner — invoked correctly and
+- **The scanners** — SAST (Opengrep or Semgrep), Gitleaks and OSV-Scanner — invoked correctly and
   returned as findings your agent can reason over, instead of three integrations
   you write once and then maintain.
 - **Your organization's knowledge** — its security identity, your context

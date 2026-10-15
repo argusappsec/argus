@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/daemon"
 	"github.com/argusappsec/argus/pkg/deployment"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // daemonCmd runs argusd: the long-running shared daemon every Channel lives
@@ -57,6 +59,9 @@ func daemonCmd() *cobra.Command {
 
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: home %s\n", home)
 			for _, line := range shapeNotice(dc.Shape) {
+				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
+			for _, line := range toolsNotice(dc.Tools()) {
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "argusd: listening on %s\n", dc.SocketPath)
@@ -111,6 +116,43 @@ func daemonCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&homeDir, "home", "", "Override ~/.argus home directory")
 	return c
+}
+
+// toolsNotice is what argusd says at startup about the Catalog (ADR 0027): the
+// scanner Tools this host can run, which are registered, and the catalogued
+// ones it cannot, each with the catalog page that explains how to install it.
+// Discovery happens once, so this is the one moment the operator is told.
+func toolsNotice(d security.Discovery) []string {
+	registered := "none"
+	if len(d.Installed) > 0 {
+		ids := make([]string, 0, len(d.Installed))
+		for _, e := range d.Installed {
+			// A Tool over alternative engines names the one it will run.
+			if engine := e.Engine(); engine != "" {
+				ids = append(ids, e.ID+" ("+engine+")")
+				continue
+			}
+			ids = append(ids, e.ID)
+		}
+		registered = strings.Join(ids, ", ")
+	}
+	lines := []string{"argusd: scanner tools registered: " + registered}
+	// Disabled is the operator's choice, not a gap: it gets its own line and
+	// no install link.
+	if len(d.Disabled) > 0 {
+		ids := make([]string, 0, len(d.Disabled))
+		for _, e := range d.Disabled {
+			ids = append(ids, e.ID)
+		}
+		lines = append(lines, "argusd: scanner tools disabled in argus.yaml (tools.disabled): "+strings.Join(ids, ", "))
+	}
+	if len(d.Missing) > 0 {
+		lines = append(lines, "argusd: catalogued but not installed (install, then restart):")
+		for _, e := range d.Missing {
+			lines = append(lines, fmt.Sprintf("argusd:   %s → %s", e.ID, e.URL()))
+		}
+	}
+	return lines
 }
 
 // shapeNotice is what argusd says at startup about the Deployment shape it

@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -314,5 +315,72 @@ func TestBuild_ToolboxRefusesASlackChannel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown type") {
 		t.Errorf("error %q is no longer the config gate's: give slack its case in channelNeedsReasoning", err)
+	}
+}
+
+// tools.disabled reaches discovery: a Tool the operator switched off is
+// reported as disabled — whatever this host's PATH carries — and never as
+// installed or missing.
+func TestBuild_DisabledToolsAreDiscoveredAsDisabled(t *testing.T) {
+	noFallbackKey(t)
+
+	dc, err := Build(t.TempDir(), &config.Config{Tools: config.ToolsConfig{Disabled: []string{"gitleaks"}}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer dc.Close()
+
+	d := dc.Tools()
+	if len(d.Disabled) != 1 || d.Disabled[0].ID != "gitleaks" {
+		t.Errorf("disabled = %v, want exactly gitleaks", d.Disabled)
+	}
+	for _, e := range append(d.Installed, d.Missing...) {
+		if e.ID == "gitleaks" {
+			t.Errorf("gitleaks is disabled but also discovered as installed or missing")
+		}
+	}
+}
+
+// Story 53: an auditor reconstructs what a review could have done, so the
+// audit log records, at startup, which scanner Tools this daemon registered,
+// which are catalogued but missing from the host, and which the operator
+// disabled.
+func TestBuild_AuditsTheScannerToolsItRegistered(t *testing.T) {
+	noFallbackKey(t)
+	// The host has exactly trivy and gitleaks on PATH; gitleaks is disabled.
+	bin := t.TempDir()
+	for _, name := range []string{"trivy", "gitleaks"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+
+	dc, err := Build(t.TempDir(), &config.Config{Tools: config.ToolsConfig{Disabled: []string{"gitleaks"}}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer dc.Close()
+
+	events := auditEvents(t, dc, "tools_registered")
+	if len(events) != 1 {
+		t.Fatalf("got %d tools_registered events, want exactly one at startup", len(events))
+	}
+	ids := func(key string) []string {
+		var out []string
+		list, _ := events[0][key].([]any)
+		for _, v := range list {
+			out = append(out, v.(string))
+		}
+		return out
+	}
+	if got := ids("registered"); !slices.Equal(got, []string{"trivy"}) {
+		t.Errorf("registered = %v, want [trivy]", got)
+	}
+	if got := ids("disabled"); !slices.Equal(got, []string{"gitleaks"}) {
+		t.Errorf("disabled = %v, want [gitleaks]", got)
+	}
+	if got := ids("missing"); !slices.Equal(got, []string{"gosec", "govulncheck", "osv-scanner", "sast", "zizmor"}) {
+		t.Errorf("missing = %v, want every other catalogued Tool", got)
 	}
 }

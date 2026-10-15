@@ -9,15 +9,17 @@
 # dispatches this one on the tag ref instead, which is exempt from the guard.
 # Hand-pushed tags still come through the push trigger.
 #
-# Multi-arch linux/amd64 + linux/arm64: semgrep ships aarch64 manylinux wheels
-# and gitleaks/osv-scanner are multi-arch Go binaries, so both platforms carry
-# the full toolchain. Login uses the native GITHUB_TOKEN with packages: write —
-# no extra secrets. Provenance + SBOM attestations are pushed to the registry
-# and verify via `gh attestation verify`.
+# Multi-arch linux/amd64 + linux/arm64: opengrep, zizmor and trivy publish a
+# signed release binary or archive per architecture, and gitleaks/osv-scanner
+# are multi-arch Go binaries, so both platforms carry the full Manifest. Login
+# uses the native GITHUB_TOKEN with packages: write — no extra secrets.
+# Provenance + SBOM attestations are pushed to the registry and verify via
+# `gh attestation verify`.
 #
-# The image-contract gate (`argus doctor --binaries`) runs per architecture on
-# native runners BEFORE anything is pushed: the publish job `needs: gate`, so a
-# platform whose image drops a promised scanner never reaches the registry.
+# The image-contract gate (`argus doctor --binaries`, and the uid 65532 check)
+# runs per architecture on native runners BEFORE anything is pushed: the
+# publish job `needs: gate`, so a platform whose image drops a Manifest scanner
+# or moves the nonroot uid never reaches the registry.
 name: Release
 
 on:
@@ -37,7 +39,7 @@ env:
 jobs:
   # Per-architecture image-contract gate. Each platform builds a single-arch
   # loadable image on its native runner and runs the same check CI's PR gate
-  # runs — no QEMU emulation, so semgrep/python execute natively. The GHA cache
+  # runs — no QEMU emulation, so the scanners execute natively. The GHA cache
   # is scoped per platform and reused by the publish build below.
   gate:
     name: image-gate (${{ matrix.platform }})
@@ -67,6 +69,11 @@ jobs:
           provenance: false
       - name: Image-contract gate — argus doctor --binaries
         run: docker run --rm argus:gate doctor --binaries
+      # The image runs as nonroot, uid 65532 (parity with CI's PR gate): the
+      # Kubernetes guide's `fsGroup: 65532` and every image built on this one
+      # rely on it, so no platform may publish an image that moved it.
+      - name: Image runs as uid 65532
+        run: test "$(docker run --rm --entrypoint id argus:gate -u)" = 65532
 
   # Multi-arch build, push, and attest. Only runs once every architecture's
   # gate is green. Reuses the per-platform GHA cache the gate warmed, so this

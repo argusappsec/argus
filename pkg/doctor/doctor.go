@@ -5,7 +5,7 @@
 // protocol allows it to be asked — that the endpoint and model actually meet
 // what Argus needs of them.
 //
-// The checks are pure (only filesystem + os/exec.LookPath) so they are
+// The checks are pure (only filesystem + an injectable PATH lookup) so they are
 // cheap to run and easy to test without touching the network. Everything that
 // does touch the network — minting a GitHub token, the front-door health check,
 // the Provider capability probe — arrives as an injected function field on
@@ -19,11 +19,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/argusappsec/argus/pkg/config"
 	"github.com/argusappsec/argus/pkg/deployment"
+	"github.com/argusappsec/argus/pkg/security"
 	"github.com/argusappsec/argus/pkg/soul"
-	"github.com/argusappsec/argus/pkg/tool"
 )
 
 // Status is the outcome of a single check.
@@ -75,15 +77,26 @@ type Options struct {
 	// reported as broken for having none.
 	Shape deployment.Shape
 
-	// Registry is the tool registry to inspect for binary deps. Tools that
-	// implement tool.Requirer are asked what they need; tools that don't are
-	// ignored. Pass nil to skip tool-derived checks (rare; only useful in
-	// tests).
-	Registry *tool.Registry
+	// Catalog is every catalogued scanner Tool (security.Catalog()), each of
+	// which gets one row: installed, or not installed with its install hint and
+	// catalog page (ADR 0027). Its binary requirements are doctor's single
+	// source of truth for scanner binaries. Nil skips the rows (tests).
+	Catalog []security.Entry
+
+	// DisabledTools are the Catalog IDs the operator switched off
+	// (tools.disabled in argus.yaml). Each gets a "disabled" row instead of an
+	// installed or not-installed one. It is ignored under BinariesOnly: the
+	// image contract is about what the image ships, not what argus.yaml uses.
+	DisabledTools []string
 
 	// ExtraBinaries are binary deps the caller knows about but aren't owned
 	// by any tool (e.g. git).
 	ExtraBinaries []ExtraBinary
+
+	// LookPath resolves a binary on PATH, for every binary row and catalogued
+	// Tool. It is injected the way the daemon's is, so a test decides what is
+	// installed instead of the host. Nil means the real lookup (exec.LookPath).
+	LookPath func(name string) (string, error)
 
 	// GitHub, when non-nil, adds a check of the GitHub codehost (ADR 0015):
 	// that the App credentials are present and the private key can sign an
@@ -128,11 +141,12 @@ type Options struct {
 	// here. Nil means the generation is not attempted.
 	ProviderToolCall func(ctx context.Context) (bool, error)
 
-	// BinariesOnly restricts Run to the image-contract check (ADR 0013):
-	// only binary checks execute, and every binary is treated as blocking
-	// (Required) regardless of its per-tool "optional" severity. This is the
-	// check CI runs against the batteries-included image — inside the official
-	// image "optional" does not exist; everything the image promises is owed.
+	// BinariesOnly restricts Run to the image-contract check (ADR 0013, as
+	// amended by ADR 0027): only the ExtraBinaries and the Catalog's Manifest
+	// Tools are checked — not what this host would register — and every one is
+	// treated as blocking (Required). A Manifest Tool over Alternatives owes
+	// one of its engines. This is the check CI runs against the official image —
+	// inside it "optional" does not exist; everything the image promises is owed.
 	// Non-binary checks (config, API keys, the LLM Provider probe, SOUL, context,
 	// GitHub, the front door) are skipped and cannot affect the outcome — which
 	// also means the image contract never reaches the network.
@@ -141,16 +155,25 @@ type Options struct {
 
 // Run executes all checks and returns the results in display order.
 func Run(opts Options) []Check {
+	lookPath := opts.LookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	if opts.BinariesOnly {
-		checks := binaryChecks(opts.Registry, opts.ExtraBinaries)
+		checks := binaryChecks(lookPath, manifest(opts.Catalog), opts.ExtraBinaries, nil)
 		for i := range checks {
 			checks[i].Severity = SeverityRequired
+			// A Tool that is merely not installed is Info everywhere else; in
+			// the image contract it is owed, so it fails.
+			if checks[i].Status == Info {
+				checks[i].Status = Fail
+			}
 		}
 		return checks
 	}
 
 	var out []Check
-	out = append(out, binaryChecks(opts.Registry, opts.ExtraBinaries)...)
+	out = append(out, binaryChecks(lookPath, opts.Catalog, opts.ExtraBinaries, opts.DisabledTools)...)
 	out = append(out, configChecks(opts.Home, opts.Shape)...)
 	// Straight after the configuration rows: those say what is configured, this
 	// one says whether it works.
@@ -245,12 +268,13 @@ func githubCheck(cfg config.CodeHostConfig, mint func(ctx context.Context) error
 	return c
 }
 
-// binaryChecks composes two sources: (a) ExtraBinaries from the caller and
-// (b) Requirements declared by tools in the registry that implement
-// tool.Requirer. Duplicates (same Binary name) are kept only once.
-func binaryChecks(reg *tool.Registry, extras []ExtraBinary) []Check {
+// binaryChecks composes two sources: (a) ExtraBinaries from the caller, one
+// row per binary, and (b) the Catalog, one row per Tool. The Catalog is the
+// whole list of scanners Argus can drive, so every one of them is accounted
+// for whether or not this host has it.
+func binaryChecks(lookPath func(string) (string, error), catalog []security.Entry, extras []ExtraBinary, disabled []string) []Check {
 	seen := map[string]bool{}
-	out := make([]Check, 0, len(extras)+4)
+	out := make([]Check, 0, len(extras)+len(catalog))
 
 	// ExtraBinaries first — they include the required ones (git).
 	for _, e := range extras {
@@ -258,35 +282,84 @@ func binaryChecks(reg *tool.Registry, extras []ExtraBinary) []Check {
 			continue
 		}
 		seen[e.Name] = true
-		out = append(out, binaryCheck(e.Name, severityFromRequired(e.Required), e.UsedBy, e.InstallHint))
+		out = append(out, binaryCheck(lookPath, e.Name, severityFromRequired(e.Required), e.UsedBy, e.InstallHint))
 	}
 
-	// Then tool-derived binaries.
-	if reg != nil {
-		for _, decl := range reg.Decls() {
-			t, ok := reg.Get(decl.Name)
-			if !ok {
-				continue
-			}
-			req, ok := t.(tool.Requirer)
-			if !ok {
-				continue
-			}
-			for _, r := range req.Requires() {
-				if seen[r.Binary] {
-					continue
-				}
-				seen[r.Binary] = true
-				out = append(out, binaryCheck(r.Binary, SeverityOptional, decl.Name+" tool", r.InstallHint))
-			}
+	for _, e := range catalog {
+		if slices.Contains(disabled, e.ID) {
+			out = append(out, disabledCheck(e))
+			continue
+		}
+		out = append(out, catalogCheck(lookPath, e))
+	}
+	return out
+}
+
+// manifest is the part of the Catalog the official image ships and guarantees
+// (ADR 0027). It is what the image contract checks: a catalogued Tool outside
+// it is the operator's to install, so its absence is not a broken image.
+func manifest(catalog []security.Entry) []security.Entry {
+	var out []security.Entry
+	for _, e := range catalog {
+		if e.Manifest {
+			out = append(out, e)
 		}
 	}
 	return out
 }
 
-func binaryCheck(name string, sev Severity, usedBy, hint string) Check {
+// catalogCheck reports one catalogued Tool. Installed means every binary it
+// requires resolves on PATH — the same test the daemon applies before it
+// registers the Tool. A Tool that is not installed is Info, not a failure:
+// the Catalog is what Argus *can* drive, and a host without one of its Tools
+// is a choice, not a fault. (BinariesOnly turns it into a blocking failure.)
+//
+// A Tool over alternative engines (the SAST Tool's opengrep and semgrep) is
+// installed with any one of them, and its row names the engine it will run.
+func catalogCheck(lookPath func(string) (string, error), e security.Entry) Check {
+	c := Check{Name: e.ID}
+	found, ok := e.Resolve(lookPath)
+	if ok {
+		e.Found = found
+		c.Status = Pass
+		c.Severity = SeverityOptional
+		c.Message = "installed — " + e.Tool + " tool"
+		if engine := e.Engine(); engine != "" {
+			c.Message += ", running " + engine
+		}
+		return c
+	}
+	var hints []string
+	for _, b := range e.Binaries {
+		if !slices.Contains(found, b.Name) {
+			hints = append(hints, b.InstallHint)
+		}
+	}
+	c.Status = Info
+	c.Severity = SeverityInfo
+	c.Hint = "install: " + strings.Join(hints, "; ")
+	if e.Alternatives {
+		c.Hint = "install one of: " + strings.Join(hints, "; ")
+	}
+	c.Message = "not installed, so " + e.Tool + " is not offered — " + c.Hint + " — see " + e.URL()
+	return c
+}
+
+// disabledCheck reports a catalogued Tool the operator switched off. It is
+// never registered, installed or not, and that is a choice rather than a gap,
+// so the row is information and carries no install hint.
+func disabledCheck(e security.Entry) Check {
+	return Check{
+		Name:     e.ID,
+		Status:   Info,
+		Severity: SeverityInfo,
+		Message:  "disabled in argus.yaml (tools.disabled), so " + e.Tool + " is not offered",
+	}
+}
+
+func binaryCheck(lookPath func(string) (string, error), name string, sev Severity, usedBy, hint string) Check {
 	c := Check{Name: name, Severity: sev}
-	if _, err := exec.LookPath(name); err == nil {
+	if _, err := lookPath(name); err == nil {
 		c.Status = Pass
 		c.Message = usedBy
 	} else {
@@ -326,7 +399,7 @@ func configChecks(home string, shape deployment.Shape) []Check {
 	case err != nil:
 		// LoadConfig treats a missing file as an empty config, so a non-nil
 		// error is a real problem: a legacy v2 key (whose message names the
-		// replacement) or a parse error. Surface it verbatim rather than a
+		// replacement), an unknown tools.disabled entry, or a parse error. Surface it verbatim rather than a
 		// generic "run init" — the config's own message is the actionable one.
 		yamlCheck.Status = Fail
 		yamlCheck.Hint = err.Error()

@@ -16,6 +16,7 @@ import (
 	"github.com/argusappsec/argus/pkg/doctor"
 	"github.com/argusappsec/argus/pkg/provider"
 	"github.com/argusappsec/argus/pkg/provider/factory"
+	"github.com/argusappsec/argus/pkg/security"
 )
 
 // writeDoctorHome writes an argus.yaml carrying yaml into a temp home and returns
@@ -172,21 +173,45 @@ func TestProviderDoctorOptions_NoTargetWhenTheModelResolvesToNoProvider(t *testi
 // TestRun_ToolboxStillChecksTheScannerBinaries: a Toolbox is precisely the
 // shape that depends on them — the scanners are most of what it serves — so
 // doctor must go on verifying every one, and say so per binary rather than
-// leaving an operator to discover a missing semgrep through a failed scan.
+// leaving an operator to discover a missing SAST engine through a failed scan.
 func TestRun_ToolboxStillChecksTheScannerBinaries(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	home := t.TempDir() // no argus.yaml: no Provider, so a Toolbox
 
 	checks := doctor.Run(doctor.Options{
-		Home:     home,
-		Shape:    deployment.Toolbox,
-		Registry: doctorRegistry(),
+		Home:    home,
+		Shape:   deployment.Toolbox,
+		Catalog: security.Catalog(),
 	})
-	for _, binary := range []string{"semgrep", "gitleaks", "osv-scanner"} {
+	for _, binary := range []string{"sast", "gitleaks", "osv-scanner"} {
 		if !slices.ContainsFunc(checks, func(c doctor.Check) bool { return c.Name == binary }) {
 			t.Errorf("a Toolbox's doctor run has no %q row: %v", binary, checkNames(checks))
 		}
 	}
+}
+
+// `argus doctor` reads tools.disabled from argus.yaml, so the operator sees a
+// Tool they switched off as disabled rather than as installed or missing.
+func TestDoctorCmd_ShowsAToolDisabledInArgusYAMLAsDisabled(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	home := writeDoctorHome(t, "tools:\n  disabled:\n    - gitleaks\n")
+
+	c := doctorCmd()
+	var out strings.Builder
+	c.SetOut(&out)
+	c.SetErr(io.Discard)
+	c.SetArgs([]string{"--home", home})
+	_ = c.Execute() // the verdict depends on the host; the row does not
+
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "gitleaks") {
+			if !strings.Contains(line, "disabled") {
+				t.Errorf("the gitleaks row should say disabled: %q", line)
+			}
+			return
+		}
+	}
+	t.Errorf("no gitleaks row in:\n%s", out.String())
 }
 
 func checkNames(checks []doctor.Check) []string {
@@ -195,4 +220,54 @@ func checkNames(checks []doctor.Check) []string {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+// imageBinaries is what the official image ships (the Dockerfile): git plus
+// the Manifest's binaries, with opengrep as its SAST engine.
+var imageBinaries = []string{"git", "opengrep", "gitleaks", "osv-scanner", "trivy", "zizmor"}
+
+// doctorBinaries runs `argus doctor --binaries` on a PATH holding exactly the
+// given binaries (as stubs) and reports whether it passed, with its output.
+func doctorBinaries(t *testing.T, binaries []string) (bool, string) {
+	t.Helper()
+	binDir := t.TempDir()
+	for _, b := range binaries {
+		if err := os.WriteFile(filepath.Join(binDir, b), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+
+	c := doctorCmd()
+	var out strings.Builder
+	c.SetOut(&out)
+	c.SetErr(io.Discard)
+	c.SetArgs([]string{"--home", t.TempDir(), "--binaries"})
+	err := c.Execute()
+	return err == nil, out.String()
+}
+
+// The image contract is the Manifest. The image's binaries satisfy it, and a
+// catalogued Tool the image does not ship (gosec, which needs go) does not
+// fail it, whatever this host would register.
+func TestDoctorBinaries_PassesOnTheImagesBinaries(t *testing.T) {
+	ok, out := doctorBinaries(t, imageBinaries)
+	if !ok {
+		t.Fatalf("doctor --binaries failed on the image's binaries:\n%s", out)
+	}
+	if strings.Contains(out, "gosec") {
+		t.Errorf("gosec is not in the Manifest, so the image contract has no row for it:\n%s", out)
+	}
+}
+
+// Dropping any Manifest binary from the image fails the contract.
+func TestDoctorBinaries_FailsWhenAManifestBinaryIsMissing(t *testing.T) {
+	for _, missing := range imageBinaries {
+		t.Run(missing, func(t *testing.T) {
+			rest := slices.DeleteFunc(slices.Clone(imageBinaries), func(b string) bool { return b == missing })
+			if ok, out := doctorBinaries(t, rest); ok {
+				t.Errorf("doctor --binaries passed without %s:\n%s", missing, out)
+			}
+		})
+	}
 }

@@ -168,6 +168,32 @@ func TestCatalog_DirWithoutSkillMdDoesNotClaim(t *testing.T) {
 
 // TestBuiltin_EveryEmbeddedSkillParses guards CI: a broken shipped skill fails
 // here, not at runtime in front of a user.
+// TestBuiltin_SkillsNameTheSASTCapabilityNotAnEngine: SAST runs opengrep or
+// semgrep, whichever the host has, behind one Tool, run_sast (ADR 0027). A
+// Skill that names an engine, or the run_semgrep Tool that no longer exists,
+// sends the agent after a capability under a name it will not find.
+func TestBuiltin_SkillsNameTheSASTCapabilityNotAnEngine(t *testing.T) {
+	err := fs.WalkDir(skill.Builtin(), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := fs.ReadFile(skill.Builtin(), path)
+		if err != nil {
+			return err
+		}
+		text := strings.ToLower(string(body))
+		for _, engine := range []string{"semgrep", "opengrep"} {
+			if strings.Contains(text, engine) {
+				t.Errorf("builtin %s names the SAST engine %q; refer to the run_sast capability instead", path, engine)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBuiltin_EveryEmbeddedSkillParses(t *testing.T) {
 	fsys := skill.Builtin()
 	entries, err := fs.ReadDir(fsys, ".")

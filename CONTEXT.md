@@ -176,9 +176,10 @@ and humans learn things.
 A Go-implemented function the LLM can call. Has a Name, Description (which
 the LLM reads to decide when to call it), Schema (JSON Schema of args), and
 Execute (the actual implementation). Lives in `pkg/tool/` or domain
-packages (`pkg/security/`). When a Tool shells out to a binary it
-additionally implements `tool.Requirer` so `argus doctor` can verify the
-binary is installed.
+packages (`pkg/security/`). When a Tool shells out to a binary it is a
+**Catalog** entry, which declares the binaries it requires: the daemon
+registers it only when they are installed, and `argus doctor` reports it from
+the same declaration.
 
 **No generic shell escape.** A Tool always has a fixed surface — explicit
 args, explicit semantics, written in Go and reviewed in code. We do NOT
@@ -186,6 +187,19 @@ expose a `bash` / `exec` / `run_arbitrary_command` tool. Wrapping a
 specific binary like `semgrep` with structured args is a Tool;
 forwarding an arbitrary command string from the LLM to the OS shell is
 not. See ADR 0006.
+
+**Catalog.** Every Tool Argus knows how to wrap, each with what it is for, why
+it is useful, and where to read about and install the binary it needs. Being
+catalogued is not being usable: a Tool whose binary is not installed on the
+host is catalogued but *not registered* — Argus offers what the machine can
+actually run, and the operator chooses what to install from the Catalog. The
+ladder is *catalogued* → *registered* → *exposed*. _Avoid_: "optional Tool" —
+optionality is the ladder's consequence, not a kind of Tool.
+
+**Manifest.** The part of the Catalog the official image ships and guarantees: a
+default chosen to suit most organizations, not the whole Catalog. Anything
+beyond it is the operator's to install, typically in a custom image built on the
+official one. _Avoid_: reading "batteries-included" as "everything catalogued".
 
 **Admission.** A Tool is either merely *registered* — available to Argus's own
 agent loop and nothing else — or *exposed*, which also admits it onto the MCP

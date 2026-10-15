@@ -2,6 +2,8 @@ package security_test
 
 import (
 	"context"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -9,6 +11,15 @@ import (
 	"github.com/argusappsec/argus/pkg/session"
 	"github.com/argusappsec/argus/pkg/tool"
 )
+
+func init() {
+	f := toolFixture{empty: `{"results":[]}`}
+	// An explicit --config overrides every osv-scanner.toml next to a
+	// lockfile, and --no-ignore stops a committed .gitignore from hiding one.
+	f.repoConfig.switches = []string{"--no-ignore"}
+	f.repoConfig.scratch = []string{"--config"}
+	fixture("osv-scanner", f)
+}
 
 func TestOSVScanner_ToolMetadata(t *testing.T) {
 	o := security.NewOSVScanner(sessionAt("/tmp"), &fakeRunner{})
@@ -27,7 +38,7 @@ func TestOSVScanner_PassesPathAndReturnsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out, "results") {
+	if !strings.Contains(out, "findings") {
 		t.Errorf("output = %q", out)
 	}
 	joined := strings.Join(fr.gotArgs, " ")
@@ -52,7 +63,7 @@ func TestOSVScanner_ErrorsWhenNoTargetSet(t *testing.T) {
 // written report as authoritative even if the binary errored.
 func TestOSVScanner_TolerantOfExit1WhenReportPresent(t *testing.T) {
 	fr := &fakeRunner{
-		out: `{"results":[{"packages":[{"package":{"name":"lodash"}}]}]}`,
+		out: `{"results":[{"source":{"path":"/repo/package-lock.json"},"packages":[{"package":{"name":"lodash","ecosystem":"npm"},"vulnerabilities":[{"id":"GHSA-p6mc-m468-83gw"}],"groups":[{"ids":["GHSA-p6mc-m468-83gw"]}]}]}]}`,
 		err: errExit1{},
 	}
 	o := security.NewOSVScanner(sessionAt("/repo"), fr)
@@ -105,17 +116,86 @@ func TestOSVScanner_RealFailureSurfacesError(t *testing.T) {
 	}
 }
 
-func TestOSVScanner_RequiresAdvertisesBinary(t *testing.T) {
-	o := security.NewOSVScanner(sessionAt("/repo"), &fakeRunner{})
-	req, ok := o.(tool.Requirer)
-	if !ok {
-		t.Fatal("osv-scanner tool must implement tool.Requirer")
+// osvFromCatalog builds run_osv_scanner the way the daemon does: from its
+// Catalog entry, over the given dependencies.
+func osvFromCatalog(t *testing.T, d security.Deps) tool.Tool {
+	t.Helper()
+	for _, e := range security.Catalog() {
+		if e.ID == "osv-scanner" {
+			return e.New(d)
+		}
 	}
-	reqs := req.Requires()
-	if len(reqs) != 1 || reqs[0].Binary != "osv-scanner" {
-		t.Errorf("Requires() = %+v, want one requirement for osv-scanner", reqs)
+	t.Fatal("osv-scanner is not catalogued")
+	return nil
+}
+
+// With go on PATH, osv-scanner's Go call analysis loads the reviewed packages
+// through the Go toolchain. On an automatic review the code is a stranger's, so
+// call analysis is switched off; a review a Person asked for keeps it, because
+// its reachability filtering is worth having when the code is trusted.
+func TestOSVScanner_DisablesGoCallAnalysisOnAutomaticReviewsOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		automatic bool
+		want      bool
+	}{
+		{"automatic review", true, true},
+		{"requested review", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &fakeRunner{out: `{"results":[]}`}
+			o := osvFromCatalog(t, security.Deps{Session: sessionAt("/repo"), Commands: fr, Automatic: tc.automatic})
+			if _, err := o.Execute(context.Background(), map[string]any{}); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			got := slices.Contains(fr.gotArgs, "--no-call-analysis=go")
+			if got != tc.want {
+				t.Errorf("--no-call-analysis=go present = %v, want %v; args = %v", got, tc.want, fr.gotArgs)
+			}
+		})
 	}
-	if reqs[0].InstallHint == "" {
-		t.Error("install hint should not be empty")
+}
+
+// Go call analysis drives the go command over the reviewed packages, exactly
+// as gosec and govulncheck do, so where it runs (a review a Person asked for)
+// it runs in the same hardened Go profile: whatever the daemon's own Go
+// settings say, no toolchain download, no go.mod rewrite, no go.work, no cgo,
+// the proxy only, no gopackagesdriver, and caches in the scratch directory.
+func TestOSVScanner_RunsGoCallAnalysisInTheHardenedGoEnvironment(t *testing.T) {
+	for k, v := range map[string]string{
+		"GOTOOLCHAIN":      "auto",
+		"GOFLAGS":          "-mod=mod",
+		"GOWORK":           "/elsewhere/go.work",
+		"CGO_ENABLED":      "1",
+		"GOPROXY":          "https://proxy.golang.org,direct",
+		"GOPACKAGESDRIVER": "/usr/local/bin/driver",
+	} {
+		t.Setenv(k, v)
+	}
+	fr := &fakeRunner{out: `{"results":[]}`}
+	o := osvFromCatalog(t, security.Deps{Session: sessionAt(checkout(t)), Commands: fr})
+	if _, err := o.Execute(context.Background(), map[string]any{}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if slices.Contains(fr.gotArgs, "--no-call-analysis=go") {
+		t.Fatalf("a requested review keeps call analysis; args = %v", fr.gotArgs)
+	}
+	home := filepath.Join(fr.gotCmd.Dir, "home")
+	got := envMap(fr.gotCmd.Env)
+	for k, v := range map[string]string{
+		"GOTOOLCHAIN":      "local",
+		"GOFLAGS":          "-mod=readonly",
+		"GOWORK":           "off",
+		"CGO_ENABLED":      "0",
+		"GOPROXY":          "https://proxy.golang.org",
+		"GOSUMDB":          "sum.golang.org",
+		"GOENV":            "off",
+		"GOPACKAGESDRIVER": "off",
+		"GOPATH":           filepath.Join(home, "go"),
+		"GOCACHE":          filepath.Join(home, ".cache", "go-build"),
+	} {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
 	}
 }

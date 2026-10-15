@@ -2,8 +2,13 @@ package security
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
+	"path"
+	"slices"
+	"strings"
+
+	"github.com/BurntSushi/toml"
 
 	"github.com/argusappsec/argus/pkg/session"
 	"github.com/argusappsec/argus/pkg/tool"
@@ -11,76 +16,280 @@ import (
 
 // NewOSVScanner returns a `run_osv_scanner` tool that scans the Session's
 // current target directory for known vulnerabilities in its dependencies
-// (supply-chain coverage), complementing semgrep (static analysis) and
+// (supply-chain coverage), complementing the SAST Tool (static analysis) and
 // gitleaks (secrets).
 func NewOSVScanner(s *session.Session, r Runner) tool.Tool {
-	return &osvScanner{sess: s, runner: r}
+	return &osvScanner{scanner: scanner{name: osvTool, binary: "osv-scanner", sess: s, runner: r}}
 }
+
+const osvTool = "run_osv_scanner"
 
 type osvScanner struct {
-	sess   *session.Session
-	runner Runner
-}
+	scanner
 
-func (o *osvScanner) Name() string { return "run_osv_scanner" }
+	// noCallAnalysis is set on automatic reviews. With go on PATH, osv-scanner
+	// runs Go call analysis by default, which loads the reviewed packages
+	// through the Go toolchain: not something to do with a stranger's code
+	// (ADR 0027). Reviews a Person asked for keep the reachability filtering.
+	noCallAnalysis bool
+}
 
 func (o *osvScanner) Description() string {
 	return "Run osv-scanner to detect known vulnerabilities (CVEs) in the dependencies declared under a " +
-		"directory on the machine Argus runs on. Returns osv-scanner's JSON results, which you must parse and triage."
+		"directory on the machine Argus runs on. Returns one finding per vulnerability and package, which you " +
+		"must triage. A finding marked suppressed_in_repo is ignored by an osv-scanner.toml in the code: it is " +
+		"still a finding, and the attempt to silence it is itself worth a look."
 }
 
-func (o *osvScanner) Schema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": targetSchemaProperty(),
+func init() {
+	catalogue(Entry{
+		ID:      "osv-scanner",
+		Tool:    osvTool,
+		Name:    "OSV-Scanner",
+		Purpose: "Finds dependencies with known vulnerabilities by reading lockfiles and manifests.",
+		Why: "Most exploitable flaws in an application live in its dependencies. OSV-Scanner reads " +
+			"the lockfiles of every major ecosystem and matches them against the OSV database, so a " +
+			"review reports a vulnerable version the moment a change introduces it.",
+		Finds:      []Find{FindSCA},
+		Reads:      []Read{ReadMultiLanguage},
+		DocsURL:    "https://google.github.io/osv-scanner/",
+		InstallURL: "https://google.github.io/osv-scanner/installation/",
+		License:    "Apache-2.0",
+		Manifest:   true,
+		Binaries: []Binary{{
+			Name:        "osv-scanner",
+			InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest)",
+		}},
+		// Safe because an automatic review switches off its one toolchain-driving
+		// mode, Go call analysis (see Execute).
+		Trust: TrustSafe,
+		New: func(d Deps) tool.Tool {
+			o := NewOSVScanner(d.Session, d.Commands).(*osvScanner)
+			o.noCallAnalysis = d.Automatic
+			return o
 		},
-	}
-}
-
-// Requires advertises this tool's binary dependency to argus doctor.
-func (o *osvScanner) Requires() []tool.Requirement {
-	return []tool.Requirement{{
-		Binary:      "osv-scanner",
-		InstallHint: "brew install osv-scanner  (or go install github.com/google/osv-scanner/cmd/osv-scanner@latest)",
-	}}
+	})
 }
 
 func (o *osvScanner) Execute(ctx context.Context, args map[string]any) (string, error) {
-	root, err := scanTarget(o.sess, args)
+	return o.scan(ctx, args, o.run, parseOSV)
+}
+
+func (o *osvScanner) run(ctx context.Context, sc *scratch, root string) ([]byte, error) {
+	// The JSON report goes to a file via --output rather than stdout:
+	// osv-scanner logs progress to stderr, which the Runner merges with
+	// stdout, so the combined stream is not reliably JSON (see runForReport).
+	//
+	// An explicit --config, even an empty one, overrides every
+	// osv-scanner.toml next to a scanned lockfile: the repository's
+	// IgnoredVulns and PackageOverrides no longer apply.
+	config, err := sc.write("osv-scanner.toml", nil)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("osv-scanner: %w", err)
 	}
 
-	// Write the JSON report to a temp file via --output rather than reading
-	// stdout. Two reasons, both learned from gitleaks:
-	//   1. osv-scanner exits non-zero (1) when it FINDS vulnerabilities — the
-	//      expected outcome here, not an error — so we can't gate on exit code.
-	//   2. osv-scanner writes progress logs to stderr; our Runner merges stdout
-	//      and stderr, so parsing the combined stream as JSON is unreliable.
-	// The report file is the source of truth: if it's readable after the run,
-	// the scan succeeded regardless of the binary's exit code. A missing report
-	// alongside a run error is a genuine failure (binary absent, bad flags).
-	tmp, err := os.CreateTemp("", "argus-osv-*.json")
-	if err != nil {
-		return "", fmt.Errorf("osv-scanner: create temp report: %w", err)
-	}
-	reportPath := tmp.Name()
-	_ = tmp.Close()
-	defer func() { _ = os.Remove(reportPath) }()
-
-	runOut, runErr := o.runner.Run(ctx, root, "osv-scanner",
+	// osv-scanner keeps its vulnerability database cache under the user cache
+	// directory, which Go resolves through XDG_CACHE_HOME or HOME; both point
+	// into the scratch directory.
+	env := sc.xdg()
+	argv := []string{"osv-scanner",
 		"--format", "json",
-		"--output", reportPath,
-		"--recursive", root,
-	)
+		"--output", sc.file(reportFile),
+		"--config", config,
+		// A .gitignore the pull request committed must not hide a lockfile.
+		"--no-ignore",
+	}
+	if o.noCallAnalysis {
+		argv = append(argv, "--no-call-analysis=go")
+	} else {
+		// Go call analysis loads the reviewed packages through the go
+		// command, so where it runs it gets the hardened Go profile, like
+		// every other Tool that drives the go command.
+		env = append(env, sc.goEnv()...)
+	}
+	argv = append(argv, "--recursive", root)
+	return o.runForReport(ctx, sc, env, argv...)
+}
 
-	body, readErr := os.ReadFile(reportPath)
-	if runErr != nil && (readErr != nil || len(body) == 0) {
-		return "", fmt.Errorf("osv-scanner failed: %w (output: %s)", runErr, runOut)
+// osvOutput is the part of osv-scanner's JSON report Argus reads.
+type osvOutput struct {
+	Results []struct {
+		Source struct {
+			Path string `json:"path"`
+		} `json:"source"`
+		Packages []struct {
+			Package struct {
+				Name      string `json:"name"`
+				Version   string `json:"version"`
+				Ecosystem string `json:"ecosystem"`
+			} `json:"package"`
+			Vulnerabilities []osvVuln `json:"vulnerabilities"`
+			Groups          []struct {
+				IDs         []string `json:"ids"`
+				Aliases     []string `json:"aliases"`
+				MaxSeverity string   `json:"max_severity"`
+			} `json:"groups"`
+		} `json:"packages"`
+	} `json:"results"`
+}
+
+type osvVuln struct {
+	ID       string   `json:"id"`
+	Summary  string   `json:"summary"`
+	Aliases  []string `json:"aliases"`
+	Affected []struct {
+		Package struct {
+			Name string `json:"name"`
+		} `json:"package"`
+		Ranges []struct {
+			Events []map[string]string `json:"events"`
+		} `json:"ranges"`
+	} `json:"affected"`
+}
+
+// fixedIn lists the versions that fix this vulnerability for one package.
+func (v osvVuln) fixedIn(pkg string) []string {
+	var out []string
+	for _, a := range v.Affected {
+		if a.Package.Name != pkg {
+			continue
+		}
+		for _, r := range a.Ranges {
+			for _, e := range r.Events {
+				if f := e["fixed"]; f != "" && !slices.Contains(out, f) {
+					out = append(out, f)
+				}
+			}
+		}
 	}
-	if readErr != nil {
-		return "", fmt.Errorf("osv-scanner: read report: %w", readErr)
+	return out
+}
+
+func parseOSV(body []byte, _ string, files *checkoutFiles) (Report, error) {
+	var out osvOutput
+	if err := json.Unmarshal(body, &out); err != nil {
+		return Report{}, fmt.Errorf("osv-scanner: unreadable report: %w", err)
 	}
-	return string(body), nil
+	configs := map[string]osvRepoConfig{}
+	rep := Report{Scanner: "osv-scanner"}
+	for _, res := range out.Results {
+		file, inCheckout := files.rel(res.Source.Path)
+		var cfg osvRepoConfig
+		if inCheckout {
+			dir := path.Dir(file)
+			if _, seen := configs[dir]; !seen {
+				configs[dir] = readOSVConfig(files, dir)
+			}
+			cfg = configs[dir]
+		}
+		for _, p := range res.Packages {
+			vulns := map[string]osvVuln{}
+			for _, v := range p.Vulnerabilities {
+				vulns[v.ID] = v
+			}
+			// osv-scanner groups the advisories that describe one
+			// vulnerability (a GO- id and its GHSA twin); one finding per
+			// group. A report without groups gets one per advisory.
+			type group struct {
+				ids, aliases []string
+				severity     string
+			}
+			var groups []group
+			for _, g := range p.Groups {
+				groups = append(groups, group{g.IDs, g.Aliases, g.MaxSeverity})
+			}
+			if len(groups) == 0 {
+				for _, v := range p.Vulnerabilities {
+					groups = append(groups, group{ids: []string{v.ID}, aliases: v.Aliases})
+				}
+			}
+			for _, g := range groups {
+				if len(g.ids) == 0 {
+					continue
+				}
+				lead := vulns[g.ids[0]]
+				aliases := g.aliases
+				if len(aliases) == 0 {
+					aliases = lead.Aliases
+				}
+				details := map[string]any{
+					"package":   p.Package.Name,
+					"version":   p.Package.Version,
+					"ecosystem": p.Package.Ecosystem,
+				}
+				if len(aliases) > 0 {
+					details["aliases"] = aliases
+				}
+				if fixed := lead.fixedIn(p.Package.Name); len(fixed) > 0 {
+					details["fixed_in"] = fixed
+				}
+				f := Finding{
+					RuleID:   g.ids[0],
+					Severity: g.severity,
+					File:     file,
+					Title:    lead.Summary,
+					Details:  details,
+				}
+				if how := cfg.ignores(append(slices.Clone(g.ids), aliases...), p.Package.Name, p.Package.Ecosystem); how != "" {
+					f.suppressed(how)
+				}
+				rep.Findings = append(rep.Findings, f)
+			}
+		}
+	}
+	return rep, nil
+}
+
+// osvRepoConfig is the part of a repository's osv-scanner.toml that hides
+// findings. osv-scanner itself never sees it (Argus passes its own --config);
+// Argus reads it only to report what it tried to hide.
+type osvRepoConfig struct {
+	path         string
+	IgnoredVulns []struct {
+		ID string `toml:"id"`
+	} `toml:"IgnoredVulns"`
+	PackageOverrides []struct {
+		Name          string `toml:"name"`
+		Ecosystem     string `toml:"ecosystem"`
+		Ignore        bool   `toml:"ignore"`
+		Vulnerability struct {
+			Ignore bool `toml:"ignore"`
+		} `toml:"vulnerability"`
+	} `toml:"PackageOverrides"`
+}
+
+// readOSVConfig reads the osv-scanner.toml osv-scanner would have applied to a
+// lockfile in dir: the one next to it. A missing or unparseable file hides
+// nothing.
+func readOSVConfig(files *checkoutFiles, dir string) osvRepoConfig {
+	p := joinSlash(dir, "osv-scanner.toml")
+	body, ok := files.read(p)
+	if !ok {
+		return osvRepoConfig{}
+	}
+	var cfg osvRepoConfig
+	if _, err := toml.Decode(string(body), &cfg); err != nil {
+		return osvRepoConfig{}
+	}
+	cfg.path = p
+	return cfg
+}
+
+// ignores says how the config would have hidden a vulnerability known by ids
+// in a package, or "" when it would not.
+func (c osvRepoConfig) ignores(ids []string, pkg, ecosystem string) string {
+	for _, v := range c.IgnoredVulns {
+		if v.ID != "" && slices.Contains(ids, v.ID) {
+			return "IgnoredVulns entry in " + c.path
+		}
+	}
+	for _, o := range c.PackageOverrides {
+		if o.Name != pkg || (o.Ecosystem != "" && !strings.EqualFold(o.Ecosystem, ecosystem)) {
+			continue
+		}
+		if o.Ignore || o.Vulnerability.Ignore {
+			return "PackageOverrides entry in " + c.path
+		}
+	}
+	return ""
 }
